@@ -50,9 +50,9 @@ without entering your credentials, until the session token expires or is revoked
 Logging out sends `{msg:"forget_login_cookie", cookie}` to the server and 
 removes the local entry, invalidating the token on both ends.
 
-## How it's built
+## How it was built
 
-The initial version was built in a little over three weeks of intensive spare-time work. Most of the implementation was written with Claude Code, under my direction and review. All product decisions, design, testing, and QA were mine. 
+Most of the implementation was written with Claude Code, under my direction and review. All product decisions, design, testing, and QA were mine. 
 
 The source is available at <https://github.com/pocketzot/pocketzot>, licensed under [AGPL-3.0-or-later](LICENSE); see [ATTRIBUTION.md](ATTRIBUTION.md) for its relationship to DCSS.
 
