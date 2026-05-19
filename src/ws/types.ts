@@ -220,4 +220,5 @@ export type ClientMsg =
   | { msg: 'pong' }
   | { msg: 'ui_state_sync'; widget_id: string; text?: string; cursor?: number; checked?: boolean; generation_id: number }
   | { msg: 'spectate_req'; watch_username: string }
+  | { msg: 'menu_hover'; hover: number; mouse: boolean }
   | { msg: 'click_cell'; x: number; y: number; button: 1 | 2 | 3; force?: boolean }

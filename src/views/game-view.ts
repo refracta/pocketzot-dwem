@@ -11,7 +11,7 @@ import { fgHaloDngnName, loFlagOverlayIcons } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
-import { handleKeydown } from '../game/input/keyboard'
+import { handleKeydown, CK_UP, CK_DOWN } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { tileLoader, TEX } from '../game/tiles/tile-loader'
@@ -132,6 +132,10 @@ interface MenuMsg {
   replace?: boolean
 }
 
+// Menu flag bits (subset; values from the reference client enums.js).
+const MF_WRAP = 0x0080
+const MF_ARROWS_SELECT = 0x40000
+
 export function buildGameView(
   conn: WsConnection,
   onLobby: () => void,
@@ -167,6 +171,13 @@ export function buildGameView(
   const menuStack: MenuMsg[] = []
   let activeMenu: MenuMsg | null = null
   let hoveredMenuIdx = -1
+  // Raw server-side hover index for the active menu. We drive menu hover
+  // client-side via menu_hover (see cycleMenuHover) instead of forwarding raw
+  // arrow keys, because the server's C++ cycle_hover is hotkey-blind and
+  // would step onto coalesced continuation rows — costing a dead keypress per
+  // wrapped row. This tracks the server's cursor so the next client move is
+  // computed from the right place even when the server moves it.
+  let menuServerHover = -1
   let activePromptEl: HTMLElement | null = null
   let inXMode = false
   let exitedXModeForInput = false
@@ -321,7 +332,16 @@ export function buildGameView(
     view.focus({ preventScroll: true })
   })
 
-  const touchControls: TouchControls = buildTouchControls((msg) => conn.send(msg))
+  // The d-pad calls this send directly (it doesn't dispatch a keydown), so
+  // the menu-nav redirect has to happen here too — otherwise phone users get
+  // the raw-arrow / dead-keypress behaviour the keyboard path now avoids.
+  const touchControls: TouchControls = buildTouchControls((msg) => {
+    if (msg.msg === 'key' && menuNavActive()) {
+      if (msg.keycode === CK_DOWN) { cycleMenuHover(false); return }
+      if (msg.keycode === CK_UP) { cycleMenuHover(true); return }
+    }
+    conn.send(msg)
+  })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'
@@ -417,6 +437,7 @@ export function buildGameView(
       if (e.key === 'Escape') closeMonsterPanel()
       return
     }
+    if (handleMenuNavKey(e)) return
     handleKeydown(e, (msg) => conn.send(msg))
   }
   document.addEventListener('keydown', docKeyHandler)
@@ -664,29 +685,13 @@ export function buildGameView(
             if (titleSpan) titleSpan.textContent = stripDcss(m.title.text)
           }
         }
-        if (m.last_hovered !== undefined) {
-          hoveredMenuIdx = m.last_hovered
-          uiOverlay.querySelectorAll<HTMLElement>('.item-hovered').forEach(el => el.classList.remove('item-hovered'))
-          const hoveredEl = uiOverlay.querySelector<HTMLElement>(`[data-menu-idx="${hoveredMenuIdx}"]`)
-          if (hoveredEl) {
-            hoveredEl.classList.add('item-hovered')
-            hoveredEl.scrollIntoView({ block: 'nearest' })
-          }
-        }
+        if (m.last_hovered !== undefined) applyServerHover(m.last_hovered)
         break
       }
 
       case 'menu_scroll': {
         const m = msg as unknown as { first?: number; last_hovered?: number }
-        if (m.last_hovered !== undefined) {
-          hoveredMenuIdx = m.last_hovered
-          uiOverlay.querySelectorAll<HTMLElement>('.item-hovered').forEach(el => el.classList.remove('item-hovered'))
-          const hoveredEl = uiOverlay.querySelector<HTMLElement>(`[data-menu-idx="${hoveredMenuIdx}"]`)
-          if (hoveredEl) {
-            hoveredEl.classList.add('item-hovered')
-            hoveredEl.scrollIntoView({ block: 'nearest' })
-          }
-        }
+        if (m.last_hovered !== undefined) applyServerHover(m.last_hovered)
         break
       }
 
@@ -1648,9 +1653,90 @@ export function buildGameView(
     })
   }
 
+  function highlightHoveredRow(): void {
+    uiOverlay.querySelectorAll<HTMLElement>('.item-hovered').forEach(el => el.classList.remove('item-hovered'))
+    const el = uiOverlay.querySelector<HTMLElement>(`[data-menu-idx="${hoveredMenuIdx}"]`)
+    if (el) {
+      el.classList.add('item-hovered')
+      el.scrollIntoView({ block: 'nearest' })
+    }
+  }
+
+  // Reflect a server-reported hover. Keeps menuServerHover in sync so any
+  // mixed server-driven moves (e.g. paging keys, while still forwarded raw in
+  // a future change) don't desync our client-side cursor.
+  function applyServerHover(raw: number): void {
+    menuServerHover = raw
+    hoveredMenuIdx = raw
+    highlightHoveredRow()
+  }
+
+  function menuItemSelectable(it: MenuItem | undefined): boolean {
+    return !!it && it.level === 2
+      && (activeMenu?.tag === 'use_item' || !!(it.hotkeys && it.hotkeys.length))
+  }
+
+  // Based on next_hoverable_item, we scan the authoritative server
+  // item array (the index space menu_hover expects) for the next
+  // selectable entry, honouring MF_WRAP and the "up with no hover does
+  // nothing" bound.
+  function nextHoverableMenuItem(reverse: boolean, start: number): number {
+    const items = activeMenu?.items ?? []
+    const n = items.length
+    if (n === 0) return -1
+    const wrap = ((activeMenu?.flags ?? 0) & MF_WRAP) !== 0
+    const maxItems = wrap ? n : reverse ? start : n - Math.max(start, 0)
+    if (maxItems <= 0) return -1
+    let h = start
+    if (reverse && h < 0) h = 0
+    h += reverse ? -1 : 1
+    for (let tried = 0; tried < maxItems; tried++) {
+      if (wrap) h = ((h % n) + n) % n
+      h = Math.max(0, Math.min(h, n - 1))
+      if (menuItemSelectable(items[h])) return h
+      h += reverse ? -1 : 1
+    }
+    return -1
+  }
+
+  function setMenuHover(idx: number): void {
+    if (idx < 0 || idx === menuServerHover) return
+    menuServerHover = idx
+    hoveredMenuIdx = idx
+    highlightHoveredRow()
+    // Drive the server's cursor directly instead of letting it cycle_hover
+    // off a forwarded arrow key (which is hotkey-blind). Do not also forward
+    // the raw key — that would double-move.
+    conn.send({ msg: 'menu_hover', hover: idx, mouse: false })
+  }
+
+  function cycleMenuHover(reverse: boolean): void {
+    const next = nextHoverableMenuItem(reverse, menuServerHover)
+    if (next !== -1) setMenuHover(next)
+  }
+
+  // A rendered, arrow-selectable menu overlay is up: arrow input should drive
+  // hover client-side (send menu_hover) rather than be forwarded as a raw
+  // key.
+  function menuNavActive(): boolean {
+    return !!activeMenu && !crtActive
+      && (((activeMenu.flags ?? 0) & MF_ARROWS_SELECT) !== 0)
+      && !!uiOverlay.querySelector('.overlay-list')
+  }
+
+  // Returns true if the key was a menu-nav key we handled client-side.
+  function handleMenuNavKey(e: KeyboardEvent): boolean {
+    if (!menuNavActive()) return false
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false
+    if (e.key === 'ArrowDown') { e.preventDefault(); cycleMenuHover(false); return true }
+    if (e.key === 'ArrowUp') { e.preventDefault(); cycleMenuHover(true); return true }
+    return false
+  }
+
   function showMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
       hoveredMenuIdx = -1
+      menuServerHover = -1
       menuShift.reset()
     }
     activeMenu = msg
