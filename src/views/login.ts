@@ -45,7 +45,7 @@ export function buildLoginView(
     ? `
       <div class="login-footer">
         <a href="/about.html">About</a>
-        <a href="/support.html">Support</a>
+        <a href="/changelog.html">What's new</a>
       </div>
     `
     : ''

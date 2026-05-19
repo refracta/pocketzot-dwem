@@ -20,6 +20,7 @@ TODO
 # so they are operator-specific too.
 public/about.html
 public/support.html
+public/changelog.html
 public/hero.png
 public/shot-*.png
 public/robots.txt
