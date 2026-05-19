@@ -1,0 +1,26 @@
+.DS_Store
+dev-material/
+node_modules/
+CLAUDE.md
+BUGS.md
+BUILD.md
+TODO.md
+SPECS.md
+dev-credentials.json
+.claude/
+.playwright-cli/
+dist/
+design/
+scripts/
+TODO
+.env*.local
+# Hosted-site pages, screenshots, etc. — part of our
+# deployment, not the open-source client. 
+# robots.txt / sitemap.xml hardcode the live domain, 
+# so they are operator-specific too.
+public/about.html
+public/support.html
+public/hero.png
+public/shot-*.png
+public/robots.txt
+public/sitemap.xml

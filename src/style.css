@@ -1,0 +1,2025 @@
+/* ── Reset & base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Amber CRT theme — warm near-black surfaces, amber accent.
+     Map (#map-grid) intentionally stays at #000000 because DCSS bg color
+     bytes (bg0–bg15) are calibrated for a black background; tinting it
+     would shift every cell's apparent color. The chrome around the map
+     uses --bg's warm near-black so the seam reads as a deliberate frame. */
+  --bg:        #0a0908;
+  --surface:   #14110f;
+  --surface2:  #1f1b18;
+  --accent:    #f59e0b;
+  --text:      #e7e5e4;
+  --text-dim:  #a8a29e;
+  --danger:    #ef4444;
+  --warn:      #facc15;
+  --ok:        #84cc16;
+  --border:    rgba(245, 158, 11, 0.12);
+
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, 'Courier New', monospace;
+  --map-font-size: 17px;
+  --map-line-height: 1.0;
+  --crt-line-height: 1.2;
+  --app-bottom-pad: 25px;
+  touch-action: manipulation;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+
+#app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: var(--app-bottom-pad);
+}
+
+/* ── Login view ───────────────────────────────────────────── */
+#login-view {
+  flex: 1;
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem 1.25rem;
+}
+
+.login-title {
+  font-size: 1.4rem;
+  color: var(--accent);
+  text-align: center;
+  margin-bottom: 1.25rem;
+  letter-spacing: 0.1em;
+}
+
+.login-section { margin-bottom: 1.5rem; }
+.login-spectate-section { margin-bottom: 0; }
+
+.login-section-label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.6rem;
+}
+
+.login-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.login-account-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "tag user arrow";
+  align-items: center;
+  gap: 0 0.7rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.login-account-card:active { background: rgba(245, 158, 11, 0.08); }
+.login-account-card:disabled { opacity: 0.5; cursor: default; }
+
+.login-account-tag {
+  grid-area: tag;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  min-width: 3rem;
+  text-align: center;
+}
+
+.login-account-username {
+  grid-area: user;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.login-account-card::after {
+  content: "→";
+  grid-area: arrow;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+}
+.login-account-card:disabled::after { content: "…"; }
+
+.login-add-section > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  list-style: none;
+}
+.login-add-section > summary::-webkit-details-marker { display: none; }
+.login-add-section[open] > summary { margin-bottom: 0.6rem; }
+
+.login-spectate-select {
+  display: block;
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  margin-bottom: 0.5rem;
+}
+.login-spectate-select:focus { border-color: var(--accent); color: var(--text); }
+
+.login-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.login-label input,
+.login-label select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+}
+
+.login-label input { color: var(--text); }
+.login-label select { color: var(--text-dim); }
+
+.login-label input:focus,
+.login-label select:focus { border-color: var(--accent); }
+.login-label select:focus { color: var(--text); }
+
+.login-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.login-btn {
+  width: 100%;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: bold;
+  padding: 0.7rem;
+  cursor: pointer;
+}
+
+.login-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.login-btn-spectate {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-weight: normal;
+}
+
+.login-footer {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted, #888);
+}
+
+.login-footer a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.login-footer a + a {
+  margin-left: 0.75rem;
+}
+
+/* ── Lobby view ───────────────────────────────────────────── */
+#lobby-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  gap: 0.75rem;
+  overflow-y: auto;
+}
+
+.lobby-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lobby-account-chip-wrap {
+  position: relative;
+}
+
+.lobby-account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.lobby-account-chip.is-guest {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+.lobby-chip-user { color: var(--accent); }
+.lobby-chip-sep  { color: var(--text-dim); }
+.lobby-chip-tag  { color: var(--accent); }
+.lobby-chip-caret {
+  color: var(--text-dim);
+  margin-left: 0.1rem;
+  font-size: 0.7rem;
+}
+
+.lobby-account-chip[aria-expanded="true"] {
+  background: var(--surface2);
+}
+
+.lobby-account-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-direction: column;
+  padding: 0.25rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.lobby-account-menu[hidden] { display: none; }
+.lobby-account-menu:not([hidden]) { display: flex; }
+
+.lobby-account-menu-item {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.lobby-account-menu-item:active { background: var(--surface2); }
+
+.lobby-btn-primary {
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: bold;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.lobby-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lobby-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.lobby-actions .lobby-btn-primary,
+.lobby-actions .lobby-btn-secondary {
+  align-self: stretch;
+  text-align: left;
+}
+
+.lobby-more-games {
+  margin-top: 0.25rem;
+}
+
+.lobby-more-games-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.lobby-more-games > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  padding: 0.3rem 0;
+  list-style: none;
+}
+
+.lobby-more-games > summary::-webkit-details-marker { display: none; }
+.lobby-more-games > summary::before { content: "▸ "; }
+.lobby-more-games[open] > summary::before { content: "▾ "; }
+
+.lobby-section-title {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.lobby-section-divider {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 0.4rem 0 0.2rem;
+  letter-spacing: 0.05em;
+}
+
+.lobby-notice {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  color: var(--warn);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.lobby-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.lobby-loading, .lobby-empty { color: var(--text-dim); font-size: 0.85rem; }
+
+.lobby-game-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 1.6rem 0.5rem 0.75rem;
+  cursor: pointer;
+  position: relative;
+}
+
+.lobby-game-row::after {
+  content: "→";
+  position: absolute;
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  pointer-events: none;
+}
+
+.lobby-game-row:active { background: var(--surface2); }
+.lobby-game-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.lobby-game-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.lobby-game-toprow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  min-width: 0;
+}
+.lobby-game-user {
+  color: var(--accent);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lobby-game-row.is-idle .lobby-game-user { color: var(--text-dim); }
+.lobby-game-info { font-size: 0.85rem; color: var(--text-dim); }
+.lobby-game-idle { flex: 0 0 auto; white-space: nowrap; font-size: 0.8rem; color: var(--text-dim); }
+.lobby-game-idle:empty { display: none; }
+
+.lobby-game-watchers {
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+/* ── Game view ────────────────────────────────────────────── */
+#game-view {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-rows: 1fr auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "map"
+    "msg"
+    "hud"
+    "touch"
+    "menu";
+  overflow: hidden;
+  outline: none;
+}
+
+/* Map wrapper (positions floating monster list over map) */
+#map-wrap {
+  grid-area: map;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+#map-wrap > #map-grid { flex: 1; }
+
+/* Map */
+#map-grid {
+  background: #000000;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--map-font-size);
+  line-height: var(--map-line-height);
+  font-weight: bold;
+  overflow: hidden;
+  padding: 2px;
+  white-space: pre;
+  user-select: none;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  /* Bottom-anchor the rendered grid: any container slack appears above the
+     map, leaving room for the floating monster-list overlay and visually
+     pinning the map to the message log. The row-drop hazard this used to
+     introduce (a 1-2px container shrink crossing floor(availH/lineH)) is
+     handled by the hysteresis in MapView.fitToContainer(). */
+  justify-content: flex-end;
+}
+
+#map-grid div { display: flex; }
+#map-grid span { display: inline-block; width: 1ch; }
+#map-grid span.map-cursor { position: relative; isolation: isolate; }
+#map-grid span.map-cursor::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  outline: 1px solid #fce94f;
+  outline-offset: -1px;
+  background-color: rgba(252, 233, 79, 0.15);
+  pointer-events: none;
+}
+
+/* Tile-render variant of #map-grid: drops the font-based <pre> layout for a
+   single <canvas> centered in the flex column. Padding/justification match
+   the ASCII variant so swapping doesn't shift the surrounding HUD. */
+#map-grid.map-tile {
+  font-family: var(--font-mono);
+  position: relative;
+  align-items: center;
+}
+#map-grid.map-tile .map-tile-canvas {
+  display: block;
+  /* image-rendering: pixelated downsamples cleanly when the rendered cell is
+     smaller than the 32px atlas tile. Without it WebKit applies bilinear by
+     default and 12-14 px cells become a blurry mush. */
+  image-rendering: pixelated;
+}
+#map-grid.map-tile .map-tile-cursor {
+  position: absolute;
+  outline: 1px solid #fce94f;
+  outline-offset: -1px;
+  background-color: rgba(252, 233, 79, 0.15);
+  pointer-events: none;
+}
+
+/* Messages */
+#game-messages {
+  grid-area: msg;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  /* Reserve the full 5lh from the start so the map only sizes itself
+     once. Otherwise the log grows 0 → 5lh as the first messages arrive
+     and the map re-fits (and may drop a row) on each step. */
+  height: 5lh;
+  overflow-y: auto;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+
+.game-msg { color: var(--text); line-height: 1.3; }
+
+.msg-turn-mark {
+  display: inline-block;
+  min-width: 1ch;
+  color: var(--text-dim);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.game-prompt .action-btn {
+  vertical-align: middle;
+  margin: 0 0.1rem;
+}
+
+.game-text-input {
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  padding: 0.15rem 0.4rem;
+  outline: none;
+  width: 12ch;
+}
+
+#numpad-input {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 0.5rem 0.5rem max(0.6rem, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.numpad-prompt {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 0 0.25rem;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.numpad-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 3rem;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 22rem;
+}
+
+.numpad-btn {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  padding: 0;
+  color: var(--text);
+}
+
+/* Digit / "key" tier — raised, brighter surface, subtle drop shadow.
+   Mirrors the white key vs. gray action key separation in iOS Numbers. */
+.numpad-btn.numpad-digit {
+  background: var(--surface2);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+
+/* Action tier — recessed, darker, dimmer text. */
+.numpad-btn.numpad-action {
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+/* Primary action (Enter) spans rows 3–4 in the right column, like the tall
+   return key on iOS. Uses the accent fill to read as the default submit. */
+.numpad-btn.numpad-primary {
+  grid-row: span 2;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: bold;
+  font-size: 1.35rem;
+}
+
+.numpad-btn:active {
+  filter: brightness(1.25);
+}
+
+.input-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  max-width: 32rem;
+  margin: 1.5rem auto 0;
+}
+
+.input-dialog-prompt {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text);
+  /* Server pre-wraps at 80 cols (linebreak_string in message.cc); collapse
+     those newlines so the browser can reflow at our actual width. */
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.input-dialog-field {
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  font-family: var(--font-mono);
+  /* 16px keeps iOS Safari from auto-zooming on focus */
+  font-size: 16px;
+  padding: 0.4rem 0.6rem;
+  outline: none;
+}
+
+/* Menu filter input (Ctrl-F search). Inline-sized so it flows next to the
+   prompt label in the title bar. */
+.menu-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.15rem 0.4rem;
+}
+
+.menu-filter-prompt {
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+/* Seed-selection (custom-seed newgame entry) */
+.seed-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem;
+  max-width: 32rem;
+  margin: 1rem auto 0;
+  font-family: var(--font-mono);
+}
+
+.seed-header {
+  font-size: 1rem;
+  color: var(--accent);
+  line-height: 1.3;
+}
+
+.seed-body-text,
+.seed-footer {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.seed-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.seed-input-label {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.seed-input-field {
+  flex: 1 1 12rem;
+  min-width: 0;
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  font-family: var(--font-mono);
+  /* 16px avoids iOS Safari auto-zoom on focus */
+  font-size: 16px;
+  padding: 0.4rem 0.6rem;
+  outline: none;
+}
+
+.seed-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.seed-btn:active { background: var(--surface); color: var(--accent); }
+
+.seed-pregen {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.seed-pregen-checkbox {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+}
+
+.seed-button-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.3rem;
+}
+
+.seed-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: bold;
+  min-width: 9rem;
+}
+.seed-btn-primary:active { background: var(--surface); color: var(--accent); }
+
+#more-btn {
+  grid-area: map;
+  position: absolute;
+  left: 0.25rem;
+  right: 0.25rem;
+  bottom: 0;
+  z-index: 4;
+  background: var(--surface2);
+  border: 1px solid #eeeeec;
+  color: #eeeeec;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  text-align: center;
+  touch-action: manipulation;
+}
+
+#more-btn:active { background: var(--surface); }
+
+/* HUD */
+#game-hud {
+  grid-area: hud;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 0.2rem 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+#hud-top {
+  display: flex;
+  flex-direction: column;
+}
+
+#hud-stats {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  /* DCSS lightgrey (.fg7) — default value text, matches reference #stats. */
+  color: #babdb6;
+}
+
+#monster-list {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.25rem;
+  z-index: 2;
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  max-width: calc(100% - 0.5rem);
+  /* No max-height / overflow: the JS caps content at MAX_ROWS rows plus an
+     optional short .ml-more affordance strip, so the panel auto-sizes to
+     its content and never scrolls. Tapping opens the full monster panel. */
+  background: rgba(0, 0, 0, 0.7);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  border: 1px solid rgba(186, 189, 182, 0.35);
+  border-radius: 3px;
+  padding: 2px 5px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+#monster-list:empty { display: none; }
+
+/* Red outline when any hostile is visible — ambient danger cue. Differs
+   from the baseline grey outline by both hue AND thickness (1px → 2px),
+   so the signal survives red/grey color confusion. The per-row 2px
+   .ml-bar still owns the focal "this one is deadly" signal since outline
+   and stripe occupy different visual modes. */
+#monster-list.has-hostile {
+  border-color: rgba(239, 41, 41, 0.55);
+  border-width: 2px;
+}
+
+.ml-row {
+  line-height: 1.4;
+  padding-left: 1em;
+  position: relative;
+  overflow-wrap: break-word;
+}
+.ml-row::after {
+  content: "";
+  display: block;
+  clear: left;
+}
+/* Threat bar lives in the panel's left padding so glyph alignment is identical
+   between bordered and unbordered rows. left:-5px abuts the 1px panel border. */
+.ml-bar::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--bar-color);
+}
+
+.ml-glyphs {
+  float: left;
+  margin-left: -1em;
+  margin-right: 0.3em;
+  white-space: nowrap;
+}
+
+.ml-glyph {
+  display: inline-block;
+  width: 1ch;
+  font-weight: bold;
+}
+
+.ml-hp {
+  display: inline-block;
+  width: 10px;
+  height: 1em;
+  border-radius: 2px;
+  margin: 0 0.3em;
+  vertical-align: middle;
+}
+
+.ml-name {
+  margin-left: 0.3em;
+}
+
+/* Compact "more below — tap to open" strip rendered below the rows when
+   group count exceeds MAX_ROWS. Not a .ml-row — no glyph float, no full
+   row line-height; just a centered chevron+count in the dim text color
+   so it reads as an affordance rather than a list entry. The faint top
+   border distinguishes the strip from the last row, framing it as a
+   footer rather than another entry. */
+.ml-more {
+  text-align: center;
+  line-height: 1;
+  padding: 1px 0 0;
+  border-top: 1px solid rgba(186, 189, 182, 0.2);
+  font-size: 0.75em;
+  color: var(--text-dim);
+}
+
+/* Tile-mode rows: replace each glyph span with a 20x20 tile-stack. Row
+   line-height grows from ~18px to 20px so the sprite stacks aren't clipped
+   vertically. Floats go away; the stacks lay out as an inline-flex run.
+   padding-left:0 keeps the tile column flush at the panel's inner edge to
+   match the ASCII row's `margin-left:-1em` float trick — otherwise the tile
+   strip floats noticeably right of where ASCII glyphs sit. */
+.ml-tile-row { padding-left: 0; line-height: 20px; }
+.ml-tile-row .ml-glyphs-tiles {
+  float: none;
+  margin: 0 0.3em 0 0;
+  display: inline-flex;
+  gap: 1px;
+  vertical-align: middle;
+}
+.ml-tile { width: 20px; height: 20px; }
+
+/* Monster panel (full-screen takeover variant of #monster-list) */
+.mp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.4rem;
+}
+.mp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  min-height: 48px;
+  cursor: pointer;
+}
+.mp-row:active { background: rgba(255, 255, 255, 0.10); }
+.mp-glyph {
+  width: 1.25rem;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  line-height: 1;
+  text-align: center;
+}
+.mp-tile {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+}
+.mp-hp-bar {
+  width: 6px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  position: relative;
+  flex: 0 0 auto;
+}
+.mp-hp-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-radius: 2px;
+}
+.mp-name {
+  flex: 1 1 auto;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.mp-status {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.mp-empty {
+  padding: 1rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.hs-id { font-size: 0.75rem; line-height: 1.2; }
+.hg-piety { margin-left: 0.4em; }
+
+.hg-bar-pair {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.05rem;
+}
+.hg-bar-pair .hg-hp { flex: 3 1 0; }
+.hg-bar-pair .hg-mp { flex: 2 1 0; }
+
+.hg-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  min-width: 0;
+  line-height: 1.2;
+}
+.hg-bar-row .hg-bar-cell { flex: 1; min-width: 2rem; }
+.hg-bar-val { font-size: 0.7rem; white-space: nowrap; }
+
+.hg-bar-cell {
+  height: 0.55rem;
+  background: #555753; /* DCSS darkgrey (.fg8) — bar trough, matches reference */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.hud-bar-seg {
+  display: inline-block;
+  vertical-align: top;
+  height: 100%;
+  width: 0;
+  transition: width 0.1s;
+}
+
+/* Segment colors mirror #stats_hp_bar_* / #stats_mp_bar_* in the reference
+   WebTiles client (webserver/game_data/static/style.css:111-148). */
+.hud-bar-seg.hp-full     { background-color: #8ae234; } /* DCSS lightgreen (--color-10) */
+.hud-bar-seg.hp-poison   { background-color: #fce94f; } /* DCSS yellow      (--color-14) */
+.hud-bar-seg.hp-decrease { background-color: #b30009; } /* DCSS red        (--color-4)  */
+.hud-bar-seg.hp-increase { background-color: #4e9a06; } /* DCSS green      (--color-2)  */
+.hud-bar-seg.mp-full     { background-color: #5e78ff; } /* DCSS lightblue  (--color-9)  */
+.hud-bar-seg.mp-decrease { background-color: #cd21cb; } /* DCSS magenta    (--color-5)  */
+.hud-bar-seg.mp-increase { background-color: #005afa; } /* DCSS blue       (--color-1)  */
+
+.hg-inline-stats {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.15rem 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+.hg-grp { white-space: nowrap; }
+
+.hg-stats-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  overflow: hidden;
+}
+.hg-stats-row .hg-inline-stats { flex: 0 0 auto; }
+.hg-noise-time {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hg-noise { letter-spacing: 0.05em; white-space: nowrap; }
+.hg-noise span { margin-left: 0; }
+.hg-time { font-variant-numeric: tabular-nums; }
+.hg-xl-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  overflow: hidden;
+}
+.hg-xl-place { flex: 0 0 auto; white-space: nowrap; }
+.hg-quiver {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.noise-empty { color: #555753; /* DCSS darkgrey (.fg8) — empty bar slots */ }
+
+.hg-wq {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Caption text — labels like AC/EV/SH, weapon-letter prefix, XL/Time/$.
+   DCSS brown (.fg6 / --color-6), matches reference .stats_caption. */
+.hg-caption { color: #8f5902; }
+.hg-caption + span { margin-left: 0.15em; }
+
+/* Stat / defense state colors (matches reference player.js classes).
+   .weapon-corroded uses class-class specificity to override the .fgN
+   color class on the same element (matches reference's #game #stats_weapon
+   .corroded_weapon override). */
+.stat-boosted, .def-boosted { color: #5e78ff; /* DCSS lightblue (.fg9) */ }
+.stat-zero { color: #ef2929; /* DCSS lightred (.fg12) */ }
+.def-degenerated { color: #b30009; /* DCSS red (.fg4) */ }
+.hg-wq .weapon-corroded { color: #b30009; /* DCSS red (.fg4) */ }
+
+/* Status row is locked to a single fixed-height line. flex-wrap:nowrap +
+   overflow:hidden prevents 10+ active lights from wrapping to a second
+   row, which would shrink the map (grid `1fr`) and risk a row drop. */
+#hud-status {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+  height: 0.9rem;
+  overflow: hidden;
+}
+
+.status-light {
+  font-size: 0.72rem;
+  line-height: 1;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#game-lobby-btn {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  margin-top: 0.15rem;
+}
+
+/* Game UI overlay (char creation, menus, descriptions) */
+#ui-overlay {
+  grid-area: map;
+  position: relative;
+  z-index: 5;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 0.75rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.overlay-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.overlay-title .tile {
+  flex-shrink: 0;
+}
+
+.overlay-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  margin-left: auto;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tile-stack {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.tile-stack .tile {
+  position: absolute;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+}
+
+.overlay-item .tile-stack {
+  margin-right: -0.2rem;
+}
+.overlay-close:active { color: var(--text); }
+
+.overlay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  height: 0;
+}
+
+.overlay-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1.00rem;
+  padding: 0.35rem 0.25rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+  width: 100%;
+  touch-action: manipulation;
+}
+
+.overlay-item.item-selected { background: var(--surface); }
+.overlay-item.item-hovered {
+  /*outline: 1px solid var(--accent);
+  outline-offset: -1px;*/
+  background: var(--surface);
+}
+
+.overlay-key {
+  color: var(--accent);
+  min-width: 1.4rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.overlay-label { color: var(--text); }
+
+.overlay-sep { color: var(--text-dim); flex-shrink: 0; }
+.overlay-sep[data-sep="$"] { color: #34e2e2; font-weight: bold; }
+.overlay-sep[data-sep="+"] { color: #fce94f; font-weight: bold; }
+
+.overlay-header {
+  font-size: 0.8rem;
+  padding: 0.5rem 0.25rem 0.15rem;
+}
+
+.overlay-body {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  height: 0;
+  position: relative;
+}
+
+.overlay-line { min-height: 1lh; white-space: pre-wrap; }
+.overlay-line--nowrap { white-space: pre; }
+
+.overlay-stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.9rem;
+  white-space: normal;
+}
+.overlay-stat { white-space: nowrap; }
+
+.overlay-spellbook { margin: 0.4em 0; }
+.overlay-spelllist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.overlay-spell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+  margin: 0 -0.3rem;
+  -webkit-tap-highlight-color: transparent;
+}
+.overlay-spell:active { background: rgba(255, 255, 255, 0.12); }
+@media (hover: hover) {
+  .overlay-spell:hover { background: rgba(255, 255, 255, 0.06); }
+}
+.overlay-spell .tile-stack { flex-shrink: 0; }
+.overlay-spell-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay-spell-effect, .overlay-spell-range { flex: 0 0 auto; }
+
+/* Terminal-mode: engaged when server sends scroll positions */
+.overlay-body--term .overlay-line { white-space: nowrap; }
+
+.overlay-footer {
+  color: var(--text);
+  font-size: 0.75rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  white-space: pre-wrap;
+}
+
+
+.overlay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.action-btn:active {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Newgame choice grid */
+.ngc-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ngc-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--ngc-cols, 3), 1fr);
+  gap: 2px;
+}
+
+.ngc-col-header {
+  font-size: 0.7rem;
+  text-align: center;
+  padding: 0.15rem 0.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ngc-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 0.2rem 0.25rem;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ngc-btn:active { background: rgba(245, 158, 11, 0.15); }
+.ngc-btn.ngc-selected { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.4); }
+
+.ngc-desc {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  padding: 0.4rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  min-height: 3.8em;
+}
+
+.ngc-desc-text { color: var(--text-dim); }
+.ngc-confirm-hint { color: var(--text-dim); font-size: 0.7rem; }
+
+.ngc-sub-grid {
+  border-top: 1px solid var(--border);
+  padding-top: 0.25rem;
+}
+
+.ngc-sub-grid .ngc-btn {
+  font-size: 0.75rem;
+}
+
+.ngc-btn .ngc-btn-main {
+  display: inline-block;
+}
+
+.ngc-btn .ngc-btn-suffix {
+  float: right;
+  margin-left: 0.5rem;
+  color: var(--text-dim);
+}
+
+/* Menu controls (replaces touch controls during menus) */
+#menu-controls {
+  grid-area: menu;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.menu-ctrl-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  flex: 1;
+  min-height: 2.6rem;
+  max-width: 10rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 0.3rem 0.5rem;
+  text-align: center;
+}
+.menu-ctrl-btn:active { background: var(--surface); color: var(--accent); }
+.menu-ctrl-glyph { font-size: 1.25rem; line-height: 1; }
+
+.skill-letter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+  flex-basis: 100%;
+  order: -1;
+  padding-bottom: 0.2rem;
+}
+.skill-letter-btn {
+  flex: 0 0 auto;
+  min-width: 2.2rem;
+  max-width: unset;
+  font-size: 0.95rem;
+  min-height: 2.2rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.menu-ctrl-btn[data-dynamic="accept"] {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: bold;
+}
+
+.menu-ctrl-btn[data-shift="true"].active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.menu-ctrl-btn[data-shift="true"].locked {
+  background: var(--warn);
+  color: var(--bg);
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--bg);
+}
+
+/* ── Unified touch controls ─────────────────────────────────── */
+#touch-controls {
+  grid-area: touch;
+  display: flex;
+  flex-direction: row;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  align-items: stretch;
+}
+
+#touch-controls.x-mode { border-top-color: var(--accent); }
+
+#spectator-bar {
+  grid-area: touch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+.spectator-label {
+  color: var(--fg);
+  font-size: 0.95rem;
+}
+
+.spectator-exit {
+  background: var(--surface2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.95rem;
+}
+
+/* D-pad: 3×3 CSS grid of large buttons */
+.tc-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 3.6rem);
+  grid-template-rows: repeat(3, 3.6rem);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.tc-dpad-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 1.4rem;
+  width: 3.6rem;
+  height: 3.6rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.tc-dpad-btn:active { background: var(--surface); color: var(--accent); }
+.tc-dpad-btn.wait { color: var(--text-dim); }
+
+/* Right panel */
+.tc-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Header: Esc | tabs | Enter */
+.tc-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+}
+
+.tc-esc,
+.tc-enter {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 0.8rem;
+  height: 1.4rem;
+  min-width: 2.6rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.tc-esc:active,
+.tc-enter:active { background: var(--surface); color: var(--accent); }
+
+/* Tab strip */
+.tc-tabs {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  gap: 2px;
+}
+
+.tc-tab {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  height: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  padding: 0 0.1rem;
+}
+
+.tc-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(245, 158, 11, 0.18);
+}
+
+.tc-tab:active { background: var(--surface); }
+
+/* Content area: tab-specific buttons */
+.tc-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.tc-row {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.tc-btn {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  min-height: 2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.tc-btn:active { background: var(--surface); color: var(--accent); }
+
+.tc-btn-spacer { background: transparent; border-color: transparent; pointer-events: none; }
+
+.tc-btn.glyph {
+  font-size: clamp(1.3rem, 5vw, 1.9rem);
+  line-height: 1;
+}
+
+/* Footer: Shift, Ctrl, Keyboard */
+.tc-footer {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+}
+
+.tc-shift,
+.tc-ctrl,
+.tc-kbd {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 0.65rem;
+  height: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.tc-shift.active,
+.tc-ctrl.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.tc-shift.locked {
+  background: var(--warn);
+  color: var(--bg);
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--bg);
+}
+
+.tc-shift:active,
+.tc-ctrl:active,
+.tc-kbd:active { background: var(--surface); color: var(--accent); }
+
+/* Virtual QWERTY keyboard overlay */
+#kbd-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--app-bottom-pad);
+  z-index: 200;
+  background: var(--bg);
+  border-top: 2px solid var(--accent);
+  padding: 0.4rem 0.3rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  --kbd-key-w: calc((100% - 9 * var(--kbd-gap)) / 10);
+  --kbd-key-h: clamp(2.6rem, 11vw, 4.2rem);
+  --kbd-gap: 0.3rem;
+  --kbd-row-gap: clamp(0.4rem, 2.5vw, 0.7rem);
+}
+
+.kbd-layer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kbd-row-gap);
+  align-items: center;
+  width: 100%;
+}
+
+.kbd-row {
+  display: flex;
+  gap: var(--kbd-gap);
+  justify-content: center;
+  align-items: stretch;
+  width: 100%;
+}
+
+.kbd-key {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  width: var(--kbd-key-w);
+  height: var(--kbd-key-h);
+  padding: 0;
+  flex-shrink: 1;
+  flex-grow: 0;
+  min-width: 0;
+}
+
+.kbd-key:active { background: var(--surface); color: var(--accent); }
+
+.kbd-key.wide {
+  width: auto;
+  min-width: var(--kbd-key-w);
+  padding: 0 0.45rem;
+  font-size: 0.9rem;
+}
+
+.kbd-key.wide.flex {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Glyph keys (⎋ ⌃ ⇥ ⏎ ⌫ ⇧) — bump size so the Unicode symbols visually fill the key */
+.kbd-key.glyph {
+  font-size: clamp(1.5rem, 5.5vw, 2.2rem);
+  line-height: 1;
+}
+
+.kbd-key.mod.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.kbd-key.mod.locked {
+  background: var(--warn);
+  color: var(--bg);
+  border-color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--bg);
+}
+
+.kbd-key.with-shifted,
+.kbd-key.with-corner { position: relative; }
+
+.kbd-shifted,
+.kbd-corner {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+#kbd-overlay.shift-on .kbd-key.with-shifted .kbd-shifted { color: var(--accent); }
+#kbd-overlay.shift-on .kbd-key.with-shifted .kbd-main { color: var(--text-dim); }
+
+#kbd-overlay.shift-on .kbd-key.letter { text-transform: uppercase; }
+#kbd-overlay.ctrl-on .kbd-key.letter::before { content: "^"; }
+
+/* Dim text on persistent touch chrome so the amber accent and map glyphs
+   carry the visual hierarchy. :active and modifier states override via
+   higher specificity (:active / .active / .locked all add a class). */
+.tc-dpad-btn,
+.tc-esc,
+.tc-enter,
+.tc-btn,
+.tc-shift,
+.tc-ctrl,
+.tc-kbd,
+.kbd-key { color: #c9c4be; }
+
+/* CRT terminal color classes (fg0–fg15, bg0–bg15) */
+.fg0{color:#000000}.fg1{color:#005afa}.fg2{color:#4e9a06}.fg3{color:#06989a}
+.fg4{color:#b30009}.fg5{color:#cd21cb}.fg6{color:#8f5902}.fg7{color:#babdb6}
+.fg8{color:#555753}.fg9{color:#5e78ff}.fg10{color:#8ae234}.fg11{color:#34e2e2}
+.fg12{color:#ef2929}.fg13{color:#fd59fa}.fg14{color:#fce94f}.fg15{color:#eeeeec}
+.bg0{background-color:#000000}.bg1{background-color:#005afa}.bg2{background-color:#4e9a06}
+.bg3{background-color:#06989a}.bg4{background-color:#b30009}.bg5{background-color:#cd21cb}
+.bg6{background-color:#8f5902}.bg7{background-color:#babdb6}.bg8{background-color:#555753}
+.bg9{background-color:#5e78ff}.bg10{background-color:#8ae234}.bg11{background-color:#34e2e2}
+.bg12{background-color:#ef2929}.bg13{background-color:#fd59fa}.bg14{background-color:#fce94f}
+.bg15{background-color:#eeeeec}
+
+/* CRT full-screen display */
+#crt-display {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--map-font-size);
+  line-height: var(--crt-line-height);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.crt-line { min-height: 1em; }
+.crt-highlight { background: rgba(255,255,100,0.15); display: block; }
+
+/* ── Landscape layout ────────────────────────────────────────
+   3 columns. Left: msg log on top, d-pad on bottom.
+   Center: map (with floating monster list).
+   Right: HUD on top, touch panel (Esc/tabs/buttons/footer) on bottom.
+   ──────────────────────────────────────────────────────────── */
+@media (orientation: landscape) {
+  #app { padding-bottom: 0; }
+
+  #game-view {
+    grid-template-columns: calc(12rem + 4px) minmax(0, 1fr) 15rem;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "msg  map  hud"
+      "dpad map  panel";
+    column-gap: 0;
+  }
+
+  /* Inventory / menus / ui-push overlays render only over the map area
+     (not over the side columns), and stack above the floating monster
+     list via z-index. */
+  #ui-overlay {
+    grid-area: map;
+    position: relative;
+    z-index: 5;
+  }
+
+  #game-messages {
+    grid-area: msg;
+    height: auto;
+    border-top: none;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* --more-- prompt: anchor to the bottom of the msg column with a
+     stacking context so it sits on top of #game-messages content. */
+  #more-btn {
+    grid-area: msg;
+    align-self: end;
+    position: relative;
+    z-index: 4;
+  }
+
+  #map-wrap { grid-area: map; }
+
+  #game-hud {
+    grid-area: hud;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0.3rem 0.4rem;
+  }
+
+  /* Stack HP and MP bars vertically when the HUD is a narrow sidebar */
+  .hg-bar-pair { flex-direction: column; align-items: stretch; gap: 0.15rem; }
+  .hg-bar-pair .hg-hp,
+  .hg-bar-pair .hg-mp { flex: none; }
+
+  /* Split touch controls so d-pad and panel become separate grid cells */
+  #touch-controls {
+    display: contents;
+  }
+
+  .tc-dpad {
+    grid-area: dpad;
+    justify-self: start;
+    align-self: end;
+    margin: 0.35rem 0 0 0;
+  }
+
+  .tc-panel {
+    grid-area: panel;
+    border-top: 1px solid var(--border);
+    padding: 0;
+    margin: 0.35rem 0 0 0;
+  }
+
+  /* Menu-specific touch buttons replace the regular touch panel
+     while a CRT/menu is active. */
+  #menu-controls { grid-area: panel; }
+
+  /* Spectator mode has no touch controls; place the bar in the
+     panel cell (under the HUD) so it doesn't spawn an implicit
+     empty column to the right. */
+  #spectator-bar { grid-area: panel; border-top: 1px solid var(--border); }
+
+  /* Spectator mode has no d-pad either; let the message log
+     extend into the empty bottom-left cell. */
+  #game-view:has(#spectator-bar) #game-messages { grid-row: 1 / span 2; }
+
+  /* When an overlay is shown, the JS sets inline display:none on these
+     elements to maximize overlay space (a portrait-mode assumption).
+     In landscape the overlay is confined to the map cell, so these
+     panels stay visible alongside it. !important is needed to win
+     against the inline style. */
+  #game-messages { display: block !important; }
+  #game-hud      { display: flex  !important; }
+  #touch-controls { display: contents !important; }
+}
+
+/* Landscape on short viewports: compact the login card so it fits
+   without scrolling on a phone in landscape (≤500px tall). */
+@media (orientation: landscape) and (max-height: 500px) {
+  .login-card { padding: 1rem 1.25rem; max-width: 380px; }
+  .login-title { font-size: 1.2rem; margin-bottom: 0.6rem; }
+  .login-section { margin-bottom: 0.85rem; }
+  .login-label { margin-bottom: 0.5rem; font-size: 0.8rem; }
+  .login-label input,
+  .login-label select,
+  .login-spectate-select { font-size: 0.9rem; padding: 0.4rem 0.6rem; }
+  .login-btn { padding: 0.5rem; font-size: 0.95rem; }
+  .login-account-list { gap: 0.35rem; }
+  .login-account-card { padding: 0.45rem 0.6rem; }
+  .login-account-username { font-size: 0.9rem; }
+  .login-account-tag { padding: 0.2rem 0.4rem; font-size: 0.72rem; }
+  .login-footer { margin-top: 0.75rem; font-size: 0.75rem; }
+}

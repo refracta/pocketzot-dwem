@@ -1,0 +1,10 @@
+# Order matters — first match wins. Real files in /public and /dist are served
+# before _redirects fires, so these rules only run for paths that don't exist
+# on disk. The asset-prefix and SW-name rules fail loud (404) when a hashed
+# bundle or service-worker script is missing, instead of silently falling
+# through to index.html — that masked a pre-release SW issue where the
+# browser's SW update check kept getting HTML where JS was expected.
+/sw.js          /index.html  404
+/workbox-*.js   /index.html  404
+/assets/*       /index.html  404
+/*              /index.html  200
