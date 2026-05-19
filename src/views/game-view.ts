@@ -11,7 +11,7 @@ import { fgHaloDngnName, loFlagOverlayIcons } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
-import { handleKeydown, CK_UP, CK_DOWN } from '../game/input/keyboard'
+import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { tileLoader, TEX } from '../game/tiles/tile-loader'
@@ -339,6 +339,10 @@ export function buildGameView(
     if (msg.msg === 'key' && menuNavActive()) {
       if (msg.keycode === CK_DOWN) { cycleMenuHover(false); return }
       if (msg.keycode === CK_UP) { cycleMenuHover(true); return }
+      if (msg.keycode === CK_PGDN) { pageMenu(false); return }
+      if (msg.keycode === CK_PGUP) { pageMenu(true); return }
+      if (msg.keycode === CK_END) { jumpMenu(true); return }
+      if (msg.keycode === CK_HOME) { jumpMenu(false); return }
     }
     conn.send(msg)
   })
@@ -1653,18 +1657,20 @@ export function buildGameView(
     })
   }
 
-  function highlightHoveredRow(): void {
+  // scroll=false when the caller already positioned the list (paging) and
+  // scrollIntoView would fight the manual scroll.
+  function highlightHoveredRow(scroll = true): void {
     uiOverlay.querySelectorAll<HTMLElement>('.item-hovered').forEach(el => el.classList.remove('item-hovered'))
     const el = uiOverlay.querySelector<HTMLElement>(`[data-menu-idx="${hoveredMenuIdx}"]`)
     if (el) {
       el.classList.add('item-hovered')
-      el.scrollIntoView({ block: 'nearest' })
+      if (scroll) el.scrollIntoView({ block: 'nearest' })
     }
   }
 
-  // Reflect a server-reported hover. Keeps menuServerHover in sync so any
-  // mixed server-driven moves (e.g. paging keys, while still forwarded raw in
-  // a future change) don't desync our client-side cursor.
+  // Reflect a server-reported hover (echo of our own menu_hover/menu_scroll,
+  // or any server-initiated move). Keeps menuServerHover in sync so the next
+  // client-side move computes from the right place.
   function applyServerHover(raw: number): void {
     menuServerHover = raw
     hoveredMenuIdx = raw
@@ -1699,11 +1705,11 @@ export function buildGameView(
     return -1
   }
 
-  function setMenuHover(idx: number): void {
+  function setMenuHover(idx: number, scroll = true): void {
     if (idx < 0 || idx === menuServerHover) return
     menuServerHover = idx
     hoveredMenuIdx = idx
-    highlightHoveredRow()
+    highlightHoveredRow(scroll)
     // Drive the server's cursor directly instead of letting it cycle_hover
     // off a forwarded arrow key (which is hotkey-blind). Do not also forward
     // the raw key — that would double-move.
@@ -1713,6 +1719,67 @@ export function buildGameView(
   function cycleMenuHover(reverse: boolean): void {
     const next = nextHoverableMenuItem(reverse, menuServerHover)
     if (next !== -1) setMenuHover(next)
+  }
+
+  function menuListEl(): HTMLElement | null {
+    return uiOverlay.querySelector<HTMLElement>('.overlay-list')
+  }
+
+  const firstSelectableIdx = (): number => nextHoverableMenuItem(false, -1)
+  const lastSelectableIdx = (): number =>
+    nextHoverableMenuItem(true, activeMenu?.items?.length ?? 0)
+
+  // The rendered rows whose box intersects the list viewport, in DOM order
+  // (= server-index order; continuations/headers carry no data-menu-idx).
+  function visibleMenuRows(el: HTMLElement): HTMLElement[] {
+    const lr = el.getBoundingClientRect()
+    return [...el.querySelectorAll<HTMLElement>('[data-menu-idx]')].filter(r => {
+      const rr = r.getBoundingClientRect()
+      return rr.bottom > lr.top + 1 && rr.top < lr.bottom - 1
+    })
+  }
+
+  function firstSelectableVisibleIdx(el: HTMLElement): number {
+    for (const r of visibleMenuRows(el)) {
+      const i = Number(r.dataset.menuIdx)
+      if (menuItemSelectable(activeMenu?.items?.[i])) return i
+    }
+    return -1
+  }
+
+  // Webtiles menu paging is client-side; the server only needs the resulting
+  // visible range + hover so it can stream item chunks for large/lazy menus
+  // (reference update_server_scroll). Harmless no-op for fully-loaded menus.
+  function sendMenuScroll(el: HTMLElement): void {
+    const vis = visibleMenuRows(el)
+    if (vis.length === 0) return
+    conn.send({
+      msg: 'menu_scroll',
+      first: Number(vis[0].dataset.menuIdx),
+      last: Number(vis[vis.length - 1].dataset.menuIdx),
+      hover: menuServerHover,
+    })
+  }
+
+  function pageMenu(up: boolean): void {
+    const el = menuListEl()
+    if (!el) return
+    const max = Math.max(0, el.scrollHeight - el.clientHeight)
+    const delta = Math.max(40, el.clientHeight - 24)  // slight overlap
+    el.scrollTop = Math.min(max, Math.max(0, el.scrollTop + (up ? -delta : delta)))
+    const target = up && el.scrollTop <= 0 ? firstSelectableIdx()
+      : !up && el.scrollTop >= max - 1 ? lastSelectableIdx()
+      : firstSelectableVisibleIdx(el)
+    if (target >= 0) setMenuHover(target, false)
+    sendMenuScroll(el)
+  }
+
+  function jumpMenu(toEnd: boolean): void {
+    const el = menuListEl()
+    if (!el) return
+    el.scrollTop = toEnd ? el.scrollHeight : 0
+    setMenuHover(toEnd ? lastSelectableIdx() : firstSelectableIdx(), false)
+    sendMenuScroll(el)
   }
 
   // A rendered, arrow-selectable menu overlay is up: arrow input should drive
@@ -1730,6 +1797,10 @@ export function buildGameView(
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false
     if (e.key === 'ArrowDown') { e.preventDefault(); cycleMenuHover(false); return true }
     if (e.key === 'ArrowUp') { e.preventDefault(); cycleMenuHover(true); return true }
+    if (e.key === 'PageDown') { e.preventDefault(); pageMenu(false); return true }
+    if (e.key === 'PageUp') { e.preventDefault(); pageMenu(true); return true }
+    if (e.key === 'Home') { e.preventDefault(); jumpMenu(false); return true }
+    if (e.key === 'End') { e.preventDefault(); jumpMenu(true); return true }
     return false
   }
 
