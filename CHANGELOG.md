@@ -9,6 +9,13 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-20
+
+- Fixed a brief flicker when opening the message log (Ctrl-P) and other long
+  in-game popups.
+- Fixed a jump-back when scrolling those popups to the bottom on phone-width
+  screens.
+
 ## 2026-05-19
 
 - Fixed a black screen that could appear when resuming a game on experimental
