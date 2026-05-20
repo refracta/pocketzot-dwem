@@ -1671,10 +1671,19 @@ export function buildGameView(
   // Reflect a server-reported hover (echo of our own menu_hover/menu_scroll,
   // or any server-initiated move). Keeps menuServerHover in sync so the next
   // client-side move computes from the right place.
+  //
+  // Suppress scrollIntoView when `raw === menuServerHover` — that's the echo
+  // of a hover change we just sent, so the caller (pageMenu/jumpMenu) already
+  // positioned the list. `block:'nearest'` is *usually* a no-op when the row
+  // is in view, but a coalesced lead can be taller than the viewport, in
+  // which case 'nearest' would align its bottom and undo the page scroll.
+  // Genuine server-initiated moves see `raw !== menuServerHover` and still
+  // scroll the row into view.
   function applyServerHover(raw: number): void {
+    const isEcho = raw === menuServerHover
     menuServerHover = raw
     hoveredMenuIdx = raw
-    highlightHoveredRow()
+    highlightHoveredRow(!isEcho)
   }
 
   function menuItemSelectable(it: MenuItem | undefined): boolean {
@@ -1706,7 +1715,11 @@ export function buildGameView(
   }
 
   function setMenuHover(idx: number, scroll = true): void {
-    if (idx < 0 || idx === menuServerHover) return
+    if (idx < 0) return
+    if (idx === menuServerHover) {
+      highlightHoveredRow(scroll)
+      return
+    }
     menuServerHover = idx
     hoveredMenuIdx = idx
     highlightHoveredRow(scroll)
