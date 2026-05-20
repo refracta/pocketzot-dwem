@@ -13,6 +13,13 @@ Notable changes to PocketZot, newest first.
 
 - Fixed a black screen that could appear when resuming a game on experimental
   or trunk servers after the server had been updated.
+- In describe menus, very long monster descriptions now stay a single tappable
+  entry instead of splitting into separate rows.
+- Menu highlight follows the d-pad immediately on up/down, instead of after a server
+  round-trip.
+- D-pad diagonals page through long menus and jump to top/bottom.
+- Fixed a visible jerk-back after paging on phone-width menus with tall description
+  rows.
 
 ## 2026-05-18
 
