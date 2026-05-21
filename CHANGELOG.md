@@ -9,6 +9,14 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-21
+
+- Improved search (Ctrl-F) handling.
+- Setting an exclusion zone with radius (R#) in X mode now pops up the
+  on-screen numpad to pick the radius value.
+- Shift-tapping a shop row to add an item to your shopping list no longer
+  highlights an unrelated row.
+
 ## 2026-05-20
 
 - Fixed a brief flicker when opening the message log (Ctrl-P) and other long
