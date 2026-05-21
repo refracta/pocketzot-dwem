@@ -186,6 +186,11 @@ export class TileMapView {
   private viewportW = NORMAL_AXIS
   private viewportH = NORMAL_AXIS
   private zoomMode = false
+  // Multiplier on cellPx — mirrors MapView.fontScale. X-mode sets this to
+  // <1 to shrink cells and let the symmetric slack-fill add more of them.
+  // Named `renderScale` internally; setFontScale() stores into it for API
+  // parity with the ASCII view.
+  private renderScale = 1.0
   private viewCenter = { x: 0, y: 0 }
   private cursorLoc: { x: number; y: number } | null = null
   // CSS pixel size of one rendered cell — a float, picked to fill the binding
@@ -308,11 +313,11 @@ export class TileMapView {
   get element(): HTMLElement { return this.container }
 
   setViewCenter(c: { x: number; y: number }): void { this.viewCenter = { ...c } }
-  // Accepted for API parity with MapView (ASCII shrinks glyphs in X-mode).
-  // Tile rendering deliberately ignores the scale: the user wants X-mode
-  // tiles at the same cell size as normal play, with the freed HUD/log
-  // area filled by the standard slack-fill in fitToContainer.
-  setFontScale(_scale: number): void { /* no-op for tile rendering */ }
+  // Mirrors MapView.setFontScale. Stored as a multiplier on cellPx, applied
+  // in fitToContainer. X-mode calls this with 0.7 to zoom out (smaller cells
+  // ⇒ more of them fit, courtesy of the symmetric slack-fill); back to 1.0
+  // on exit. Caller is expected to invoke fitToContainer() next.
+  setFontScale(scale: number): void { this.renderScale = scale }
   setZoomMode(on: boolean): void { this.zoomMode = on }
   isZoomMode(): boolean { return this.zoomMode }
 
@@ -331,14 +336,17 @@ export class TileMapView {
     // space the binding axis happens to have) then grows in increments of 2
     // cells — one per side — so the player stays centered. X-mode flows
     // through the same code: HUD/log are hidden by game-view, availH grows,
-    // and the slack-fill turns the freed area into additional cells at the
-    // same cellPx as normal play (no glyph shrink).
+    // and the renderScale<1 (set via setFontScale) shrinks each cell so the
+    // slack-fill turns the freed area into still more cells.
     const baseAxis = this.zoomMode ? ZOOM_AXIS : NORMAL_AXIS
 
     // Float cell size — fills the binding axis exactly. The backing canvas
     // renders at ATLAS_CELL per cell and CSS scales to this size, so we don't
     // have to round to whole (or even) pixels to keep sprites aligned.
-    const cell = Math.max(8, Math.min(96, Math.min(availW / baseAxis, availH / baseAxis)))
+    // renderScale (X-mode) shrinks the result further; clamp stays in [8,96]
+    // so tiny containers can't underflow.
+    const baseCell = Math.min(availW / baseAxis, availH / baseAxis)
+    const cell = Math.max(8, Math.min(96, baseCell * this.renderScale))
     this.cellPx = cell
 
     const fitW = Math.floor(availW / cell)
