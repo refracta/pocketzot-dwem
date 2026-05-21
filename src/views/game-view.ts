@@ -184,6 +184,16 @@ export function buildGameView(
   // wrapped row. This tracks the server's cursor so the next client move is
   // computed from the right place even when the server moves it.
   let menuServerHover = -1
+  // Hover is a keyboard-nav indicator that doesn't earn its visual weight in a
+  // touch-first UI; the server, however, sends `last_hovered` defaults
+  // (MF_INIT_HOVER → 0) on menu open and re-echoes them on most updates. We
+  // suppress the visual until the user actually drives hover (arrows / Home /
+  // End / paging) — otherwise e.g. tapping uppercase `D` in a shop would light
+  // up row a, because ShopMenu::process_key's shopping-list branch in
+  // shopping.cc doesn't update `last_hovered` and echoes the stale init
+  // default. After the first user-driven move the flag stays on for the
+  // lifetime of the menu, and server echoes track normally.
+  let menuHoverFromUser = false
   let activePromptEl: HTMLElement | null = null
   let inXMode = false
   let exitedXModeForInput = false
@@ -1713,6 +1723,7 @@ export function buildGameView(
   // Genuine server-initiated moves see `raw !== menuServerHover` and still
   // scroll the row into view.
   function applyServerHover(raw: number): void {
+    if (!menuHoverFromUser) return  // see menuHoverFromUser declaration
     const isEcho = raw === menuServerHover
     menuServerHover = raw
     hoveredMenuIdx = raw
@@ -1749,6 +1760,7 @@ export function buildGameView(
 
   function setMenuHover(idx: number, scroll = true): void {
     if (idx < 0) return
+    menuHoverFromUser = true
     if (idx === menuServerHover) {
       highlightHoveredRow(scroll)
       return
@@ -1854,6 +1866,7 @@ export function buildGameView(
     if (activeMenu !== msg) {
       hoveredMenuIdx = -1
       menuServerHover = -1
+      menuHoverFromUser = false
       menuShift.reset()
     }
     activeMenu = msg
