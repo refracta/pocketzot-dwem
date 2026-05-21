@@ -139,6 +139,7 @@ interface MenuMsg {
 }
 
 // Menu flag bits (subset; values from the reference client enums.js).
+const MF_MULTISELECT = 0x0004
 const MF_WRAP = 0x0080
 const MF_ARROWS_SELECT = 0x40000
 
@@ -880,15 +881,37 @@ export function buildGameView(
     touchControls.enterXMode()
     mapView.setFontScale(0.7)
     requestAnimationFrame(() => mapView.fitToContainer())
+    // Stash-search activation opens an X-mode preview with the destination
+    // cursor: swap the results menu out for the full map + d-pad so the
+    // player can see where they'd travel and confirm with Enter. Restored
+    // by exitXMode when they Esc back to the menu; close_menu / hideOverlay
+    // takes care of cleanup if they Enter to travel and the menu closes.
+    if (activeMenu?.tag === 'stash') {
+      uiOverlay.style.display = 'none'
+      menuControls.style.display = 'none'
+      mapView.element.style.display = ''
+      touchControls.element.style.display = ''
+    }
   }
 
   function exitXMode(): void {
     inXMode = false
     touchControls.exitXMode()
-    hud.style.display = ''
-    msgLog.style.display = ''
     mapView.setFontScale(1.0)
     requestAnimationFrame(() => mapView.fitToContainer())
+    if (activeMenu?.tag === 'stash') {
+      // Returning to the stash results menu: keep HUD/msglog hidden (they were
+      // hidden before the preview by renderOverlay, and the overlay layout
+      // expects them gone), swap map back for overlay + custom controls,
+      // re-hide the d-pad.
+      uiOverlay.style.display = ''
+      menuControls.style.display = ''
+      mapView.element.style.display = 'none'
+      touchControls.element.style.display = 'none'
+    } else {
+      hud.style.display = ''
+      msgLog.style.display = ''
+    }
   }
 
   // --- ui-push handler ---
@@ -1594,7 +1617,6 @@ export function buildGameView(
   function buildMenuControls(tag?: string, flags?: number): void {
     menuControls.innerHTML = ''
     type BtnDef = { label: string; key?: string; keycode?: number; dynamic?: true; shift?: true }
-    const MF_MULTISELECT = 0x4
     const MOUSE_MODE_YESNO = 8
     // Server keeps the menu open for a (y/N) confirmation (e.g. shop purchase)
     // and signals it via input_mode=YESNO. Swap the row to Y/N so the user
@@ -1614,6 +1636,23 @@ export function buildGameView(
         { label: '/', key: '/' },
         { label: '⇧', shift: true },
         { label: '⏎', keycode: 13, dynamic: true },
+      ]
+    } else if (tag === 'stash') {
+      // Stash-search results (Ctrl-F). Tap a row to open the X-mode preview;
+      // enterXMode/exitXMode hide/restore this menu around the preview.
+      // The three letter-keys mirror the cues the server prints in the menu
+      // title:
+      //   !  toggle travel/examine target mode
+      //   /  cycle sort (alpha / by distance)
+      //   =  hide useless & duplicates
+      // No accept (⏎) button: with no visible default hover (see
+      // menuHoverFromUser) there's no obvious target, and tapping a row
+      // already activates it.
+      btns = [
+        { label: '⎋', keycode: 27 },
+        { label: '!', key: '!' },
+        { label: '/', key: '/' },
+        { label: '=', key: '=' },
       ]
     } else if (tag === 'skills') {
       btns = [
@@ -1878,7 +1917,7 @@ export function buildGameView(
       footerEl.innerHTML = formatMoreHtml(msg.more ?? '', 'top')
       uiOverlay.appendChild(footerEl)
     })
-    if (msg.tag === 'shop') {
+    if (msg.tag === 'shop' || msg.tag === 'stash') {
       buildMenuControls(msg.tag, msg.flags)
       menuControls.style.display = ''
       touchControls.element.style.display = 'none'
@@ -1989,6 +2028,21 @@ export function buildGameView(
         const itemColor = item.colour != null ? uiColor(item.colour) : undefined
         const keyColor = (keyTagName && DCSS_COLOR_MAP[keyTagName]) || itemColor
         const el = makeItemButton(keyLabel, labelHtml, () => {
+          // ARROWS_SELECT menus expect activation against the current hover,
+          // not via row hotkeys: Enter for singleselect, Space for multiselect
+          // (upstream menu.js:1066). Move server hover to the tapped row and
+          // then send the activation key — leaves server state matching the
+          // user's tap target. (For stash search, sending the row's letter
+          // would happen to produce the same visible X-mode preview, but the
+          // upstream protocol path is more robust.)
+          const flags = activeMenu?.flags ?? 0
+          if (flags & MF_ARROWS_SELECT) {
+            setMenuHover(i, false)
+            const activateKey = (flags & MF_MULTISELECT) ? 32 : 13
+            conn.send({ msg: 'key', keycode: activateKey })
+            menuShift.consume()
+            return
+          }
           if (keycode == null) return
           let k = keycode
           if (activeMenu?.tag === 'shop' && menuShift.isOn && k >= 97 && k <= 122) {
