@@ -16,6 +16,7 @@ Notable changes to PocketZot, newest first.
   on-screen numpad to pick the radius value.
 - Shift-tapping a shop row to add an item to your shopping list no longer
   highlights an unrelated row.
+- X mode now zooms out in tile mode, matching existing ASCII mode behavior.
 
 ## 2026-05-20
 

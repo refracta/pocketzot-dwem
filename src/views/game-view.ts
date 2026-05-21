@@ -143,6 +143,13 @@ const MF_MULTISELECT = 0x0004
 const MF_WRAP = 0x0080
 const MF_ARROWS_SELECT = 0x40000
 
+// Cell/glyph multiplier applied while X-mode (eXamine level map) is active.
+// Honored by both renderers via setFontScale (ASCII shrinks glyphs, tiles
+// shrink cellPx); the symmetric slack-fill turns the freed HUD/log area
+// into extra cells. Upstream's tile_map_scale defaults to 0.6 — we ship
+// 0.7 for now; tune in one place.
+const X_MODE_SCALE = 0.7
+
 export function buildGameView(
   conn: WsConnection,
   onLobby: () => void,
@@ -454,7 +461,13 @@ export function buildGameView(
     const oldEl = mapView.element
     const next: MapView | TileMapView = mode === 'tiles' ? new TileMapView(store) : new MapView(store)
     next.setViewCenter(center)
+    // Default tile mode to zoom-on. Apply unconditionally — tile X-mode 
+    // uses the zoom-on (17-floor) base shrunk by X_MODE_SCALE.
     if (mode === 'tiles') next.setZoomMode(true)
+    // Carry the X-mode scale across the swap: the new view starts at 1.0
+    // by default, which would visibly un-zoom the map mid-X-mode. inXMode
+    // is the source of truth (global flag), so re-apply directly.
+    if (inXMode) next.setFontScale(X_MODE_SCALE)
     if (cursorLoc) next.setCursor(cursorLoc)
     oldEl.replaceWith(next.element)
     mapView = next
@@ -902,7 +915,10 @@ export function buildGameView(
     msgLog.style.display = 'none'
     hud.style.display = 'none'
     touchControls.enterXMode()
-    mapView.setFontScale(0.7)
+    mapView.setFontScale(X_MODE_SCALE)
+    // Zoom mode is left untouched: tiles already had zoom-on (forced at
+    // construction by setRenderMode), and the scale shrinks each cell by
+    // X_MODE_SCALE so the freed HUD/log area fills with more cells.
     requestAnimationFrame(() => mapView.fitToContainer())
     // Stash-search activation opens an X-mode preview with the destination
     // cursor: swap the results menu out for the full map + d-pad so the
