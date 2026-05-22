@@ -1100,6 +1100,13 @@ export function buildGameView(
         uiOverlay.appendChild(buildActionsBar(msg.actions))
       }
     })
+    // A ui-push layered over a shop/stash menu (e.g. describe-item after `!`)
+    // should keep the menu's bottom row.
+    if (activeMenu?.tag === 'shop' || activeMenu?.tag === 'stash') {
+      buildMenuControls(activeMenu.tag, activeMenu.flags)
+      menuControls.style.display = ''
+      touchControls.element.style.display = 'none'
+    }
   }
 
   function showTxtPage(text: string): void {
