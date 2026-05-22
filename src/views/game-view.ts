@@ -2074,6 +2074,21 @@ export function buildGameView(
         const itemColor = item.colour != null ? uiColor(item.colour) : undefined
         const keyColor = (keyTagName && DCSS_COLOR_MAP[keyTagName]) || itemColor
         const el = makeItemButton(keyLabel, labelHtml, () => {
+          // Shop shift-tap: shopping list uses the uppercase letter as a direct
+          // keybind (shopping.cc), separate from the arrows-select activate-on-
+          // hover path — so route it before the MF_ARROWS_SELECT branch below,
+          // which would otherwise preempt it with Space and just mark for
+          // purchase.
+          if (
+            activeMenu?.tag === 'shop'
+            && menuShift.isOn
+            && keycode != null
+            && keycode >= 97 && keycode <= 122
+          ) {
+            conn.send({ msg: 'key', keycode: keycode - 32 })
+            menuShift.consume()
+            return
+          }
           // ARROWS_SELECT menus expect activation against the current hover,
           // not via row hotkeys: Enter for singleselect, Space for multiselect
           // (upstream menu.js:1066). Move server hover to the tapped row and
@@ -2090,11 +2105,7 @@ export function buildGameView(
             return
           }
           if (keycode == null) return
-          let k = keycode
-          if (activeMenu?.tag === 'shop' && menuShift.isOn && k >= 97 && k <= 122) {
-            k -= 32
-          }
-          conn.send({ msg: 'key', keycode: k })
+          conn.send({ msg: 'key', keycode })
           menuShift.consume()
         }, itemColor, separator, keyColor)
         if (item.tiles && item.tiles.length > 0) {
