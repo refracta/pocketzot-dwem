@@ -1,0 +1,47 @@
+{
+  "description": "One step south on D:1, turn 68",
+  "captured_from": "ArrowDown from a saved game",
+  "messages": [
+    { "msg": "player", "time": 684, "turn": 68, "pos": { "x": 0, "y": 1 } },
+    {
+      "msg": "map",
+      "vgrdc": { "x": 0, "y": 1 },
+      "cells": [
+        { "x": 0, "y": 0, "g": ".", "col": 7, "t": { "fg": 0, "doll": null, "mcache": null } },
+        { "x": 0, "y": 1, "g": "@", "col": 87, "t": { "fg": 531914, "doll": [[7908, 32], [7872, 32], [7975, 32], [8040, 32], [8953, 32], [8407, 32]], "mcache": null } },
+        { "x": 5, "y": 3, "col": 7, "t": { "bg": 6 } },
+        { "x": 6, "y": 4, "col": 7, "t": { "bg": 5 } },
+        { "col": 7, "t": { "bg": 4 } },
+        { "x": 7, "y": 5, "col": 6, "t": { "bg": 1140 } },
+        { "x": 14, "y": 5, "mf": 26 },
+        { "x": 15, "y": 6, "mf": 26 },
+        { "mf": 26 },
+        { "x": 11, "y": 7, "mf": 26 },
+        { "mf": 26 },
+        { "x": 16, "y": 7, "mf": 26 },
+        { "x": 3, "y": 8, "col": 7, "t": { "bg": 7 } },
+        { "col": 6, "t": { "bg": 1140 } },
+        { "x": 12, "y": 8, "mf": 26 },
+        { "mf": 26 },
+        { "mf": 26 },
+        { "x": 16, "y": 8, "mf": 26 },
+        { "x": 1, "y": 9, "mf": 26 },
+        { "x": 5, "y": 9, "mf": 26 },
+        { "x": 14, "y": 9, "mf": 26 },
+        { "mf": 26 },
+        { "mf": 26 }
+      ]
+    }
+  ],
+  "expected": {
+    "playerPos": { "x": 0, "y": 1 },
+    "cellCount": 23,
+    "monsterCount": 0,
+    "monsterNames": [],
+    "cellSamples": [
+      { "x": 0, "y": 1, "g": "@", "col": 87 },
+      { "x": 0, "y": 0, "g": ".", "col": 7 },
+      { "x": 5, "y": 3, "g": " ", "col": 7 }
+    ]
+  }
+}

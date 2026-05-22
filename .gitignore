@@ -1,6 +1,8 @@
 .DS_Store
 dev-material/
 node_modules/
+coverage/
+.vitest/
 CLAUDE.md
 BUGS.md
 BUILD.md
