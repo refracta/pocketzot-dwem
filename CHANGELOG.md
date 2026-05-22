@@ -9,6 +9,12 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-22
+
+- Tapping a shop item to view its description no longer swaps the shop's
+  bottom control bar for the d-pad.
+- Improve shop shift-tapping behavior.
+
 ## 2026-05-21
 
 - Improved search (Ctrl-F) handling.
