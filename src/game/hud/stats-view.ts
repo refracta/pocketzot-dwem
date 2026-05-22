@@ -128,10 +128,18 @@ export class StatsView {
 
     // Weapon row (own line, ellipsis if too long)
     const wqRow = this.el.querySelector<HTMLElement>('#hud-wq')
-    const weaponHtml = this.buildWeapon()
+    const weaponHtml = this.buildWeapon(false)
     if (wqRow) {
       wqRow.innerHTML = weaponHtml
       wqRow.style.display = weaponHtml ? '' : 'none'
+    }
+
+    // Offhand weapon row (dual-wield etc.) — only when server flags it.
+    const offhandRow = this.el.querySelector<HTMLElement>('#hud-wq-offhand')
+    if (offhandRow) {
+      const offhandHtml = s.offhand_weapon ? this.buildWeapon(true) : ''
+      offhandRow.innerHTML = offhandHtml
+      offhandRow.style.display = offhandHtml ? '' : 'none'
     }
 
     // Quiver gets its own row directly below the weapon (console-style pairing)
@@ -205,9 +213,10 @@ export class StatsView {
     return bar
   }
 
-  private buildWeapon(): string {
+  private buildWeapon(offhand: boolean): string {
     const s = this.state
-    const idx = s.weapon_index
+    const idx = (offhand ? s.offhand_index : s.weapon_index)
+      ?? (s.unarmed_attack !== undefined ? -1 : undefined)
     if (idx === undefined) return ''
 
     const corroded = (s.status ?? []).some(st => st.text === 'corroded')
@@ -289,6 +298,7 @@ export class StatsView {
         </span>
       </div>
       <div class="hg-wq" id="hud-wq"></div>
+      <div class="hg-wq" id="hud-wq-offhand"></div>
       <div class="hg-quiver" id="hud-quiver"></div>
     `
   }

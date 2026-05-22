@@ -192,6 +192,8 @@ export interface PlayerMsg {
   unarmed_attack?: string
   unarmed_attack_colour?: number
   weapon_index?: number
+  offhand_index?: number
+  offhand_weapon?: number
   quiver_desc?: string
   inv?: Record<string, { name?: string; col?: number }>
   time_last_input?: number

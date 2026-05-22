@@ -488,7 +488,14 @@ export function buildGameView(
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
-    if (spectating) return
+    if (spectating) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        conn.send({ msg: 'go_lobby' })
+        onLobby()
+      }
+      return
+    }
     if (document.activeElement instanceof HTMLInputElement) return
     if (monsterPanelOpen) {
       e.preventDefault()
