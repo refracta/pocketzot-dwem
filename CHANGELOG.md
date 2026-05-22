@@ -15,6 +15,7 @@ Notable changes to PocketZot, newest first.
   bottom control bar for the d-pad.
 - Improve shop shift-tapping behavior.
 - The HUD now displays an offhand weapon on its own row when dual-wielding.
+- Guest spectate remembers the last server you picked.
 
 ## 2026-05-21
 
