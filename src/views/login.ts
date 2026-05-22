@@ -2,6 +2,7 @@ import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
 import { clearSession, listSessions, saveSession, type StoredSession } from '../auth/session'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
+import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 
 export interface LoginResult {
   conn: WsConnection
@@ -111,15 +112,19 @@ export function buildLoginView(
     spectateSelect.appendChild(o2)
   }
 
-  // Default dropdowns to the most-recently-used session's server, if any.
-  // Spectate falls back to the top of SPECTATE_SERVERS when the saved
-  // server isn't anonymously spectatable (e.g. CAO).
+  // Login-form dropdown follows the most-recently-used session's server.
+  // Spectate dropdown prefers the saved pref (last explicit guest pick),
+  // falling back to the session-derived prior when that server is also
+  // anonymously spectatable, otherwise the list top.
   const topSession = sessions[0]
   if (topSession && KNOWN_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
     formSelect.value = topSession.wsUrl
-    if (SPECTATE_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
-      spectateSelect.value = topSession.wsUrl
-    }
+  }
+  const savedSpectate = getLastSpectateServer()
+  if (savedSpectate) {
+    spectateSelect.value = savedSpectate
+  } else if (topSession && SPECTATE_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
+    spectateSelect.value = topSession.wsUrl
   }
 
   renderResumeButtons()
@@ -226,6 +231,7 @@ export function buildLoginView(
   spectateBtn.addEventListener('click', async () => {
     errorEl.style.display = 'none'
     const wsUrl = spectateSelect.value
+    setLastSpectateServer(wsUrl)
     spectateBtn.disabled = true
     spectateBtn.textContent = 'Connecting…'
 
