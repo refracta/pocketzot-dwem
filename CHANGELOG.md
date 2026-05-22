@@ -14,6 +14,7 @@ Notable changes to PocketZot, newest first.
 - Tapping a shop item to view its description no longer swaps the shop's
   bottom control bar for the d-pad.
 - Improve shop shift-tapping behavior.
+- The HUD now displays an offhand weapon on its own row when dual-wielding.
 
 ## 2026-05-21
 
