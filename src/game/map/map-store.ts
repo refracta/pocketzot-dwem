@@ -44,30 +44,21 @@ export interface Cell {
   overlay2?: number
 }
 
+// Index of which cells currently hold a displayable monster. Mirrors the
+// reference's monster_list.js `monsters[[loc.x,loc.y]] = {mon, loc}`:
+// per-cell tile fields (fg / doll / mcache / icons / t_bg) live only on
+// Cell, and renderers fetch them via MapStore.get(x, y) at draw time. Do
+// not re-introduce a shadow of those fields here — out-of-FOV deletes
+// this entry while the Cell retains the memorized values, so a shadow
+// would go stale across the memorize → re-FOV transition. `g` is the
+// *canonical* glyph (first-sighting), distinct from Cell.g which can
+// flip briefly for spell animations.
 export interface MonsterCell {
   mon: MonsterInfo
   g: string
   col: number
   x: number
   y: number
-  fg?: number | number[]  // t.fg from the cell update; updated each turn for MDAM health flags
-  // Humanoid composition (PLAYER atlas), copied from t.doll / t.mcache so the
-  // monster panel can render the same layered sprite as the describe-monster popup.
-  doll?: Array<[number, number]>
-  mcache?: Array<[number, number, number]> | null
-  // Pre-decoded icon tile ids from t.icons. The server resolves
-  // monster_status_icons (tilepick.cc) for ~60 MB_* flags that aren't packed
-  // into t.fg's 32-bit flag mask — MB_ABJURABLE → SUMMONED (the small purple
-  // gem on summoned creatures), MB_MINION → MINION, MB_CONFUSED → CONFUSED,
-  // status auras like MB_HASTED / MB_SLOWED, etc. Without carrying these
-  // through, the panel only shows the few flags fgOverlayIcons can decode.
-  icons?: number[]
-  // Packed t.bg from the cell update, mirrored from Cell.t_bg. Low 16 bits
-  // hold the dngn tile id (floor/wall/feat dispatch via tileinfo-dngn) so
-  // the monster panel can stamp the dungeon background under each sprite,
-  // matching what the reference's draw_background draws in the dungeon view.
-  // Same [lo, hi] encoding as Cell.t_bg — extract via bgLo() from cell-flags.
-  t_bg?: number | number[]
 }
 
 // From reference enums.js: MM_UNSEEN=0x00020000, UNSEEN=0x00040000.
@@ -240,17 +231,10 @@ export class MapStore {
               }
               this.monsterRefs.set(id, (this.monsterRefs.get(id) ?? 0) + 1)
             }
-            // Distinguish "field absent" (carry forward) from "field present with
-            // null/empty" (server cleared it) — `??` would mask an explicit null
-            // mcache (e.g. polymorph from humanoid → non-humanoid keeping the
-            // same monster id) and leak the previous humanoid sprite.
+            // Tile-render fields (fg, doll, mcache, icons, t_bg) live only on
+            // Cell; renderers fetch them via MapStore.get(x, y) at draw time.
             this.monsterMap.set(key, {
               mon: merged, g: cellGlyph, col: cell.col, x: curX, y: curY,
-              fg: u.t && 'fg' in u.t ? u.t.fg : existingMonCell?.fg,
-              doll: u.t && 'doll' in u.t ? u.t.doll : existingMonCell?.doll,
-              mcache: u.t && 'mcache' in u.t ? u.t.mcache : existingMonCell?.mcache,
-              icons: u.t && 'icons' in u.t ? u.t.icons : existingMonCell?.icons,
-              t_bg: cell.t_bg,
             })
           }
         }
@@ -264,18 +248,10 @@ export class MapStore {
           this.monsterRefs.set(existingMonCell.mon.id, prev)
         }
         this.monsterMap.delete(key)
-      } else if (existingMonCell && u.t) {
-        // In-FOV cell update with no 'mon' field: monsterinfo unchanged
-        // (name/threat/att/etc.) but tile state may have shifted. Most common
-        // case is a damage-only delta carrying t.fg with new MDAM bits, but
-        // equipment swaps or sprite changes can ship t.doll / t.mcache without
-        // a fresh fg, and we want those to land too.
-        if ('fg' in u.t) existingMonCell.fg = u.t.fg
-        if ('doll' in u.t) existingMonCell.doll = u.t.doll
-        if ('mcache' in u.t) existingMonCell.mcache = u.t.mcache
-        if ('icons' in u.t) existingMonCell.icons = u.t.icons
-        if ('bg' in u.t) existingMonCell.t_bg = u.t.bg
       }
+      // In-FOV update with no `mon` field (damage-only delta, equipment
+      // swap, etc.) needs no extra work: the new t.* values already landed
+      // on `cell` above and renderers read straight from the Cell.
     }
 
     // Purge tracked monsters no longer present in any cell (mirrors reference clean_monster_table).

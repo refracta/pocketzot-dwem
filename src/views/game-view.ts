@@ -166,8 +166,8 @@ export function buildGameView(
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
-  const monsterListView = new MonsterListView()
-  const monsterPanel = new MonsterPanelView()
+  const monsterListView = new MonsterListView(store)
+  const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
 
   const uiStack: UiPushMsg[] = []

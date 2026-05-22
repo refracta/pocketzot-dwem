@@ -1,4 +1,4 @@
-import type { MonsterCell } from '../map/map-store'
+import type { MapStore, MonsterCell } from '../map/map-store'
 import { decodeColor } from '../map/colors'
 import { bgLo } from '../map/cell-flags'
 import { appendTiles, appendIconOverlays, monsterTileSpec, prependDngnIndex, prependDngnLayer } from '../tiles/tile-view'
@@ -25,7 +25,7 @@ export class MonsterPanelView {
   readonly element: HTMLElement
   private onPickCoord: ((x: number, y: number) => void) | null = null
 
-  constructor() {
+  constructor(private readonly store: MapStore) {
     this.element = document.createElement('div')
     this.element.className = 'mp-list'
   }
@@ -61,6 +61,7 @@ export class MonsterPanelView {
     const att = mon.att ?? 0
     const threat = mon.threat ?? 0
     const color = nameColor(att, threat)
+    const cell = this.store.get(mc.x, mc.y)
 
     const row = document.createElement('div')
     row.className = 'mp-row'
@@ -77,18 +78,18 @@ export class MonsterPanelView {
     tileEl.className = 'tile-stack mp-tile'
     row.appendChild(tileEl)
     const baseSpec = monsterTileSpec({
-      fg_idx: fgTileIndex(mc.fg),
-      doll: mc.doll,
-      mcache: mc.mcache,
+      fg_idx: fgTileIndex(cell?.fg),
+      doll: cell?.doll,
+      mcache: cell?.mcache,
     })
     if (baseSpec.length > 0) appendTiles(tileEl, baseSpec, TILE_SCALE)
-    const halo = fgHaloDngnName(mc.fg)
+    const halo = fgHaloDngnName(cell?.fg)
     if (halo) prependDngnLayer(tileEl, halo, TILE_SCALE)
     // Order matters: each prepend slots in at index 0, so the floor (called
     // last) ends up at the bottom of the DOM stack, halo above, sprite on top.
-    if (mc.t_bg !== undefined) prependDngnIndex(tileEl, bgLo(mc.t_bg) & 0xFFFF, TILE_SCALE)
+    if (cell?.t_bg !== undefined) prependDngnIndex(tileEl, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
 
-    const mdam = decodeMdam(mc.fg)
+    const mdam = decodeMdam(cell?.fg)
     const tier = mdamTier(mdam)
     const bar = document.createElement('div')
     bar.className = 'mp-hp-bar'
@@ -104,7 +105,7 @@ export class MonsterPanelView {
     nameEl.className = 'mp-name'
     nameEl.style.color = color
     nameEl.textContent = mon.name ?? '?'
-    const statuses = decodeFgStatuses(mc.fg)
+    const statuses = decodeFgStatuses(cell?.fg)
     if (statuses.length > 0) {
       const statusEl = document.createElement('span')
       statusEl.className = 'mp-status'
@@ -120,8 +121,8 @@ export class MonsterPanelView {
     this.element.appendChild(row)
     return {
       cell: mc, tileEl,
-      iconNames: fgOverlayIcons(mc.fg),
-      iconIds: mc.icons ?? [],
+      iconNames: fgOverlayIcons(cell?.fg),
+      iconIds: cell?.icons ?? [],
     }
   }
 

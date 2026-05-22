@@ -4,7 +4,7 @@
 // contributors; GPL-2.0-or-later. Reused under the "or later" option as
 // part of this AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
-import type { MonsterCell } from '../map/map-store'
+import type { Cell, MapStore, MonsterCell } from '../map/map-store'
 import { escHtml } from '../dcss-colors'
 import { decodeColor } from '../map/colors'
 import {
@@ -56,7 +56,7 @@ export class MonsterListView {
   private moreEl: HTMLElement | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
 
-  constructor() {
+  constructor(private readonly store: MapStore) {
     this.element = document.createElement('div')
     this.element.id = 'monster-list'
   }
@@ -114,6 +114,7 @@ export class MonsterListView {
     for (let i = 0; i < rows; i++) {
       const group = groups[i]
       const leader = group[0]
+      const leaderCell = this.store.get(leader.x, leader.y)
       const mon = leader.mon
       const att = mon.att ?? 0
       const threat = mon.threat ?? 0
@@ -123,7 +124,7 @@ export class MonsterListView {
       // monster carries items unusual for its species (worth examining).
       // Reference renderer paints a magenta tile-border in place of the
       // threat-color border for these — we mirror that on the gutter bar.
-      const isUnusual = decodeFgThreatTier(leader.fg) === 'unusual'
+      const isUnusual = decodeFgThreatTier(leaderCell?.fg) === 'unusual'
       const color = nameColor(att, threat)
 
       // Row highlight: named, unnamed-nasty, or unusual-items get a left
@@ -149,7 +150,7 @@ export class MonsterListView {
       // Health indicator (single monsters only, matches reference)
       let hpSpan = ''
       if (group.length === 1) {
-        const mdam = decodeMdam(leader.fg)
+        const mdam = decodeMdam(leaderCell?.fg)
         const hpColor = MDAM_COLORS[mdam] ?? MDAM_COLORS.uninjured
         hpSpan = `<span class="ml-hp" style="background:${hpColor}"></span>`
       }
@@ -175,16 +176,12 @@ export class MonsterListView {
     const newKeys: string[] = []
     for (let i = 0; i < rows; i++) {
       const group = groups[i]
-      const leader = group[0]
-      const mon = leader.mon
+      const mon = group[0].mon
       const att = mon.att ?? 0
       const threat = mon.threat ?? 0
       const isNamed = 'clientid' in mon
       const isNasty = threat === 3
-      const isUnusual = decodeFgThreatTier(leader.fg) === 'unusual'
       const color = nameColor(att, threat)
-      const hasBar = isNamed || isNasty || isUnusual
-      const barColor = isUnusual ? UNUSUAL_COLOR : threatColor(threat)
 
       // Per-group identity. monsterSort only collapses entries with matching
       // (att, avghp, type, named-status, name, clientid), so two distinct
@@ -194,11 +191,18 @@ export class MonsterListView {
       const key = `${att}|${mon.type ?? ''}|${mon.name ?? ''}|${clientid ?? ''}`
       newKeys.push(key)
 
+      // One Cell per displayed glyph (capped at MAX_GLYPHS); the leader's
+      // Cell at [0] also feeds the unusual-tier and MDAM decode below.
       const showCount = Math.min(group.length, MAX_GLYPHS)
-      const members = group.slice(0, showCount)
+      const memberCells = group.slice(0, showCount).map((m) => this.store.get(m.x, m.y))
+      const leaderFg = memberCells[0]?.fg
+
+      const isUnusual = decodeFgThreatTier(leaderFg) === 'unusual'
+      const hasBar = isNamed || isNasty || isUnusual
+      const barColor = isUnusual ? UNUSUAL_COLOR : threatColor(threat)
 
       const hpColor = group.length === 1
-        ? (MDAM_COLORS[decodeMdam(leader.fg)] ?? MDAM_COLORS.uninjured)
+        ? (MDAM_COLORS[decodeMdam(leaderFg)] ?? MDAM_COLORS.uninjured)
         : ''
 
       const label = group.length > 1
@@ -208,7 +212,7 @@ export class MonsterListView {
       // Signature covers every visual input. JSON.stringify is overkill for
       // small numeric tuples but trivially cheap for ~6 entries × 8 fields,
       // and avoids hand-rolled hashing bugs.
-      const memberSig = members.map((m) => [m.fg ?? 0, m.t_bg ?? 0, m.doll ?? null, m.mcache ?? null, m.icons ?? null])
+      const memberSig = memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null])
       const sig = JSON.stringify([hasBar, barColor, color, label, hpColor, memberSig])
 
       const cached = this.rows.get(key)
@@ -221,7 +225,7 @@ export class MonsterListView {
         // stale row in the DOM as a sibling, and the cleanup loop wouldn't
         // catch it because the key is still in newKeys.
         if (cached) cached.el.remove()
-        el = this.buildTileRow({ hasBar, barColor, color, label, hpColor, members })
+        el = this.buildTileRow({ hasBar, barColor, color, label, hpColor, memberCells })
         this.rows.set(key, { el, sig })
       }
 
@@ -263,7 +267,7 @@ export class MonsterListView {
     color: string
     label: string
     hpColor: string
-    members: MonsterCell[]
+    memberCells: (Cell | undefined)[]
   }): HTMLElement {
     const row = document.createElement('div')
     row.className = opts.hasBar ? 'ml-row ml-tile-row ml-bar' : 'ml-row ml-tile-row'
@@ -271,7 +275,7 @@ export class MonsterListView {
 
     const glyphs = document.createElement('span')
     glyphs.className = 'ml-glyphs ml-glyphs-tiles'
-    for (const mc of opts.members) {
+    for (const cell of opts.memberCells) {
       const stack = document.createElement('span')
       stack.className = 'ml-tile tile-stack'
 
@@ -279,17 +283,17 @@ export class MonsterListView {
       // top, halo below it, floor at the bottom. prependDngn* slots in at
       // index 0 of the DOM (so order calls = bottom-up paint order).
       const baseSpec = monsterTileSpec({
-        fg_idx: fgTileIndex(mc.fg),
-        doll: mc.doll,
-        mcache: mc.mcache,
+        fg_idx: fgTileIndex(cell?.fg),
+        doll: cell?.doll,
+        mcache: cell?.mcache,
       })
       if (baseSpec.length > 0) appendTiles(stack, baseSpec, TILE_SCALE)
-      const halo = fgHaloDngnName(mc.fg)
+      const halo = fgHaloDngnName(cell?.fg)
       if (halo) prependDngnLayer(stack, halo, TILE_SCALE)
-      if (mc.t_bg !== undefined) prependDngnIndex(stack, bgLo(mc.t_bg) & 0xFFFF, TILE_SCALE)
+      if (cell?.t_bg !== undefined) prependDngnIndex(stack, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
 
-      const iconNames = fgOverlayIcons(mc.fg)
-      const iconIds = mc.icons ?? []
+      const iconNames = fgOverlayIcons(cell?.fg)
+      const iconIds = cell?.icons ?? []
       if (iconNames.length > 0 || iconIds.length > 0) {
         appendIconOverlays(stack, { names: iconNames, ids: iconIds }, TILE_SCALE)
       }
