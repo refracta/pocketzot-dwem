@@ -13,6 +13,8 @@ Notable changes to PocketZot, newest first.
 
 - The Gods list under `?/` no longer renders each entry with a duplicated
   hotkey letter.
+- Allies and neutral monsters no longer show threat highlight in the
+  monster list.
 
 ## 2026-05-22
 

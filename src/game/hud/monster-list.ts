@@ -119,7 +119,11 @@ export class MonsterListView {
       const att = mon.att ?? 0
       const threat = mon.threat ?? 0
       const isNamed = 'clientid' in mon
-      const isNasty = threat === 3
+      // Gated on hostile: reference's `.friendly` CSS rule overrides `.nasty`
+      // via source order, and tile reference doesn't pack threat bits for
+      // allies — so neither channel signals threat on a non-hostile, and
+      // neither should the gutter bar.
+      const isNasty = threat === 3 && ATTITUDE_CLASSES[att] === 'hostile'
       // UNUSUAL is read from the leader's fg high bits; it indicates the
       // monster carries items unusual for its species (worth examining).
       // Reference renderer paints a magenta tile-border in place of the
@@ -183,7 +187,8 @@ export class MonsterListView {
       const att = mon.att ?? 0
       const threat = mon.threat ?? 0
       const isNamed = 'clientid' in mon
-      const isNasty = threat === 3
+      // See ASCII path: gated on hostile to match reference behaviour.
+      const isNasty = threat === 3 && ATTITUDE_CLASSES[att] === 'hostile'
       const color = nameColor(att, threat)
 
       // Per-group identity. monsterSort only collapses entries with matching
