@@ -39,9 +39,9 @@ export function buildLoginView(
     <button id="login-btn" type="submit" class="login-btn">Connect</button>
   `
 
-  // The About/Support pages are part of the hosted deployment, not the
-  // open-source client. They (and these links) are only present when the
-  // site-pages flag is set in a local, gitignored env file.
+  // The About and What's new pages are part of the hosted deployment, not
+  // the open-source client. They (and these links) are only present when
+  // the site-pages flag is set in a local, gitignored env file.
   const siteFooterHtml = import.meta.env.VITE_SITE_PAGES
     ? `
       <div class="login-footer">

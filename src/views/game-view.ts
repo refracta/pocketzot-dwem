@@ -517,8 +517,9 @@ export function buildGameView(
 
   function handleMsg(msg: ServerMsg): void {
     switch (msg.msg) {
-      // Trunk sends bare `layer`; 0.34 sends `set_layer`. Reference client
-      // maps both to the same handler (client.js: "layer": do_set_layer).
+      // Both 0.34 and trunk send bare `layer` (client.js: "layer":
+      // do_set_layer). `set_layer` is a defensive alias the server never
+      // actually sends.
       case 'layer':
       case 'set_layer':
         if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; hideOverlay() }
@@ -564,9 +565,9 @@ export function buildGameView(
         // /gamedata/<version>/.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
         if (msg.version) tileLoader.configure(httpBase, msg.version)
-        // If we constructed a TileMapView before game_client arrived (tile
-        // mode persisted across sessions), it needs a nudge to start loading
-        // atlases now that the loader has a URL base.
+        // If the user toggled to tile mode before game_client arrived (via
+        // the two-finger gesture or __dcssTiles), the loader had no URL
+        // base yet — nudge it to start loading now.
         if (renderMode === 'tiles') void (mapView as TileMapView).preloadAtlases()
         if (renderMode === 'tiles') monsterListView.update(store.getMonsters())
         break
@@ -838,7 +839,7 @@ export function buildGameView(
         }
         // Other `type:"generic"` tags are dropped — none are known to fire
         // in normal play. `type:"seed-selection"` uses ui-state-sync widgets,
-        // not init_input (see the TODO at showUiPush:seed-selection).
+        // not init_input (see showSeedSelection).
         break
       }
 
