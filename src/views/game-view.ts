@@ -2074,20 +2074,33 @@ export function buildGameView(
         const keycode = item.hotkeys?.[0]
         const keyLabel = keycode != null ? keypressLabel(keycode) : ''
         let rawText = String(item.text ?? '').trimStart()
-        // Shop rows wrap the hotkey in a colour tag for affordability
-        // (e.g. "<lightgreen>a - </lightgreen><lightgrey>72 gold ...</lightgrey>").
-        // Capture that first tag and use it for the key span; otherwise fall
-        // back to item.colour.
+        // Two prefix shapes to handle:
         //
-        // The gods menu (god-menu.cc) is unique among menus in wrapping *just*
-        // the hotkey letter in a colour tag: " <yellow>A</yellow> - Ashenzari".
-        // Allow closing tags between the hotkey character and the separator
-        // whitespace so the prefix gets stripped and we don't render
-        // "A - A - Ashenzari".
-        const stateMatch = rawText.match(/^(?:<[^>]+>)*.(?:<\/[^>]+>)*\s([-+# $])\s/)
-        const separator = stateMatch?.[1] ?? '-'
-        const keyTagName = rawText.match(/^<([a-zA-Z]+)>/)?.[1]?.toLowerCase()
-        rawText = rawText.replace(/^((?:<[^>]+>)*).(?:<\/[^>]+>)*\s[-+# $]\s/, '$1')
+        //  1) Gods menu (god-menu.cc): " <yellow>A</yellow> - Ashenzari"
+        //     — the hotkey is wrapped in a matched colour pair; separator
+        //     and name are outside the pair. Strip the whole pair so the
+        //     deity name renders in the default menu colour (matching the
+        //     upstream client). The wrap colour still drives the hotkey
+        //     span via keyColor.
+        //
+        //  2) Shop rows: "<lightgreen>a - </lightgreen><lightgrey>72 gold
+        //     ...</lightgrey>" — the opening tag spans the whole prefix
+        //     and is meant to colour the row (affordability). Preserve
+        //     that opening tag in the label so the colour carries onto
+        //     the rest of the row.
+        let separator = '-'
+        let keyTagName: string | undefined
+        const wrappedHotkey = rawText.match(/^<([a-zA-Z]+)>.<\/\1>\s([-+# $])\s/)
+        if (wrappedHotkey) {
+          separator = wrappedHotkey[2]
+          keyTagName = wrappedHotkey[1].toLowerCase()
+          rawText = rawText.replace(/^<[a-zA-Z]+>.<\/[a-zA-Z]+>\s[-+# $]\s/, '')
+        } else {
+          const stateMatch = rawText.match(/^(?:<[^>]+>)*.\s([-+# $])\s/)
+          if (stateMatch) separator = stateMatch[1]
+          keyTagName = rawText.match(/^<([a-zA-Z]+)>/)?.[1]?.toLowerCase()
+          rawText = rawText.replace(/^((?:<[^>]+>)*).\s[-+# $]\s/, '$1')
+        }
         const labelHtml = dcssToHtml(rawText)
         const itemColor = item.colour != null ? uiColor(item.colour) : undefined
         const keyColor = (keyTagName && DCSS_COLOR_MAP[keyTagName]) || itemColor
