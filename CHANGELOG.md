@@ -13,6 +13,8 @@ Notable changes to PocketZot, newest first.
 
 - The Gods list under `?/` no longer renders each entry with a duplicated
   hotkey letter.
+- In the Gods list, the deity's colour now ends at the hotkey letter
+  instead of bleeding through the deity's name.
 
 ## 2026-05-22
 
