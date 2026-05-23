@@ -1940,9 +1940,10 @@ export function buildGameView(
 
   // A rendered, arrow-selectable menu overlay is up: arrow input should drive
   // hover client-side (send menu_hover) rather than be forwarded as a raw
-  // key.
+  // key. Skipped during the stash X-mode preview — the menu is hidden behind
+  // the map and arrows must reach the server to move the cursor.
   function menuNavActive(): boolean {
-    return !!activeMenu && !crtActive
+    return !!activeMenu && !crtActive && !inXMode
       && (((activeMenu.flags ?? 0) & MF_ARROWS_SELECT) !== 0)
       && !!uiOverlay.querySelector('.overlay-list')
   }

@@ -15,6 +15,7 @@ Notable changes to PocketZot, newest first.
   hotkey letter.
 - Allies and neutral monsters no longer show threat highlight in the
   monster list.
+- Use correct d-pad mode in the Ctrl-F result preview.
 
 ## 2026-05-22
 
