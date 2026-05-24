@@ -48,11 +48,14 @@ interface RowCache { el: HTMLElement; sig: string }
 export class MonsterListView {
   readonly element: HTMLElement
   private mode: 'ascii' | 'tiles' = 'ascii'
-  // Row-keyed cache so repeated `map` messages don't rebuild tile-stack DOM
-  // every turn — sprite paint is async (one microtask per .tile), so wiping
-  // and rebuilding would produce a blank-frame flicker even with cached
-  // atlases.
-  private rows = new Map<string, RowCache>()
+  // Position-indexed row cache (rows[i] = row at group index i). Lets us
+  // skip rebuilding a row when its signature is unchanged — sprite paint is
+  // async (one microtask per .tile), so wiping and rebuilding would produce
+  // a blank-frame flicker even with cached atlases.
+  //
+  // Why positional and not keyed by monster identity: two groups can sort
+  // apart on a field outside the prior `att|type|name|clientid` cache key.
+  private rows: RowCache[] = []
   private moreEl: HTMLElement | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
 
@@ -67,9 +70,14 @@ export class MonsterListView {
   setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === this.mode) return
     this.mode = mode
-    this.rows.clear()
+    this.rows.length = 0
     this.moreEl = null
     this.element.innerHTML = ''
+    // Clear defensively — `update()` re-asserts this from groups when it
+    // runs, but if lastMonsters is null (mode swap before any monsters
+    // arrived) the class would otherwise persist from the prior mode's
+    // last render.
+    this.element.classList.remove('has-hostile')
     if (this.lastMonsters) this.update(this.lastMonsters)
   }
 
@@ -95,14 +103,14 @@ export class MonsterListView {
     if (useTiles) {
       this.renderTiles(groups, rowCount)
     } else {
-      this.rows.clear()
+      this.rows.length = 0
       this.moreEl = null
       this.renderAscii(groups, rowCount)
     }
   }
 
   clear(): void {
-    this.rows.clear()
+    this.rows.length = 0
     this.moreEl = null
     this.lastMonsters = null
     this.element.innerHTML = ''
@@ -182,7 +190,6 @@ export class MonsterListView {
   }
 
   private renderTiles(groups: MonsterCell[][], rows: number): void {
-    const newKeys: string[] = []
     for (let i = 0; i < rows; i++) {
       const group = groups[i]
       const mon = group[0].mon
@@ -194,14 +201,6 @@ export class MonsterListView {
       const isNamed = 'clientid' in mon
       const isNasty = threat === 3
       const color = nameColor(att, threat)
-
-      // Per-group identity. monsterSort only collapses entries with matching
-      // (att, avghp, type, named-status, name, clientid), so two distinct
-      // groups can't share this key. Named monsters carry clientid for
-      // uniqueness.
-      const clientid = (mon as { clientid?: number }).clientid
-      const key = `${att}|${mon.type ?? ''}|${mon.name ?? ''}|${clientid ?? ''}`
-      newKeys.push(key)
 
       // One Cell per displayed glyph (capped at MAX_GLYPHS); the leader's
       // Cell at [0] also feeds the unusual-tier and MDAM decode below.
@@ -227,31 +226,27 @@ export class MonsterListView {
       const memberSig = memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null])
       const sig = JSON.stringify([hasBar, barColor, color, label, hpColor, memberSig])
 
-      const cached = this.rows.get(key)
-      let el: HTMLElement
-      if (cached && cached.sig === sig) {
-        el = cached.el
+      const cached = this.rows[i]
+      if (cached && cached.sig === sig) continue
+      const el = this.buildTileRow({ hasBar, barColor, color, label, hpColor, memberCells })
+      if (cached) {
+        cached.el.replaceWith(el)
       } else {
-        // Detach the previous element for this key before inserting the
-        // replacement — otherwise insertBefore(newEl, oldEl) would leave the
-        // stale row in the DOM as a sibling, and the cleanup loop wouldn't
-        // catch it because the key is still in newKeys.
-        if (cached) cached.el.remove()
-        el = this.buildTileRow({ hasBar, barColor, color, label, hpColor, memberCells })
-        this.rows.set(key, { el, sig })
+        // First time we've populated this position. Append before any
+        // moreEl that might already be sitting at the end.
+        if (this.moreEl && this.moreEl.parentNode === this.element) {
+          this.element.insertBefore(el, this.moreEl)
+        } else {
+          this.element.appendChild(el)
+        }
       }
-
-      const existing = this.element.children[i]
-      if (existing !== el) this.element.insertBefore(el, existing ?? null)
+      this.rows[i] = { el, sig }
     }
 
-    // Drop rows that no longer appear in the sorted group list.
-    for (const key of [...this.rows.keys()]) {
-      if (!newKeys.includes(key)) {
-        const entry = this.rows.get(key)!
-        entry.el.remove()
-        this.rows.delete(key)
-      }
+    // Trim rows past the new count — the visible group list shrank.
+    while (this.rows.length > rows) {
+      const dropped = this.rows.pop()
+      dropped?.el.remove()
     }
 
     // "More" indicator. Reuses one element across renders so identity stays
