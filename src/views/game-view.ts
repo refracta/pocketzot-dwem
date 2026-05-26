@@ -14,6 +14,7 @@ import type { TouchControls } from '../game/input/touch'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
+import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { tileLoader, TEX } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 
@@ -850,7 +851,7 @@ export function buildGameView(
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
-          if (m.channel === 2 && /\(.\)/.test(m.text)) {
+          if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
             activePromptEl = row
@@ -2542,49 +2543,38 @@ export function buildGameView(
   function makePromptRow(text: string): HTMLElement {
     const row = document.createElement('p')
     row.className = 'game-msg game-prompt'
-    const parts = text.replace(/\.\s*$/, '').split(/(,\s*|\s+or\s+)/)
-    let hasButtons = false
-    for (let i = 0; i < parts.length; i++) {
-      const token = parts[i]
-      if (i % 2 === 1) {
-        row.appendChild(document.createTextNode(token))
-        continue
-      }
-      const t = token.trim()
-      if (!t) continue
-      const keyMatch = t.match(/\((.)\)/)
-      if (keyMatch) {
-        const key = keyMatch[1]
-        const parenIdx = t.indexOf(keyMatch[0])
-        // Walk back to the previous whitespace so the whole word containing
-        // "(X)" becomes the button label — otherwise "sc(r)olls" splits into
-        // prefix "sc" + button "(r)olls".
-        let wordStart = parenIdx
-        while (wordStart > 0 && !/\s/.test(t[wordStart - 1])) wordStart--
-        const prefix = t.slice(0, wordStart).trimEnd()
-        const btnText = t.slice(wordStart)
-        if (prefix) {
-          const span = document.createElement('span')
-          span.innerHTML = dcssToHtml(prefix) + ' '
-          row.appendChild(span)
-        }
-        const btn = document.createElement('button')
-        btn.className = 'action-btn'
-        btn.innerHTML = dcssToHtml(btnText)
-        btn.addEventListener('click', () => {
-          conn.send({ msg: 'input', text: key })
-          view.focus({ preventScroll: true })
-        })
-        row.appendChild(btn)
-        hasButtons = true
-      } else {
+    const parsed = parsePromptText(text)
+    if (parsed.color) row.style.color = parsed.color
+    // Trigger gate is wider than the per-token matcher, so a message can
+    // pass the gate without producing any buttons (e.g. the inventory
+    // "<w>?</w> for menu" hint sits mid-token). Fall back to rendering
+    // the body in one shot through dcssToHtml — that preserves any
+    // inline markup the comma/or split would have broken.
+    if (!parsed.hasButton) {
+      row.innerHTML = dcssToHtml(parsed.body)
+      return row
+    }
+    for (const seg of parsed.segments) {
+      if (seg.kind === 'text') {
         const span = document.createElement('span')
-        span.innerHTML = dcssToHtml(t)
+        span.innerHTML = dcssToHtml(seg.value)
         row.appendChild(span)
+      } else {
+        appendActionBtn(row, seg.label, seg.key)
       }
     }
-    if (!hasButtons) row.innerHTML = dcssToHtml(text)
     return row
+  }
+
+  function appendActionBtn(row: HTMLElement, label: string, key: string): void {
+    const btn = document.createElement('button')
+    btn.className = 'action-btn'
+    btn.innerHTML = dcssToHtml(label)
+    btn.addEventListener('click', () => {
+      conn.send({ msg: 'input', text: key })
+      view.focus({ preventScroll: true })
+    })
+    row.appendChild(btn)
   }
 
   function buildActionsBar(actionsText: string): HTMLElement {
