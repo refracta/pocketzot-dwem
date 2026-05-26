@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-26
+
+- Add inline buttons for more prompts (e.g. `* to list` on the cast-spell
+  confirmation).
+
 ## 2026-05-24
 
 - Lobby rows now include game version.
