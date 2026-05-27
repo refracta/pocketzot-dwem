@@ -4,10 +4,12 @@ const KEY = 'pocketzot:prefs'
 
 export interface Prefs {
   lastGuestSpectateWsUrl: string | null
+  monsterListCollapsed: boolean
 }
 
 const DEFAULTS: Prefs = {
   lastGuestSpectateWsUrl: null,
+  monsterListCollapsed: false,
 }
 
 function load(): Prefs {

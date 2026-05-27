@@ -915,9 +915,10 @@ html, body {
   font-size: 0.82rem;
   font-family: var(--font-mono);
   max-width: calc(100% - 0.5rem);
-  /* No max-height / overflow: the JS caps content at MAX_ROWS rows plus an
-     optional short .ml-more affordance strip, so the panel auto-sizes to
-     its content and never scrolls. Tapping opens the full monster panel. */
+  /* No max-height / overflow: the JS caps content at MAX_ROWS rows, with
+     a small .ml-corner-more chip in the bottom-right corner when more
+     groups exist. The panel auto-sizes and never scrolls. Tapping opens
+     the full monster panel. */
   background: rgba(0, 0, 0, 0.7);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
@@ -944,6 +945,10 @@ html, body {
 .ml-row {
   line-height: 1.4;
   padding-left: 1em;
+  /* Default right gutter clears just the top-right toggle chevron. When
+     a corner overflow chip is present, the :has() rule below bumps the
+     padding so the chip can't overlap the last row's name either. */
+  padding-right: 1.0em;
   position: relative;
   overflow-wrap: break-word;
 }
@@ -990,19 +995,67 @@ html, body {
   margin-left: 0.3em;
 }
 
-/* Compact "more below — tap to open" strip rendered below the rows when
-   group count exceeds MAX_ROWS. Not a .ml-row — no glyph float, no full
-   row line-height; just a centered chevron+count in the dim text color
-   so it reads as an affordance rather than a list entry. The faint top
-   border distinguishes the strip from the last row, framing it as a
-   footer rather than another entry. */
-.ml-more {
-  text-align: center;
+/* Overflow indicator anchored to the panel's bottom-right corner,
+   sharing a line with the last visible monster row. pointer-events:none
+   so taps fall through to the panel's open-full-panel click handler.
+   Mirrors .ml-toggle's positioning on the top-right corner. Sized small
+   enough that .ml-row's base 1em right padding clears the chip without
+   needing a separate :has() clearance rule — single-digit overflow fits
+   comfortably; "+99" sits flush against the last-row content end with
+   no overlap. */
+.ml-corner-more {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  padding: 0 2px;
+  font-size: 0.7em;
   line-height: 1;
-  padding: 1px 0 0;
-  border-top: 1px solid rgba(186, 189, 182, 0.2);
-  font-size: 0.75em;
   color: var(--text-dim);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Collapse chevron in the panel's top-right corner. Spatial-motion icon:
+   ▴ when expanded (tap collapses upward into the corner), ▾ when
+   collapsed (tap expands downward). Matches the abc▴/abc▾ keyboard
+   toggle. Sized for a comfortable tap target without bullying the rows
+   below it — the panel padding leaves clear space around the chevron so
+   missed-taps don't accidentally open the full monster panel. */
+.ml-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 1px 4px;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+}
+/* Invisible hit-target expansion. Extends the click zone ~8px above,
+   ~8px below, and ~10px to the left of the visible chevron — total
+   tap zone ~25×29px (vs the ~15×13px visible glyph). Right edge stays
+   at the chevron's edge so the zone doesn't bleed past the panel border.
+   Pointer events bubble to the parent .ml-toggle so the toggle's click
+   handler still fires (with stopPropagation guarding against the panel's
+   open-full-panel click). */
+.ml-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -8px 0 -8px -10px;
+}
+
+/* The collapsed-mode row uses the same layout as an expanded top row —
+   .ml-collapsed is kept on the element as a DOM marker but needs no
+   styling beyond what .ml-row already provides. The "+N more" suffix
+   appended after the name uses .ml-collapsed-more for muted, italic
+   secondary text with a clear left gap from the name. */
+.ml-collapsed-more {
+  font-size: 0.85em;
+  color: var(--text-dim);
+  margin-left: 0.6em;
+  font-style: italic;
 }
 
 /* Tile-mode rows: replace each glyph span with a 20x20 tile-stack. Row
