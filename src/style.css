@@ -945,13 +945,16 @@ html, body {
 .ml-row {
   line-height: 1.4;
   padding-left: 1em;
-  /* Default right gutter clears just the top-right toggle chevron. When
-     a corner overflow chip is present, the :has() rule below bumps the
-     padding so the chip can't overlap the last row's name either. */
+  /* Default right gutter clears the top-right toggle chevron (and, when
+     present, the small bottom-right .ml-corner-more chip — sized to fit
+     within 1em). The :has() rule below drops the gutter entirely when
+     there's no toggle in the DOM (single-group case) so the panel hugs
+     content symmetrically with the left side. */
   padding-right: 1.0em;
   position: relative;
   overflow-wrap: break-word;
 }
+#monster-list:not(:has(.ml-toggle)) .ml-row { padding-right: 0; }
 .ml-row::after {
   content: "";
   display: block;
