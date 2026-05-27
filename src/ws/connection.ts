@@ -1,4 +1,5 @@
 import type { ClientMsg, ServerMsg } from './types'
+import { ioHook, type IncomingMessage, type OutgoingMessage } from '../dwem/io-hook'
 
 export type MessageHandler = (msg: ServerMsg) => void
 export type StateHandler = () => void
@@ -57,8 +58,10 @@ export class WsConnection {
 
   send(msg: ClientMsg): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return
-    if (import.meta.env.DEV) devLog('out', redactForLog(msg))
-    this.socket.send(JSON.stringify(msg))
+    ioHook.sendMessage(msg as OutgoingMessage, (next) => {
+      if (import.meta.env.DEV) devLog('out', redactForLog(next))
+      this.socket?.send(JSON.stringify(next))
+    })
   }
 
   close(): void {
@@ -102,7 +105,9 @@ export class WsConnection {
       this.onLoginCookie(msg.cookie, msg.expires)
       return
     }
-    this.onMessage(msg)
+    const sink = (next: IncomingMessage) => this.onMessage(next as ServerMsg)
+    ioHook.setIncomingSink(sink)
+    ioHook.handleMessage(msg as IncomingMessage)
   }
 }
 

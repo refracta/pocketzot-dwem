@@ -13,7 +13,8 @@ dev-credentials.json
 .playwright-cli/
 dist/
 design/
-scripts/
+scripts/*
+!scripts/check-html-links.mjs
 TODO
 .env*.local
 # Hosted-site pages, screenshots, etc. — part of our

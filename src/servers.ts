@@ -11,6 +11,7 @@ export interface KnownServer {
 }
 
 export const KNOWN_SERVERS: KnownServer[] = [
+  { label: 'crawl.nemelex.cards', tag: 'CNC', wsUrl: 'wss://crawl.nemelex.cards/socket' },
   { label: 'crawl.dcss.io', tag: 'CDI', wsUrl: 'wss://crawl.dcss.io/socket' },
   { label: 'crawl.akrasiac.org', tag: 'CAO', wsUrl: 'wss://crawl.akrasiac.org:8443/socket' },
   { label: 'cbro.berotato.org', tag: 'CBR2', wsUrl: 'wss://cbro.berotato.org:8443/socket' },
@@ -18,7 +19,6 @@ export const KNOWN_SERVERS: KnownServer[] = [
   { label: 'crawl-br.roguelikes.gg', tag: 'CBRG', wsUrl: 'wss://crawl-br.roguelikes.gg/socket' },
   { label: 'crawl.xtahua.com', tag: 'CXC', wsUrl: 'wss://crawl.xtahua.com/socket' },
   { label: 'underhound.eu', tag: 'CUE', wsUrl: 'wss://underhound.eu:8080/socket' },
-  { label: 'crawl.nemelex.cards', tag: 'CNC', wsUrl: 'wss://crawl.nemelex.cards/socket' },
   { label: 'crawl.project357.org', tag: 'CPO', wsUrl: 'wss://crawl.project357.org/socket' },
 ]
 

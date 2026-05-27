@@ -124,6 +124,10 @@ html, body {
   grid-area: user;
   font-size: 1rem;
   color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .login-account-card::after {
@@ -279,7 +283,13 @@ html, body {
   padding: 0.3rem 0.7rem;
 }
 
-.lobby-chip-user { color: var(--accent); }
+.lobby-chip-user {
+  color: var(--accent);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .lobby-chip-sep  { color: var(--text-dim); }
 .lobby-chip-tag  { color: var(--accent); }
 .lobby-chip-role {
@@ -495,6 +505,7 @@ html, body {
   white-space: nowrap;
 }
 .lobby-game-row.is-idle .lobby-game-user { color: var(--text-dim); }
+.cnc-profile-username { white-space: nowrap; }
 .lobby-game-info { font-size: 0.85rem; color: var(--text-dim); }
 .lobby-game-idle { flex: 0 0 auto; white-space: nowrap; font-size: 0.8rem; color: var(--text-dim); }
 .lobby-game-idle:empty { display: none; }

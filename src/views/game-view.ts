@@ -157,16 +157,16 @@ export function buildGameView(
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
-  // Map render mode. Always starts in ASCII — tile mode is reachable in-session
-  // via a two-finger long-press on the map (see below) but is not persisted, so
-  // each new session begins as if tiles don't exist. Atlases are ~10 MB so this
-  // also avoids surprise downloads on launch.
-  let renderMode: 'ascii' | 'tiles' = 'ascii'
-  let mapView: MapView | TileMapView = new MapView(store)
+  // Map render mode. Starts in tiles; ASCII remains reachable in-session via
+  // a two-finger long-press on the map (see below).
+  let renderMode: 'ascii' | 'tiles' = 'tiles'
+  let mapView: MapView | TileMapView = new TileMapView(store)
+  mapView.setZoomMode(true)
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
   const monsterListView = new MonsterListView(store)
+  monsterListView.setRenderMode(renderMode)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
 
@@ -457,7 +457,7 @@ export function buildGameView(
   // Swaps the active map view in place. Forces zoom on when switching INTO
   // tile mode (tiles at full 33×21 are ~10 px on a phone), and reuses the
   // current view-center so the swap doesn't flicker through an unset position.
-  // Not persisted: choice resets to ASCII on next session.
+  // Not persisted: choice resets to tiles on next session.
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
@@ -2872,4 +2872,3 @@ function computeScrollPos(el: HTMLElement): string {
   if (scrollTop + clientHeight >= scrollHeight - 1) return 'bot'
   return `${Math.round(scrollTop / (scrollHeight - clientHeight) * 100)}%`
 }
-

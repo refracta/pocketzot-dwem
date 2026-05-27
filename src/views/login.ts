@@ -1,6 +1,7 @@
 import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
 import { clearSession, listSessions, saveSession, type StoredSession } from '../auth/session'
+import { cncUserinfo } from '../dwem'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 
@@ -45,8 +46,8 @@ export function buildLoginView(
   const siteFooterHtml = import.meta.env.VITE_SITE_PAGES
     ? `
       <div class="login-footer">
-        <a href="/about.html">About</a>
-        <a href="/changelog.html">What's new</a>
+        <a href="about.html">About</a>
+        <a href="changelog.html">What's new</a>
       </div>
     `
     : ''
@@ -71,7 +72,7 @@ export function buildLoginView(
 
   view.innerHTML = `
     <div class="login-card">
-      <h1 class="login-title">PocketZot</h1>
+      <h1 class="login-title">PocketZot (DWEM)</h1>
 
       ${hasSessions ? `
       <section id="resume-section" class="login-section">
@@ -140,12 +141,15 @@ export function buildLoginView(
     for (const s of ss) {
       const server = findServer(s.wsUrl)
       const tag = server?.tag ?? new URL(s.wsUrl).hostname.split('.')[0].slice(0, 4).toUpperCase()
+      const usernameHtml = cncUserinfo.isEnabledForServer(s.wsUrl)
+        ? cncUserinfo.applyStyledUsername(s.username)
+        : escHtml(s.username)
       const card = document.createElement('button')
       card.type = 'button'
       card.className = 'login-account-card'
       card.innerHTML = `
         <span class="login-account-tag">${escHtml(tag)}</span>
-        <span class="login-account-username">${escHtml(s.username)}</span>
+        <span class="login-account-username">${usernameHtml}</span>
       `
       card.addEventListener('click', () => resumeWithToken(s, card))
       list.appendChild(card)

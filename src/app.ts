@@ -2,6 +2,7 @@ import type { WsConnection } from './ws/connection'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
 import { buildGameView } from './views/game-view'
+import { siteInformation } from './dwem'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -19,6 +20,7 @@ export function initApp(appEl: HTMLElement): void {
 function showLogin(): void {
   conn?.close()
   conn = null
+  siteInformation.clear()
   state = 'login'
   setView(buildLoginView((result) => {
     conn = result.conn
@@ -31,6 +33,7 @@ function showLogin(): void {
 
 function showLobby(username: string, guest: boolean): void {
   state = 'lobby'
+  siteInformation.setLobby(conn, username, guest)
   setView(buildLobbyView(
     conn!,
     username,
@@ -42,6 +45,7 @@ function showLobby(username: string, guest: boolean): void {
 
 function showGame(spectating?: { username: string }): void {
   state = 'game'
+  siteInformation.setGame(conn, currentUsername, currentIsGuest, spectating)
   setView(buildGameView(
     conn!,
     () => showLobby(currentUsername, currentIsGuest),

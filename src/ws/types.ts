@@ -127,6 +127,8 @@ export type ServerMsg =
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }
   | { msg: 'game_client'; version: string; content: string }
+  | { msg: 'rcfile_contents'; contents: string }
+  | { msg: 'version'; text: string }
   | { msg: 'chat'; content: string }
   | { msg: 'spectators'; count: number; names: string }
   | { msg: 'txt'; lines: number; text: string }
@@ -218,6 +220,7 @@ export type ClientMsg =
   | { msg: 'register'; username: string; password: string; email?: string }
   | { msg: 'play'; game_id: string }
   | { msg: 'watch'; username: string }
+  | { msg: 'get_rc'; game_id: string }
   | { msg: 'go_lobby' }
   | { msg: 'input'; text: string }
   | { msg: 'text_input'; text: string }

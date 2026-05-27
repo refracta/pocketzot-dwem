@@ -1,6 +1,7 @@
 import type { WsConnection } from '../ws/connection'
 import type { LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession } from '../auth/session'
+import { cncUserinfo } from '../dwem'
 import { tileLoader } from '../game/tiles/tile-loader'
 import { tagFor } from '../servers'
 
@@ -22,6 +23,7 @@ export function buildLobbyView(
   view.id = 'lobby-view'
 
   const serverTag = tagFor(conn.wsUrl)
+  const useCncUserinfo = cncUserinfo.isEnabledForServer(conn.wsUrl)
   const headerRight = guest
     ? `<div class="lobby-account-chip is-guest">
          <span class="lobby-chip-role">Guest</span>
@@ -32,7 +34,7 @@ export function buildLobbyView(
       <div class="lobby-account-chip-wrap">
         <button id="lobby-account-chip" class="lobby-account-chip" type="button"
                 aria-haspopup="menu" aria-expanded="false">
-          <span class="lobby-chip-user">${escHtml(username)}</span>
+          <span class="lobby-chip-user">${renderUsername(username)}</span>
           <span class="lobby-chip-sep">·</span>
           <span class="lobby-chip-tag">${escHtml(serverTag)}</span>
           <span class="lobby-chip-caret">▾</span>
@@ -278,7 +280,7 @@ export function buildLobbyView(
     row.innerHTML = `
       <div class="lobby-game-main">
         <div class="lobby-game-toprow">
-          <span class="lobby-game-user">${escHtml(g.username)}</span>
+          <span class="lobby-game-user">${renderUsername(g.username)}</span>
           <span class="lobby-game-idle" data-id="${escHtml(id)}">${formatIdleFor(id)}</span>
         </div>
         <span class="lobby-game-info">${parts.join(' ')}</span>
@@ -294,6 +296,12 @@ export function buildLobbyView(
       }
     })
     return row
+  }
+
+  function renderUsername(rawUsername: string): string {
+    return useCncUserinfo
+      ? cncUserinfo.applyStyledUsername(rawUsername)
+      : escHtml(rawUsername)
   }
 
   function formatIdleFor(id: string): string {
