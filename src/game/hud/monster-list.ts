@@ -149,7 +149,7 @@ export class MonsterListView {
       const rowCount = Math.min(groups.length, MAX_ROWS)
       // Count hidden *monsters*, not hidden groups, so the chip is a
       // threat-density signal consistent with the collapsed view's
-      // "+N more" suffix. A single hidden 12-monster group reads as
+      // "+N" suffix. A single hidden 12-monster group reads as
       // "…+12" rather than "…+1".
       for (let i = rowCount; i < groups.length; i++) overflow += groups[i].length
       // Tile path requires the loader to be configured (atlases known). If
@@ -262,16 +262,16 @@ export class MonsterListView {
 
   // Single-line collapsed rendition: render the top-priority group's row
   // (glyphs + HP + name + threat-gutter bar) exactly as the expanded
-  // view's first row would, then append "+N more" inline where N is the
-  // count of monsters NOT in the top group. When N === 0 the suffix is
-  // omitted. Both modes share rowData with the expanded renderers, so
-  // visual presentation stays identical between collapsed and expanded
-  // first rows.
+  // view's first row would, then append a "+N" inline suffix where N is
+  // the count of monsters NOT in the top group. When N === 0 the suffix
+  // is omitted. Both modes share rowData with the expanded renderers,
+  // so visual presentation stays identical between collapsed and
+  // expanded first rows.
   private renderCollapsed(groups: MonsterCell[][]): void {
     const top = groups[0]
     let total = 0
     for (const g of groups) total += g.length
-    const suffix = total > top.length ? `+${total - top.length} more` : undefined
+    const suffix = total > top.length ? `+${total - top.length}` : undefined
     const useTiles = this.mode === 'tiles' && tileLoader.configured
 
     if (useTiles) {

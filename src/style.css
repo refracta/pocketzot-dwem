@@ -945,16 +945,12 @@ html, body {
 .ml-row {
   line-height: 1.4;
   padding-left: 1em;
-  /* Default right gutter clears the top-right toggle chevron (and, when
-     present, the small bottom-right .ml-corner-more chip — sized to fit
-     within 1em). The :has() rule below drops the gutter entirely when
-     there's no toggle in the DOM (single-group case) so the panel hugs
-     content symmetrically with the left side. */
-  padding-right: 1.0em;
   position: relative;
   overflow-wrap: break-word;
 }
-#monster-list:not(:has(.ml-toggle)) .ml-row { padding-right: 0; }
+/* Both the chevron (top-right) and the "+N" chip (bottom-right) straddle
+   their respective panel corners, so neither contributes to row layout —
+   no right-gutter reservation is needed in either case. */
 .ml-row::after {
   content: "";
   display: block;
@@ -998,55 +994,57 @@ html, body {
   margin-left: 0.3em;
 }
 
-/* Overflow indicator anchored to the panel's bottom-right corner,
-   sharing a line with the last visible monster row. pointer-events:none
-   so taps fall through to the panel's open-full-panel click handler.
-   Mirrors .ml-toggle's positioning on the top-right corner. Sized small
-   enough that .ml-row's base 1em right padding clears the chip without
-   needing a separate :has() clearance rule — single-digit overflow fits
-   comfortably; "+99" sits flush against the last-row content end with
-   no overlap. */
+/* Overflow indicator centered on the panel's bottom-right border corner —
+   same notch treatment as .ml-toggle. The bg patch masks the border running
+   directly underneath, and because the chip is absolute and translated out
+   of layout flow it doesn't widen the panel even when overflow is active.
+   pointer-events:none so taps fall through to the panel's open-full-panel
+   click handler. */
 .ml-corner-more {
   position: absolute;
   bottom: 0;
   right: 0;
-  padding: 0 2px;
+  /* Less horizontal offset than the chevron's translate(50%, …): the chip's
+     multi-char width (~3ch) would extend ~12px past the border with a full
+     50% translate. 25% keeps the overhang to ~5-6px, matching the chevron. */
+  transform: translate(25%, 50%);
   font-size: 0.7em;
+  font-style: italic;
   line-height: 1;
   color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.85);
   pointer-events: none;
   user-select: none;
 }
 
-/* Collapse chevron in the panel's top-right corner. Spatial-motion icon:
-   ▴ when expanded (tap collapses upward into the corner), ▾ when
-   collapsed (tap expands downward). Matches the abc▴/abc▾ keyboard
-   toggle. Sized for a comfortable tap target without bullying the rows
-   below it — the panel padding leaves clear space around the chevron so
-   missed-taps don't accidentally open the full monster panel. */
+/* Collapse chevron centered on the panel's top-right border corner. The
+   translate(50%, -50%) plants the glyph's center on the corner point; the
+   bg patch masks the border running directly underneath so the corner reads
+   as having a tiny notch around the chevron. Spatial-motion icon: ▴ when
+   expanded (tap collapses up into the corner), ▾ when collapsed (tap expands
+   down). Matches the abc▴/abc▾ keyboard toggle. Because it's absolute and
+   positioned outside layout flow, it contributes zero width to the panel. */
 .ml-toggle {
   position: absolute;
   top: 0;
   right: 0;
-  padding: 1px 4px;
+  transform: translate(50%, -50%);
   font-size: 0.85em;
   line-height: 1;
   color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.85);
   cursor: pointer;
   pointer-events: auto;
   user-select: none;
 }
-/* Invisible hit-target expansion. Extends the click zone ~8px above,
-   ~8px below, and ~10px to the left of the visible chevron — total
-   tap zone ~25×29px (vs the ~15×13px visible glyph). Right edge stays
-   at the chevron's edge so the zone doesn't bleed past the panel border.
-   Pointer events bubble to the parent .ml-toggle so the toggle's click
-   handler still fires (with stopPropagation guarding against the panel's
-   open-full-panel click). */
+/* Hit-target expansion. The glyph now straddles the corner (half outside the
+   panel, half inside), so the zone extends ~10px in every direction giving a
+   ~30×28px tap area centered on the corner. Pointer events bubble to the
+   parent .ml-toggle so the click handler still fires. */
 .ml-toggle::before {
   content: "";
   position: absolute;
-  inset: -8px 0 -8px -10px;
+  inset: -10px -10px -10px -10px;
 }
 
 /* The collapsed-mode row uses the same layout as an expanded top row —
