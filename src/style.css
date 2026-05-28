@@ -591,13 +591,6 @@ html, body {
      default and 12-14 px cells become a blurry mush. */
   image-rendering: pixelated;
 }
-#map-grid.map-tile .map-tile-cursor {
-  position: absolute;
-  outline: 1px solid #fce94f;
-  outline-offset: -1px;
-  background-color: rgba(252, 233, 79, 0.15);
-  pointer-events: none;
-}
 
 /* Messages */
 #game-messages {

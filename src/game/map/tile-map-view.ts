@@ -181,7 +181,6 @@ export class TileMapView {
   private container: HTMLElement
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
-  private cursorEl: HTMLElement
   private store: MapStore
   private viewportW = NORMAL_AXIS
   private viewportH = NORMAL_AXIS
@@ -202,13 +201,6 @@ export class TileMapView {
   // drop the round-to-even-pixels constraint that previously left ~9 px of
   // dead space on each side of the binding axis.
   private cellPx = 16
-  // Cached canvas offsets. Reading offsetLeft/offsetTop on every cursor
-  // update forces synchronous layout — measurable in tile mode (p95 ~2 ms
-  // during examine). We refresh these in setViewportSize, which already
-  // runs in a layout-affecting path; otherwise updateCursorEl uses the
-  // cached values without touching the layout engine.
-  private canvasOffsetLeft = 0
-  private canvasOffsetTop = 0
   // Flipped true once every PRELOAD_TEX atlas + tileinfo + tileinfo-dngn has
   // loaded. Until then we draw ASCII glyphs on the canvas — same shape, lets
   // the user see the map while ~10 MB of atlas downloads.
@@ -253,11 +245,6 @@ export class TileMapView {
     this.ctx = ctx
     this.ctx.imageSmoothingEnabled = false
     this.container.appendChild(this.canvas)
-
-    this.cursorEl = document.createElement('div')
-    this.cursorEl.className = 'map-tile-cursor'
-    this.cursorEl.style.display = 'none'
-    this.container.appendChild(this.cursorEl)
 
     // Kick off preload if the loader is already configured; otherwise the
     // game-view game_client handler will call preloadAtlases() after
@@ -388,12 +375,6 @@ export class TileMapView {
       this.ctx.imageSmoothingEnabled = false
       this.fullRender()
     }
-    // Refresh cached canvas offsets even when size didn't change — the
-    // canvas can still shift if surrounding panels (monster list, HUD)
-    // resized. fitToContainer is the caller in that case and already
-    // forced a layout via getBoundingClientRect, so these reads are free.
-    this.canvasOffsetLeft = this.canvas.offsetLeft
-    this.canvasOffsetTop = this.canvas.offsetTop
   }
 
   resetViewportSize(): void {
@@ -416,7 +397,6 @@ export class TileMapView {
         if (col < 0 || col >= this.viewportW || row < 0 || row >= this.viewportH) continue
         this.drawCell(col, row, mx, my)
       }
-      this.updateCursorEl()
       return
     }
     for (let row = 0; row < this.viewportH; row++) {
@@ -424,7 +404,6 @@ export class TileMapView {
         this.drawCell(col, row, offX + col, offY + row)
       }
     }
-    this.updateCursorEl()
   }
 
   fullRender(): void {
@@ -434,8 +413,24 @@ export class TileMapView {
   }
 
   setCursor(loc?: { x: number; y: number }): void {
-    this.cursorLoc = loc ?? null
-    this.updateCursorEl()
+    const prev = this.cursorLoc
+    const next = loc ?? null
+    if ((prev?.x ?? null) === (next?.x ?? null) && (prev?.y ?? null) === (next?.y ?? null)) return
+    this.cursorLoc = next
+    // Repaint the old cell (clears the previous cursor sprite) and the new
+    // cell (paints the new one). drawCell layers the cursor on top when
+    // (mx,my) === cursorLoc — see paintCursorIfHere.
+    const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
+    const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
+    const redraw = (p: { x: number; y: number } | null): void => {
+      if (!p) return
+      const col = p.x - offX
+      const row = p.y - offY
+      if (col < 0 || col >= this.viewportW || row < 0 || row >= this.viewportH) return
+      this.drawCell(col, row, p.x, p.y)
+    }
+    redraw(prev)
+    redraw(next)
   }
 
   private drawCell(col: number, row: number, mx: number, my: number): void {
@@ -445,10 +440,14 @@ export class TileMapView {
     this.ctx.fillRect(px, py, ATLAS_CELL, ATLAS_CELL)
 
     const cell = this.store.get(mx, my)
-    if (!cell) return
+    if (!cell) {
+      this.paintCursorIfHere(mx, my, px, py)
+      return
+    }
 
     if (!this.ready) {
       this.drawAsciiFallback(cell, px, py)
+      this.paintCursorIfHere(mx, my, px, py)
       return
     }
 
@@ -703,10 +702,11 @@ export class TileMapView {
 
     // Cursor stack (cell_renderer.js:1037-1053). Only CURSOR3 — the green
     // autopickup outline — actually fires in v0.34 WebTiles; the examine /
-    // tutorial / map cursors arrive as {msg:"cursor"} and are rendered by
-    // cursorEl. The other three branches mirror the reference dispatch in
-    // case a future protocol revision starts setting them on the wire (same
-    // dead-branch pattern as KRAKEN_SW / ELDRITCH_* in decodeBg).
+    // tutorial / map cursors arrive as {msg:"cursor"} and are routed through
+    // paintCursorIfHere at the bottom of this function (mirrors render_cursors
+    // in cell_renderer.js). The other three branches here mirror the reference
+    // bg-flag dispatch in case a future protocol revision sets them on the wire
+    // (same dead-branch pattern as KRAKEN_SW / ELDRITCH_* in decodeBg).
     if (bg.TUT_CURSOR) this.paintIcon('TUTORIAL_CURSOR', px, py)
     else if (bg.CURSOR1) this.paintIcon('CURSOR', px, py)
     else if (bg.CURSOR2) this.paintIcon('CURSOR2', px, py)
@@ -736,6 +736,8 @@ export class TileMapView {
       this.ctx.fillStyle = flash
       this.ctx.fillRect(px, py, ATLAS_CELL, ATLAS_CELL)
     }
+
+    this.paintCursorIfHere(mx, my, px, py)
   }
 
   // Reference's draw_blood_overlay (cell_renderer.js:628-663). Picks one of
@@ -897,28 +899,31 @@ export class TileMapView {
     this.ctx.drawImage(s.img, s.sx, s.sy, s.w, h, px + s.ox + xofs, py + dyTop, s.w, h)
   }
 
-  private updateCursorEl(): void {
-    if (!this.cursorLoc) { this.cursorEl.style.display = 'none'; return }
-    const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
-    const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
-    const col = this.cursorLoc.x - offX
-    const row = this.cursorLoc.y - offY
-    if (col < 0 || col >= this.viewportW || row < 0 || row >= this.viewportH) {
-      this.cursorEl.style.display = 'none'
+  // Mirrors cell_renderer.js render_cursors (line 171): if this cell is the
+  // active examine/map cursor location, draw the CURSOR icon on top. The
+  // sprite is rltiles/misc/cursor.png — four yellow corner brackets, drawn
+  // from the icons atlas. Called at the tail of every drawCell path so the
+  // cursor layers correctly over empty cells, ASCII-fallback cells, and the
+  // full tile stack.
+  //
+  // When the icons atlas hasn't preloaded yet (this.ready=false), the
+  // paintIcon call no-ops; we draw a plain yellow outline via canvas strokes
+  // as a fallback so the user can still tell where the cursor is during the
+  // ~1-2 s preload window.
+  private paintCursorIfHere(mx: number, my: number, px: number, py: number): void {
+    if (!this.cursorLoc) return
+    if (this.cursorLoc.x !== mx || this.cursorLoc.y !== my) return
+    if (this.ready && this.icons.CURSOR !== undefined) {
+      this.paintIcon('CURSOR', px, py)
       return
     }
-    // The canvas is centered/letterboxed inside the container by CSS, so its
-    // top-left isn't (0,0) of the container. The cursor div is also a
-    // container child — without adding the canvas's own offset we'd render
-    // the cursor at the container origin while the painted cells are at the
-    // canvas offset, producing the disconnected cursor + map seen during
-    // X-mode pans where the canvas shrinks to the lower portion of the area.
-    // Offsets are cached in setViewportSize (see canvasOffsetLeft) so this
-    // hot path doesn't force layout.
-    this.cursorEl.style.display = ''
-    this.cursorEl.style.left = `${this.canvasOffsetLeft + col * this.cellPx}px`
-    this.cursorEl.style.top = `${this.canvasOffsetTop + row * this.cellPx}px`
-    this.cursorEl.style.width = `${this.cellPx}px`
-    this.cursorEl.style.height = `${this.cellPx}px`
+    this.ctx.save()
+    try {
+      this.ctx.strokeStyle = '#fce94f'
+      this.ctx.lineWidth = 2
+      this.ctx.strokeRect(px + 1, py + 1, ATLAS_CELL - 2, ATLAS_CELL - 2)
+    } finally {
+      this.ctx.restore()
+    }
   }
 }
