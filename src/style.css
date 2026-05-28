@@ -992,9 +992,8 @@ html, body {
 
 .ml-hp {
   display: inline-block;
-  width: 10px;
+  width: 8px;
   height: 1em;
-  border-radius: 2px;
   margin: 0 0.3em;
   vertical-align: middle;
 }
@@ -1119,7 +1118,6 @@ html, body {
   width: 6px;
   height: 48px;
   background: rgba(255, 255, 255, 0.12);
-  border-radius: 2px;
   position: relative;
   flex: 0 0 auto;
 }
@@ -1128,7 +1126,6 @@ html, body {
   bottom: 0;
   left: 0;
   right: 0;
-  border-radius: 2px;
 }
 .mp-name {
   flex: 1 1 auto;
@@ -1170,7 +1167,6 @@ html, body {
 .hg-bar-cell {
   height: 0.55rem;
   background: #555753; /* DCSS darkgrey (.fg8) — bar trough, matches reference */
-  border-radius: 2px;
   overflow: hidden;
 }
 
