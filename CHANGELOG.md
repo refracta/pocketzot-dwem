@@ -9,10 +9,32 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-27
+
+- Acquirement now shows a dedicated ⎋ / `!` control row.
+- y/N confirmation buttons now appear during any open menu, not
+  just shops.
+- The floating monster list can now be collapsed to a one-row summary.
+  Collapsed state is remembered across sessions.
+
+## 2026-05-26
+
+- Skill-menu hotkey buttons no longer drop right-column skills whose
+  partner skill has a training manual.
+- Add inline buttons for more prompts (e.g. `* to list` on the cast-spell
+  confirmation).
+
+## 2026-05-24
+
+- Lobby rows now include game version.
+
 ## 2026-05-23
 
 - The Gods list under `?/` no longer renders each entry with a duplicated
   hotkey letter.
+- Allies and neutral monsters no longer show threat highlight in the
+  monster list.
+- Use correct d-pad mode in the Ctrl-F result preview.
 
 ## 2026-05-22
 

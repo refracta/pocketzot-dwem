@@ -268,6 +268,8 @@ export function buildLobbyView(
     if (g.xl != null) parts.push(`XL${g.xl}`)
     if (g.place) parts.push(escHtml(g.place))
     if (!hasMeta && g.milestone) parts.push(`<i>${escHtml(g.milestone.replace(/^started /, ''))}</i>`)
+    const ver = versionLabel(g.game_id)
+    if (ver) parts.push(`<span class="lobby-game-version">${escHtml(ver)}</span>`)
     if (g.spectator_count && g.spectator_count > 0) {
       parts.push(`<span class="lobby-game-watchers">${g.spectator_count} spectator${g.spectator_count === 1 ? '' : 's'}</span>`)
     }
@@ -327,6 +329,10 @@ export function buildLobbyView(
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function versionLabel(gameId: string): string {
+  return gameId.startsWith('dcss-') ? gameId.slice(5) : gameId
 }
 
 function formatIdle(ms: number): string {

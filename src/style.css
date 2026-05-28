@@ -515,6 +515,11 @@ html, body {
   opacity: 0.85;
 }
 
+.lobby-game-version {
+  font-style: italic;
+  opacity: 0.7;
+}
+
 /* ── Game view ────────────────────────────────────────────── */
 #game-view {
   position: relative;
@@ -626,10 +631,14 @@ html, body {
 .msg-turn-mark {
   display: inline-block;
   min-width: 1ch;
-  color: var(--text-dim);
   user-select: none;
   -webkit-user-select: none;
 }
+/* Reference colors (style.css:276-281): command_marker darkgrey (fg8),
+   turn_marker lightgrey (fg7). Rule order matters: when both classes
+   land on the same glyph, `turn` wins (later rule, equal specificity). */
+.msg-turn-mark.cmd  { color: #555753; }
+.msg-turn-mark.turn { color: #babdb6; }
 
 .game-prompt .action-btn {
   vertical-align: middle;
@@ -917,9 +926,10 @@ html, body {
   font-size: 0.82rem;
   font-family: var(--font-mono);
   max-width: calc(100% - 0.5rem);
-  /* No max-height / overflow: the JS caps content at MAX_ROWS rows plus an
-     optional short .ml-more affordance strip, so the panel auto-sizes to
-     its content and never scrolls. Tapping opens the full monster panel. */
+  /* No max-height / overflow: the JS caps content at MAX_ROWS rows, with
+     a small .ml-corner-more chip in the bottom-right corner when more
+     groups exist. The panel auto-sizes and never scrolls. Tapping opens
+     the full monster panel. */
   background: rgba(0, 0, 0, 0.7);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
@@ -949,6 +959,9 @@ html, body {
   position: relative;
   overflow-wrap: break-word;
 }
+/* Both the chevron (top-right) and the "+N" chip (bottom-right) straddle
+   their respective panel corners, so neither contributes to row layout —
+   no right-gutter reservation is needed in either case. */
 .ml-row::after {
   content: "";
   display: block;
@@ -992,19 +1005,69 @@ html, body {
   margin-left: 0.3em;
 }
 
-/* Compact "more below — tap to open" strip rendered below the rows when
-   group count exceeds MAX_ROWS. Not a .ml-row — no glyph float, no full
-   row line-height; just a centered chevron+count in the dim text color
-   so it reads as an affordance rather than a list entry. The faint top
-   border distinguishes the strip from the last row, framing it as a
-   footer rather than another entry. */
-.ml-more {
-  text-align: center;
+/* Overflow indicator centered on the panel's bottom-right border corner —
+   same notch treatment as .ml-toggle. The bg patch masks the border running
+   directly underneath, and because the chip is absolute and translated out
+   of layout flow it doesn't widen the panel even when overflow is active.
+   pointer-events:none so taps fall through to the panel's open-full-panel
+   click handler. */
+.ml-corner-more {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  /* Less horizontal offset than the chevron's translate(50%, …): the chip's
+     multi-char width (~3ch) would extend ~12px past the border with a full
+     50% translate. 25% keeps the overhang to ~5-6px, matching the chevron. */
+  transform: translate(25%, 50%);
+  font-size: 0.7em;
+  font-style: italic;
   line-height: 1;
-  padding: 1px 0 0;
-  border-top: 1px solid rgba(186, 189, 182, 0.2);
-  font-size: 0.75em;
   color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Collapse chevron centered on the panel's top-right border corner. The
+   translate(50%, -50%) plants the glyph's center on the corner point; the
+   bg patch masks the border running directly underneath so the corner reads
+   as having a tiny notch around the chevron. Spatial-motion icon: ▴ when
+   expanded (tap collapses up into the corner), ▾ when collapsed (tap expands
+   down). Matches the abc▴/abc▾ keyboard toggle. Because it's absolute and
+   positioned outside layout flow, it contributes zero width to the panel. */
+.ml-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+}
+/* Hit-target expansion. The glyph now straddles the corner (half outside the
+   panel, half inside), so the zone extends ~10px in every direction giving a
+   ~30×28px tap area centered on the corner. Pointer events bubble to the
+   parent .ml-toggle so the click handler still fires. */
+.ml-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -10px -10px -10px -10px;
+}
+
+/* The collapsed-mode row uses the same layout as an expanded top row —
+   .ml-collapsed is kept on the element as a DOM marker but needs no
+   styling beyond what .ml-row already provides. The "+N more" suffix
+   appended after the name uses .ml-collapsed-more for muted, italic
+   secondary text with a clear left gap from the name. */
+.ml-collapsed-more {
+  font-size: 0.85em;
+  color: var(--text-dim);
+  margin-left: 0.6em;
+  font-style: italic;
 }
 
 /* Tile-mode rows: replace each glyph span with a 20x20 tile-stack. Row

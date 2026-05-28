@@ -14,8 +14,14 @@ import type { TouchControls } from '../game/input/touch'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
+import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
+import { extractSkillHotkeys } from './skill-hotkeys'
 import { tileLoader, TEX } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+
+// MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
+// for the duration of the y/N read, regardless of whether a menu is open.
+const MOUSE_MODE_YESNO = 8
 
 // --- local protocol interfaces ---
 
@@ -596,6 +602,7 @@ export function buildGameView(
         inventoryStore.update(msg.inv)
         statsView.update(msg)
         if (msg.status !== undefined) statusView.update(msg.status)
+        if (msg.time !== undefined) markLastMsg('turn')
         break
       }
 
@@ -798,18 +805,32 @@ export function buildGameView(
       }
 
       case 'input_mode': {
+        const prevInputMode = currentInputMode
         currentInputMode = msg.mode
         if (msg.mode === 1) {  // COMMAND: normal play resumed
           hideMoreBtn()
           disableActivePrompt()
           removeTextInput()
-          const lastMark = msgLog.querySelector<HTMLElement>('.game-msg:last-child .msg-turn-mark')
-          if (lastMark) lastMark.textContent = '_'
+          // Reference only marks on the COMMAND transition, not on every
+          // COMMAND-while-COMMAND repeat (game.js set_input_mode early-returns).
+          if (prevInputMode !== 1) markLastMsg('cmd')
         }
-        // YESNO (8) prompts inside a shop menu need a Y/N row instead of
-        // the standard shop controls; rebuild whenever the mode changes.
-        if (activeMenu?.tag === 'shop') {
-          buildMenuControls(activeMenu.tag, activeMenu.flags)
+        // YESNO prompts fire inside any menu that calls yesno() while open:
+        // shop purchase (shopping.cc), acquirement (acquire.cc), Nemelex
+        // StackFive (decks.cc:708). Menus with their own permanent bar
+        // (shop/stash/acquirement) rebuild on every mode change so the bar
+        // can swap to ⎋ Y N. Other menus get a bar only for the duration of
+        // the YESNO prompt — shown on the entering edge, hidden on the
+        // leaving edge.
+        if (activeMenu) {
+          const tag = activeMenu.tag
+          const tagHasBar = tag === 'shop' || tag === 'stash' || tag === 'acquirement'
+          const enteringYesno = msg.mode === MOUSE_MODE_YESNO
+          const leavingYesno = prevInputMode === MOUSE_MODE_YESNO && !enteringYesno
+          if (tagHasBar || enteringYesno || leavingYesno) {
+            buildMenuControls(tag, activeMenu.flags)
+            if (!tagHasBar) menuControls.style.display = enteringYesno ? '' : 'none'
+          }
         }
         break
       }
@@ -850,7 +871,7 @@ export function buildGameView(
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
-          if (m.channel === 2 && /\(.\)/.test(m.text)) {
+          if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
             activePromptEl = row
@@ -1113,9 +1134,9 @@ export function buildGameView(
         uiOverlay.appendChild(buildActionsBar(msg.actions))
       }
     })
-    // A ui-push layered over a shop/stash menu (e.g. describe-item after `!`)
-    // should keep the menu's bottom row.
-    if (activeMenu?.tag === 'shop' || activeMenu?.tag === 'stash') {
+    // A ui-push layered over a shop/stash/acquirement menu (e.g. describe-item
+    // after `!`) should keep the menu's bottom row.
+    if (activeMenu?.tag === 'shop' || activeMenu?.tag === 'stash' || activeMenu?.tag === 'acquirement') {
       buildMenuControls(activeMenu.tag, activeMenu.flags)
       menuControls.style.display = ''
       touchControls.element.style.display = 'none'
@@ -1606,17 +1627,11 @@ export function buildGameView(
   }
 
   function updateSkillLetterButtons(): void {
-    const seen = new Set<string>()
+    const lines: string[] = []
     uiOverlay.querySelectorAll<HTMLElement>('.crt-line').forEach(line => {
-      const text = line.textContent ?? ''
-      // Skill rows are formatted "  X S Name…" where S is a training sign
-      // (+/-/*). The set-target prefill renders as "  0      " in the target
-      // column, so `[+\-*]` is required — accepting space here would catch
-      // that "0" as a fake hotkey.
-      for (const m of text.matchAll(/  ([a-z0-9]) [+\-*]/g)) seen.add(m[1])
+      lines.push(line.textContent ?? '')
     })
-    const order = 'abcdefghijklmnopqrstuvwxyz0123456789'
-    const letters = [...order].filter(c => seen.has(c))
+    const letters = extractSkillHotkeys(lines)
     let row = menuControls.querySelector<HTMLElement>('.skill-letter-row')
     if (!row) {
       row = document.createElement('div')
@@ -1676,7 +1691,6 @@ export function buildGameView(
   function buildMenuControls(tag?: string, flags?: number): void {
     menuControls.innerHTML = ''
     type BtnDef = { label: string; key?: string; keycode?: number; dynamic?: true; shift?: true }
-    const MOUSE_MODE_YESNO = 8
     // Server keeps the menu open for a (y/N) confirmation (e.g. shop purchase)
     // and signals it via input_mode=YESNO. Swap the row to Y/N so the user
     // has a way to answer without a keyboard.
@@ -1695,6 +1709,14 @@ export function buildGameView(
         { label: '/', key: '/' },
         { label: '⇧', shift: true },
         { label: '⏎', keycode: 13, dynamic: true },
+      ]
+    } else if (tag === 'acquirement') {
+      // AcquireMenu (acquire.cc): single-select, item hotkeys a-i via row taps.
+      // ! cycles acquire/examine mode; selecting an item flips input_mode to
+      // YESNO, which the yesnoActive branch above swaps in for confirmation.
+      btns = [
+        { label: '⎋', keycode: 27 },
+        { label: '!', key: '!' },
       ]
     } else if (tag === 'stash') {
       // Stash-search results (Ctrl-F). Tap a row to open the X-mode preview;
@@ -1940,9 +1962,10 @@ export function buildGameView(
 
   // A rendered, arrow-selectable menu overlay is up: arrow input should drive
   // hover client-side (send menu_hover) rather than be forwarded as a raw
-  // key.
+  // key. Skipped during the stash X-mode preview — the menu is hidden behind
+  // the map and arrows must reach the server to move the cursor.
   function menuNavActive(): boolean {
-    return !!activeMenu && !crtActive
+    return !!activeMenu && !crtActive && !inXMode
       && (((activeMenu.flags ?? 0) & MF_ARROWS_SELECT) !== 0)
       && !!uiOverlay.querySelector('.overlay-list')
   }
@@ -1976,7 +1999,7 @@ export function buildGameView(
       footerEl.innerHTML = formatMoreHtml(msg.more ?? '', 'top')
       uiOverlay.appendChild(footerEl)
     })
-    if (msg.tag === 'shop' || msg.tag === 'stash') {
+    if (msg.tag === 'shop' || msg.tag === 'stash' || msg.tag === 'acquirement') {
       buildMenuControls(msg.tag, msg.flags)
       menuControls.style.display = ''
       touchControls.element.style.display = 'none'
@@ -2541,49 +2564,47 @@ export function buildGameView(
   function makePromptRow(text: string): HTMLElement {
     const row = document.createElement('p')
     row.className = 'game-msg game-prompt'
-    const parts = text.replace(/\.\s*$/, '').split(/(,\s*|\s+or\s+)/)
-    let hasButtons = false
-    for (let i = 0; i < parts.length; i++) {
-      const token = parts[i]
-      if (i % 2 === 1) {
-        row.appendChild(document.createTextNode(token))
-        continue
-      }
-      const t = token.trim()
-      if (!t) continue
-      const keyMatch = t.match(/\((.)\)/)
-      if (keyMatch) {
-        const key = keyMatch[1]
-        const parenIdx = t.indexOf(keyMatch[0])
-        // Walk back to the previous whitespace so the whole word containing
-        // "(X)" becomes the button label — otherwise "sc(r)olls" splits into
-        // prefix "sc" + button "(r)olls".
-        let wordStart = parenIdx
-        while (wordStart > 0 && !/\s/.test(t[wordStart - 1])) wordStart--
-        const prefix = t.slice(0, wordStart).trimEnd()
-        const btnText = t.slice(wordStart)
-        if (prefix) {
-          const span = document.createElement('span')
-          span.innerHTML = dcssToHtml(prefix) + ' '
-          row.appendChild(span)
-        }
-        const btn = document.createElement('button')
-        btn.className = 'action-btn'
-        btn.innerHTML = dcssToHtml(btnText)
-        btn.addEventListener('click', () => {
-          conn.send({ msg: 'input', text: key })
-          view.focus({ preventScroll: true })
-        })
-        row.appendChild(btn)
-        hasButtons = true
-      } else {
+    // Carry a prefix-glyph slot like other .game-msg rows so markLastMsg
+    // can land turn/cmd markers here too (matches reference, where every
+    // .game_message has a .prefix_glyph).
+    const mark = document.createElement('span')
+    mark.className = 'msg-turn-mark'
+    mark.textContent = ' '
+    row.appendChild(mark)
+    const parsed = parsePromptText(text)
+    if (parsed.color) row.style.color = parsed.color
+    // Trigger gate is wider than the per-token matcher, so a message can
+    // pass the gate without producing any buttons (e.g. the inventory
+    // "<w>?</w> for menu" hint sits mid-token). Fall back to rendering
+    // the body in one shot through dcssToHtml — that preserves any
+    // inline markup the comma/or split would have broken.
+    if (!parsed.hasButton) {
+      const body = document.createElement('span')
+      body.innerHTML = dcssToHtml(parsed.body)
+      row.appendChild(body)
+      return row
+    }
+    for (const seg of parsed.segments) {
+      if (seg.kind === 'text') {
         const span = document.createElement('span')
-        span.innerHTML = dcssToHtml(t)
+        span.innerHTML = dcssToHtml(seg.value)
         row.appendChild(span)
+      } else {
+        appendActionBtn(row, seg.label, seg.key)
       }
     }
-    if (!hasButtons) row.innerHTML = dcssToHtml(text)
     return row
+  }
+
+  function appendActionBtn(row: HTMLElement, label: string, key: string): void {
+    const btn = document.createElement('button')
+    btn.className = 'action-btn'
+    btn.innerHTML = dcssToHtml(label)
+    btn.addEventListener('click', () => {
+      conn.send({ msg: 'input', text: key })
+      view.focus({ preventScroll: true })
+    })
+    row.appendChild(btn)
   }
 
   function buildActionsBar(actionsText: string): HTMLElement {
@@ -2613,6 +2634,17 @@ export function buildGameView(
       }
     }
     return bar
+  }
+
+  // Mirrors the reference's `set_last_prefix_glyph` (messages.js): set the
+  // last message's prefix glyph to `_` and tag it `turn` or `cmd` so CSS
+  // can color it (lightgrey turn, darkgrey cmd). If both classes land on
+  // the same span the `turn` color wins, matching reference rule order.
+  function markLastMsg(kind: 'turn' | 'cmd'): void {
+    const mark = msgLog.querySelector<HTMLElement>('.game-msg:last-child .msg-turn-mark')
+    if (!mark) return
+    mark.textContent = '_'
+    mark.classList.add(kind)
   }
 
   function appendMessage(text: string, html = false): void {

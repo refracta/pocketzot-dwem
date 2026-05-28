@@ -18,11 +18,12 @@ import {
 } from '../tiles/tile-view'
 import { tileLoader } from '../tiles/tile-loader'
 import { bgLo } from '../map/cell-flags'
+import { getPref, setPref } from '../../prefs'
 
 // Up to MAX_ROWS top-sorted groups are listed. When more groups exist, a
-// short ml-more strip is appended below them (centered chevron) — not a
-// full row, so the panel only grows slightly past its MAX_ROWS height.
-const MAX_ROWS = 6
+// small ".ml-corner-more" chip is anchored at the panel's bottom-right
+// corner sharing the last row's line — see updateCornerMore().
+const MAX_ROWS = 5
 const MAX_GLYPHS = 6  // matches reference monster_list.js displayed_monsters
 // 32px native tile cell × 0.625 = 20px slot — fits the row's ~18px text
 // line-height without forcing a row-height bump that would crowd vertical
@@ -45,20 +46,54 @@ function groupMonsters(sorted: MonsterCell[]): MonsterCell[][] {
 
 interface RowCache { el: HTMLElement; sig: string }
 
+// Visual inputs shared by all three render paths (ASCII expanded, tile
+// expanded, collapsed). label is kept raw — ASCII builder escapes at
+// render time; tile builder uses textContent which auto-escapes.
+interface RowData {
+  hasBar: boolean
+  barColor: string
+  color: string
+  label: string
+  hpColor: string
+  memberCells: (Cell | undefined)[]
+}
+
 export class MonsterListView {
   readonly element: HTMLElement
   private mode: 'ascii' | 'tiles' = 'ascii'
-  // Row-keyed cache so repeated `map` messages don't rebuild tile-stack DOM
-  // every turn — sprite paint is async (one microtask per .tile), so wiping
-  // and rebuilding would produce a blank-frame flicker even with cached
-  // atlases.
-  private rows = new Map<string, RowCache>()
-  private moreEl: HTMLElement | null = null
+  // Position-indexed row cache (rows[i] = row at group index i). Lets us
+  // skip rebuilding a row when its signature is unchanged — sprite paint is
+  // async (one microtask per .tile), so wiping and rebuilding would produce
+  // a blank-frame flicker even with cached atlases.
+  //
+  // Why positional and not keyed by monster identity: two groups can sort
+  // apart on a field outside the prior `att|type|name|clientid` cache key.
+  private rows: RowCache[] = []
+  private cornerMoreEl: HTMLElement | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
+  // Sticky across map updates, encounter cycles, empty-view intervals,
+  // and page reloads (persisted via prefs.ts → localStorage). Only the
+  // user's toggle tap flips it. Chevron follows spatial-motion
+  // convention to match the virtual-keyboard button: ▴ when expanded
+  // (tap collapses upward), ▾ when collapsed (tap expands downward).
+  private collapsed = getPref('monsterListCollapsed')
+  private readonly toggleEl: HTMLElement
 
   constructor(private readonly store: MapStore) {
     this.element = document.createElement('div')
     this.element.id = 'monster-list'
+
+    this.toggleEl = document.createElement('div')
+    this.toggleEl.className = 'ml-toggle'
+    this.toggleEl.textContent = '▴'
+    this.toggleEl.addEventListener('click', (e) => {
+      // Panel-level click (game-view.ts) opens the full monster panel on
+      // tap-anywhere; stop here so the chevron only toggles.
+      e.stopPropagation()
+      this.collapsed = !this.collapsed
+      setPref('monsterListCollapsed', this.collapsed)
+      if (this.lastMonsters) this.update(this.lastMonsters)
+    })
   }
 
   // Called by game-view when the map render mode flips. Resets the DOM and
@@ -67,16 +102,32 @@ export class MonsterListView {
   setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === this.mode) return
     this.mode = mode
-    this.rows.clear()
-    this.moreEl = null
+    this.rows.length = 0
+    this.cornerMoreEl = null
     this.element.innerHTML = ''
+    // Clear defensively — `update()` re-asserts this from groups when it
+    // runs, but if lastMonsters is null (mode swap before any monsters
+    // arrived) the class would otherwise persist from the prior mode's
+    // last render.
+    this.element.classList.remove('has-hostile')
     if (this.lastMonsters) this.update(this.lastMonsters)
   }
 
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
     this.lastMonsters = monsterCells
     const groups = groupMonsters(filterAndSortMonsters(monsterCells))
-    const rowCount = Math.min(groups.length, MAX_ROWS)
+
+    // Empty view: tear down DOM so #monster-list:empty hides the panel.
+    // The collapsed flag is NOT reset here — the user's chosen mode
+    // persists across encounter cycles, so re-encountering monsters
+    // returns to whichever mode the user last selected.
+    if (groups.length === 0) {
+      this.rows.length = 0
+      this.cornerMoreEl = null
+      this.element.innerHTML = ''
+      this.element.classList.remove('has-hostile')
+      return
+    }
 
     // Scan all groups, not just the visible ones — a hostile pushed off the
     // bottom of the panel by truncation still constitutes ambient danger
@@ -87,193 +138,214 @@ export class MonsterListView {
     }
     this.element.classList.toggle('has-hostile', hasHostile)
 
-    // Tile path requires the loader to be configured (atlases known). If we
-    // haven't received `game_client` yet, fall back to ASCII rather than
-    // paint empty squares; game-view re-runs update() once the loader is
-    // ready, swapping the rows to sprites.
-    const useTiles = this.mode === 'tiles' && tileLoader.configured
-    if (useTiles) {
-      this.renderTiles(groups, rowCount)
+    let overflow = 0
+    if (this.collapsed) {
+      // Wipe the expanded-mode caches: a re-expand needs to rebuild from
+      // scratch since the DOM no longer holds the cached tile rows.
+      this.rows.length = 0
+      this.cornerMoreEl = null
+      this.renderCollapsed(groups)
     } else {
-      this.rows.clear()
-      this.moreEl = null
-      this.renderAscii(groups, rowCount)
+      const rowCount = Math.min(groups.length, MAX_ROWS)
+      // Count hidden *monsters*, not hidden groups, so the chip is a
+      // threat-density signal consistent with the collapsed view's
+      // "+N" suffix. A single hidden 12-monster group reads as
+      // "…+12" rather than "…+1".
+      for (let i = rowCount; i < groups.length; i++) overflow += groups[i].length
+      // Tile path requires the loader to be configured (atlases known). If
+      // we haven't received `game_client` yet, fall back to ASCII rather
+      // than paint empty squares; game-view re-runs update() once the
+      // loader is ready, swapping the rows to sprites.
+      const useTiles = this.mode === 'tiles' && tileLoader.configured
+      if (useTiles) {
+        this.renderTiles(groups, rowCount)
+      } else {
+        this.rows.length = 0
+        this.cornerMoreEl = null
+        this.renderAscii(groups, rowCount)
+      }
     }
+
+    // Toggle + corner overflow are both absolute-positioned. Re-append
+    // them every render so innerHTML-based rebuilds in the ASCII /
+    // collapsed paths don't leave them orphaned; passing overflow=0
+    // when collapsed detaches any leftover corner indicator. Skip the
+    // toggle when there's only one group: collapsed and expanded would
+    // render the same single row (extras=0 suppresses the "+N more"
+    // suffix), so the chevron would be a no-op tap target.
+    if (groups.length > 1) {
+      this.toggleEl.textContent = this.collapsed ? '▾' : '▴'
+      this.element.appendChild(this.toggleEl)
+    } else {
+      this.toggleEl.remove()
+    }
+    this.updateCornerMore(overflow)
   }
 
-  clear(): void {
-    this.rows.clear()
-    this.moreEl = null
-    this.lastMonsters = null
-    this.element.innerHTML = ''
-    this.element.classList.remove('has-hostile')
+  // Compute visual inputs from a group: threat-bar gate, name color,
+  // HP-bar color, label, and the live cells for each displayed member.
+  // Read col/fg LIVE from the store rather than relying on MonsterCell —
+  // mon-less cell deltas (e.g. sleep→wake) don't refresh MonsterCell, so
+  // a snapshot would keep stale status backgrounds after monsters activate.
+  //
+  // Whole-bar gate: the bar signals "watch out" (named unique, top-tier
+  // threat, or unusual loadout). None of those are actionable on an ally,
+  // and DCSS gives nearly every individuated monster a clientid (spectrals,
+  // zombies, bound souls), so an isNamed-only path would leak the bar onto
+  // ally rows. Suppress for everything non-hostile.
+  //
+  // UNUSUAL is read from the leader's fg high bits; reference renderer
+  // paints a magenta tile-border in place of the threat-color border for
+  // these and we mirror that on the gutter bar.
+  private rowData(group: MonsterCell[]): RowData {
+    const mon = group[0].mon
+    const att = mon.att ?? 0
+    const threat = mon.threat ?? 0
+
+    const showCount = Math.min(group.length, MAX_GLYPHS)
+    const memberCells = group.slice(0, showCount).map((m) => this.store.get(m.x, m.y))
+    const leaderFg = memberCells[0]?.fg
+
+    const isHostile = ATTITUDE_CLASSES[att] === 'hostile'
+    const isNamed = 'clientid' in mon
+    const isNasty = threat === 3
+    const isUnusual = decodeFgThreatTier(leaderFg) === 'unusual'
+
+    const hasBar = isHostile && (isNamed || isNasty || isUnusual)
+    const barColor = isUnusual ? UNUSUAL_COLOR : threatColor(threat)
+    const color = nameColor(att, threat)
+    const hpColor = group.length === 1
+      ? (MDAM_COLORS[decodeMdam(leaderFg)] ?? MDAM_COLORS.uninjured)
+      : ''
+    const label = group.length > 1
+      ? `${group.length} ${mon.plural ?? mon.name ?? '?'}`
+      : (mon.name ?? '?')
+
+    return { hasBar, barColor, color, label, hpColor, memberCells }
+  }
+
+  private buildAsciiRow(group: MonsterCell[], extraClass?: string, suffix?: string): string {
+    const d = this.rowData(group)
+    const baseCls = d.hasBar ? 'ml-row ml-bar' : 'ml-row'
+    const rowCls = extraClass ? `${baseCls} ${extraClass}` : baseCls
+    const rowStyle = d.hasBar ? `--bar-color:${d.barColor}` : ''
+
+    const glyphSpans: string[] = []
+    for (let g = 0; g < d.memberCells.length; g++) {
+      const col = d.memberCells[g]?.col ?? 7
+      const dec = decodeColor(col)
+      const style = dec.bg ? `background:${dec.bg};color:${dec.fg}` : `color:${dec.fg}`
+      glyphSpans.push(`<span class="ml-glyph" style="${style}">${escHtml(group[g].g)}</span>`)
+    }
+    const glyphsHtml = `<span class="ml-glyphs">${glyphSpans.join('')}</span>`
+
+    const hpSpan = d.hpColor
+      ? `<span class="ml-hp" style="background:${d.hpColor}"></span>`
+      : ''
+    const suffixHtml = suffix
+      ? `<span class="ml-collapsed-more">${suffix}</span>`
+      : ''
+
+    return `<div class="${rowCls}"${rowStyle ? ` style="${rowStyle}"` : ''}>`
+      + glyphsHtml
+      + hpSpan
+      + `<span class="ml-name" style="color:${d.color}">${escHtml(d.label)}</span>`
+      + suffixHtml
+      + `</div>`
   }
 
   private renderAscii(groups: MonsterCell[][], rows: number): void {
     let html = ''
-    for (let i = 0; i < rows; i++) {
-      const group = groups[i]
-      const leader = group[0]
-      const leaderCell = this.store.get(leader.x, leader.y)
-      const mon = leader.mon
-      const att = mon.att ?? 0
-      const threat = mon.threat ?? 0
-      const isNamed = 'clientid' in mon
-      const isNasty = threat === 3
-      // UNUSUAL is read from the leader's fg high bits; it indicates the
-      // monster carries items unusual for its species (worth examining).
-      // Reference renderer paints a magenta tile-border in place of the
-      // threat-color border for these — we mirror that on the gutter bar.
-      const isUnusual = decodeFgThreatTier(leaderCell?.fg) === 'unusual'
-      const color = nameColor(att, threat)
-
-      // Row highlight: named, unnamed-nasty, or unusual-items get a left
-      // gutter bar rendered by .ml-bar::before in the panel's left padding.
-      const hasBar = isNamed || isNasty || isUnusual
-      const barColor = isUnusual ? UNUSUAL_COLOR : threatColor(threat)
-      const rowCls = hasBar ? 'ml-row ml-bar' : 'ml-row'
-      const rowStyle = hasBar ? `--bar-color:${barColor}` : ''
-
-      // Render up to MAX_GLYPHS individual glyph spans, each with its own col byte
-      // so per-monster status backgrounds (sleeping=blue, wandering=brown, etc.)
-      // are visible even when the group is mixed. Read col live from the cell
-      // — mon-less cell deltas (e.g. sleep→wake) don't refresh MonsterCell, so
-      // the snapshot would keep the stab bg after the monster activated.
-      const showCount = Math.min(group.length, MAX_GLYPHS)
-      const glyphSpans: string[] = []
-      for (let g = 0; g < showCount; g++) {
-        const mc = group[g]
-        const col = this.store.get(mc.x, mc.y)?.col ?? 7
-        const dec = decodeColor(col)
-        const style = dec.bg ? `background:${dec.bg};color:${dec.fg}` : `color:${dec.fg}`
-        glyphSpans.push(`<span class="ml-glyph" style="${style}">${escHtml(mc.g)}</span>`)
-      }
-      const glyphsHtml = `<span class="ml-glyphs">${glyphSpans.join('')}</span>`
-
-      // Health indicator (single monsters only, matches reference)
-      let hpSpan = ''
-      if (group.length === 1) {
-        const mdam = decodeMdam(leaderCell?.fg)
-        const hpColor = MDAM_COLORS[mdam] ?? MDAM_COLORS.uninjured
-        hpSpan = `<span class="ml-hp" style="background:${hpColor}"></span>`
-      }
-
-      const label = group.length > 1
-        ? `${group.length} ${escHtml(mon.plural ?? mon.name ?? '?')}`
-        : escHtml(mon.name ?? '?')
-
-      html += `<div class="${rowCls}"${rowStyle ? ` style="${rowStyle}"` : ''}>`
-        + glyphsHtml
-        + hpSpan
-        + `<span class="ml-name" style="color:${color}">${label}</span>`
-        + `</div>`
-
-      if (i === rows - 1 && rows < groups.length) {
-        html += `<div class="ml-more">▾ +${groups.length - rows}</div>`
-      }
-    }
+    for (let i = 0; i < rows; i++) html += this.buildAsciiRow(groups[i])
     this.element.innerHTML = html
   }
 
-  private renderTiles(groups: MonsterCell[][], rows: number): void {
-    const newKeys: string[] = []
-    for (let i = 0; i < rows; i++) {
-      const group = groups[i]
-      const mon = group[0].mon
-      const att = mon.att ?? 0
-      const threat = mon.threat ?? 0
-      const isNamed = 'clientid' in mon
-      const isNasty = threat === 3
-      const color = nameColor(att, threat)
+  // Single-line collapsed rendition: render the top-priority group's row
+  // (glyphs + HP + name + threat-gutter bar) exactly as the expanded
+  // view's first row would, then append a "+N" inline suffix where N is
+  // the count of monsters NOT in the top group. When N === 0 the suffix
+  // is omitted. Both modes share rowData with the expanded renderers,
+  // so visual presentation stays identical between collapsed and
+  // expanded first rows.
+  private renderCollapsed(groups: MonsterCell[][]): void {
+    const top = groups[0]
+    let total = 0
+    for (const g of groups) total += g.length
+    const suffix = total > top.length ? `+${total - top.length}` : undefined
+    const useTiles = this.mode === 'tiles' && tileLoader.configured
 
-      // Per-group identity. monsterSort only collapses entries with matching
-      // (att, avghp, type, named-status, name, clientid), so two distinct
-      // groups can't share this key. Named monsters carry clientid for
-      // uniqueness.
-      const clientid = (mon as { clientid?: number }).clientid
-      const key = `${att}|${mon.type ?? ''}|${mon.name ?? ''}|${clientid ?? ''}`
-      newKeys.push(key)
-
-      // One Cell per displayed glyph (capped at MAX_GLYPHS); the leader's
-      // Cell at [0] also feeds the unusual-tier and MDAM decode below.
-      const showCount = Math.min(group.length, MAX_GLYPHS)
-      const memberCells = group.slice(0, showCount).map((m) => this.store.get(m.x, m.y))
-      const leaderFg = memberCells[0]?.fg
-
-      const isUnusual = decodeFgThreatTier(leaderFg) === 'unusual'
-      const hasBar = isNamed || isNasty || isUnusual
-      const barColor = isUnusual ? UNUSUAL_COLOR : threatColor(threat)
-
-      const hpColor = group.length === 1
-        ? (MDAM_COLORS[decodeMdam(leaderFg)] ?? MDAM_COLORS.uninjured)
-        : ''
-
-      const label = group.length > 1
-        ? `${group.length} ${mon.plural ?? mon.name ?? '?'}`
-        : (mon.name ?? '?')
-
-      // Signature covers every visual input. JSON.stringify is overkill for
-      // small numeric tuples but trivially cheap for ~6 entries × 8 fields,
-      // and avoids hand-rolled hashing bugs.
-      const memberSig = memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null])
-      const sig = JSON.stringify([hasBar, barColor, color, label, hpColor, memberSig])
-
-      const cached = this.rows.get(key)
-      let el: HTMLElement
-      if (cached && cached.sig === sig) {
-        el = cached.el
-      } else {
-        // Detach the previous element for this key before inserting the
-        // replacement — otherwise insertBefore(newEl, oldEl) would leave the
-        // stale row in the DOM as a sibling, and the cleanup loop wouldn't
-        // catch it because the key is still in newKeys.
-        if (cached) cached.el.remove()
-        el = this.buildTileRow({ hasBar, barColor, color, label, hpColor, memberCells })
-        this.rows.set(key, { el, sig })
-      }
-
-      const existing = this.element.children[i]
-      if (existing !== el) this.element.insertBefore(el, existing ?? null)
-    }
-
-    // Drop rows that no longer appear in the sorted group list.
-    for (const key of [...this.rows.keys()]) {
-      if (!newKeys.includes(key)) {
-        const entry = this.rows.get(key)!
-        entry.el.remove()
-        this.rows.delete(key)
-      }
-    }
-
-    // "More" indicator. Reuses one element across renders so identity stays
-    // stable when the truncation state doesn't change.
-    if (rows < groups.length) {
-      if (!this.moreEl) {
-        this.moreEl = document.createElement('div')
-        this.moreEl.className = 'ml-more'
-      }
-      // textContent updated every render so the count tracks group changes.
-      this.moreEl.textContent = `▾ +${groups.length - rows}`
-      const expectedIdx = rows
-      if (this.element.children[expectedIdx] !== this.moreEl) {
-        this.element.insertBefore(this.moreEl, this.element.children[expectedIdx] ?? null)
-      }
-    } else if (this.moreEl) {
-      this.moreEl.remove()
-      this.moreEl = null
+    if (useTiles) {
+      const row = this.buildTileRow({ ...this.rowData(top), extraClass: 'ml-collapsed', suffix })
+      this.element.innerHTML = ''
+      this.element.appendChild(row)
+    } else {
+      this.element.innerHTML = this.buildAsciiRow(top, 'ml-collapsed', suffix)
     }
   }
 
-  private buildTileRow(opts: {
-    hasBar: boolean
-    barColor: string
-    color: string
-    label: string
-    hpColor: string
-    memberCells: (Cell | undefined)[]
-  }): HTMLElement {
+  private renderTiles(groups: MonsterCell[][], rows: number): void {
+    // Invariant: empty cache → fresh DOM. Without this wipe, transitioning
+    // from collapsed (which leaves a single .ml-collapsed row) back to
+    // expanded would stack the new tile rows below the stale collapsed
+    // row, since the incremental insert path only manages this.rows[].
+    if (this.rows.length === 0) {
+      this.element.innerHTML = ''
+      this.cornerMoreEl = null
+    }
+    for (let i = 0; i < rows; i++) {
+      const d = this.rowData(groups[i])
+      // Signature covers every visual input. JSON.stringify is overkill
+      // for small numeric tuples but trivially cheap for ~6 entries × 8
+      // fields, and avoids hand-rolled hashing bugs.
+      const memberSig = d.memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null])
+      const sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, memberSig])
+
+      const cached = this.rows[i]
+      if (cached && cached.sig === sig) continue
+      const el = this.buildTileRow(d)
+      if (cached) {
+        cached.el.replaceWith(el)
+      } else {
+        // DOM order is irrelevant for the overflow indicator (absolute
+        // positioned in the corner) and the toggle (top-right), so just
+        // append. update() re-appends both after rendering so they end
+        // up after the rows regardless.
+        this.element.appendChild(el)
+      }
+      this.rows[i] = { el, sig }
+    }
+
+    // Trim rows past the new count — the visible group list shrank.
+    while (this.rows.length > rows) {
+      const dropped = this.rows.pop()
+      dropped?.el.remove()
+    }
+  }
+
+  // Overflow indicator anchored to the panel's bottom-right corner,
+  // sharing a line with the last row. Expanded-only — the collapsed view
+  // carries its own inline +N. Reuses one element across renders so
+  // identity is stable when the count just changes. Row-level padding
+  // on .ml-row reserves the clearance for the chip; no panel class
+  // toggling needed.
+  private updateCornerMore(overflow: number): void {
+    if (overflow > 0) {
+      if (!this.cornerMoreEl) {
+        this.cornerMoreEl = document.createElement('div')
+        this.cornerMoreEl.className = 'ml-corner-more'
+      }
+      this.cornerMoreEl.textContent = `+${overflow}`
+      this.element.appendChild(this.cornerMoreEl)
+    } else if (this.cornerMoreEl) {
+      this.cornerMoreEl.remove()
+      this.cornerMoreEl = null
+    }
+  }
+
+  private buildTileRow(opts: RowData & { extraClass?: string; suffix?: string }): HTMLElement {
     const row = document.createElement('div')
-    row.className = opts.hasBar ? 'ml-row ml-tile-row ml-bar' : 'ml-row ml-tile-row'
+    const base = opts.hasBar ? 'ml-row ml-tile-row ml-bar' : 'ml-row ml-tile-row'
+    row.className = opts.extraClass ? `${base} ${opts.extraClass}` : base
     if (opts.hasBar) row.style.setProperty('--bar-color', opts.barColor)
 
     const glyphs = document.createElement('span')
@@ -317,6 +389,13 @@ export class MonsterListView {
     name.style.color = opts.color
     name.textContent = opts.label
     row.appendChild(name)
+
+    if (opts.suffix) {
+      const more = document.createElement('span')
+      more.className = 'ml-collapsed-more'
+      more.textContent = opts.suffix
+      row.appendChild(more)
+    }
 
     return row
   }
