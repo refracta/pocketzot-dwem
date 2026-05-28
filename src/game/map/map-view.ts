@@ -160,35 +160,50 @@ export class MapView {
     const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
     const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
 
+    if (dirty) {
+      // Dirty path: iterate just the changed cells. Skipping the full viewport
+      // sweep matters when only a handful of cells actually changed (a few
+      // monsters moving) but the viewport is ~700 cells. Cells outside the
+      // viewport are still in `dirty` (the dungeon changed off-screen) — we
+      // bounds-check and skip those.
+      for (const key of dirty) {
+        const comma = key.indexOf(',')
+        const mx = +key.slice(0, comma)
+        const my = +key.slice(comma + 1)
+        const col = mx - offX
+        const row = my - offY
+        if (col < 0 || col >= this.viewportW || row < 0 || row >= this.viewportH) continue
+        this.#paintSpan(col, row, mx, my)
+      }
+      return
+    }
+
     for (let row = 0; row < this.viewportH; row++) {
       for (let col = 0; col < this.viewportW; col++) {
-        const mx = offX + col
-        const my = offY + row
-        const key = `${mx},${my}`
-
-        if (dirty && !dirty.has(key)) continue
-
-        const span = this.spans[row][col]
-        const cell = this.store.get(mx, my)
-
-        if (cell) {
-          const c = decodeColor(cell.col)
-          span.textContent = cell.g || ' '
-          span.style.color = c.fg
-          span.style.backgroundColor = c.bg ?? ''
-          // Flash overlay (damage flash, spell impact, blind, sanctuary, etc.).
-          // Inset box-shadow paints on top of the background but below the
-          // glyph text, so the flash tint layers over any HILITE bg without
-          // hiding the cell character.
-          const flash = flashColor(cell.flc, cell.fla)
-          span.style.boxShadow = flash ? `inset 0 0 0 999px ${flash}` : ''
-        } else {
-          span.textContent = ' '
-          span.style.color = DEFAULT_BG
-          span.style.backgroundColor = ''
-          span.style.boxShadow = ''
-        }
+        this.#paintSpan(col, row, offX + col, offY + row)
       }
+    }
+  }
+
+  #paintSpan(col: number, row: number, mx: number, my: number): void {
+    const span = this.spans[row][col]
+    const cell = this.store.get(mx, my)
+    if (cell) {
+      const c = decodeColor(cell.col)
+      span.textContent = cell.g || ' '
+      span.style.color = c.fg
+      span.style.backgroundColor = c.bg ?? ''
+      // Flash overlay (damage flash, spell impact, blind, sanctuary, etc.).
+      // Inset box-shadow paints on top of the background but below the
+      // glyph text, so the flash tint layers over any HILITE bg without
+      // hiding the cell character.
+      const flash = flashColor(cell.flc, cell.fla)
+      span.style.boxShadow = flash ? `inset 0 0 0 999px ${flash}` : ''
+    } else {
+      span.textContent = ' '
+      span.style.color = DEFAULT_BG
+      span.style.backgroundColor = ''
+      span.style.boxShadow = ''
     }
   }
 

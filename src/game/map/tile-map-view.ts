@@ -390,12 +390,24 @@ export class TileMapView {
   render(dirty?: Set<string>): void {
     const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
     const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
+    if (dirty) {
+      // Iterate dirty cells directly; skip those outside the viewport.
+      // See MapView.render for the rationale.
+      for (const key of dirty) {
+        const comma = key.indexOf(',')
+        const mx = +key.slice(0, comma)
+        const my = +key.slice(comma + 1)
+        const col = mx - offX
+        const row = my - offY
+        if (col < 0 || col >= this.viewportW || row < 0 || row >= this.viewportH) continue
+        this.drawCell(col, row, mx, my)
+      }
+      this.updateCursorEl()
+      return
+    }
     for (let row = 0; row < this.viewportH; row++) {
       for (let col = 0; col < this.viewportW; col++) {
-        const mx = offX + col
-        const my = offY + row
-        if (dirty && !dirty.has(`${mx},${my}`)) continue
-        this.drawCell(col, row, mx, my)
+        this.drawCell(col, row, offX + col, offY + row)
       }
     }
     this.updateCursorEl()
