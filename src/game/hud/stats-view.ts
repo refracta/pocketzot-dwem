@@ -89,6 +89,15 @@ export class StatsView {
       : `${mp}/${mpMax}`
     this.setText('hud-mp', mpText)
 
+    // Tint the HP/MP figure "boosted" (lightblue) while the relevant max is
+    // magically inflated, mirroring player.js stat_boosters: HP under divinely
+    // vigorous or berserk, MP under divinely vigorous. (The bar itself is
+    // unchanged — this is only the numeric readout, as in the reference.)
+    const statuses = s.status ?? []
+    const hasStatus = (re: RegExp): boolean => statuses.some(st => st.text != null && re.test(st.text))
+    this.el.querySelector('#hud-hp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous|berserk/i))
+    this.el.querySelector('#hud-mp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous/i))
+
     this.renderStatValue('hud-str', s.str, this.statClass('str'))
     this.renderStatValue('hud-int', s.int, this.statClass('int'))
     this.renderStatValue('hud-dex', s.dex, this.statClass('dex'))
