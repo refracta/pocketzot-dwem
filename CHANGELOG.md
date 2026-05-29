@@ -9,11 +9,24 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-29
+
+- After a game ends, the lobby now shows a dialog with your character summary
+  and a link to the morgue/dump file.
+- The HUD now shows drained stats alongside their natural maximum
+  (e.g. `12 (15)`), plus Contamination and Doom meters when either is active.
+- Fixed occasional stray specks of color left next to monsters and items in
+  tile mode.
+
 ## 2026-05-28
 
 - Optimized map rendering to be ~40% faster during movement-heavy play.
 - Rewrote message log handling to be an order of magnitude faster when many
   messages are arriving.
+- The noise indicator is now a graphical colored bar instead of an ASCII meter.
+- In tile mode, HP and MP bars now appear beneath the player tile.
+- The HUD no longer briefly flashes empty bars and stat captions before the
+  first game update arrives.
 
 ## 2026-05-27
 
