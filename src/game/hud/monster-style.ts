@@ -119,6 +119,13 @@ export const ATTITUDE_HALO_DNGN: Record<number, string> = {
 export interface IconOverlay { name?: string; id?: number; xofs: number; yofs: number }
 export interface StatusOverlays { overlays: IconOverlay[]; statusShift: number }
 
+// Lo-word bits that produce a status overlay (trap/under markers + attitude +
+// behaviour). Lets buildStatusOverlays test "any status at all?" in one mask
+// for its allocation-free fast path. Poison lives in the hi word, checked
+// separately. Shared result for the no-status case — callers only read it.
+const STATUS_LO_BITS = FG_NET | FG_WEB | FG_S_UNDER | FG_ATTITUDE_MASK | FG_BEHAVIOUR_MASK
+const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
+
 // MDAM damage tier → icons tile-constant name; absent (→ undefined) when uninjured.
 const MDAM_ICON_NAMES: Record<string, string> = {
   lightly_damaged: 'MDAM_LIGHTLY_DAMAGED',
@@ -154,6 +161,17 @@ export function buildStatusOverlays(
 ): StatusOverlays {
   const lo = fgLo(fg)
   const hi = fgHi(fg)
+
+  // Fast path: most map cells carry no status bits and no server icons. The
+  // canvas map calls this once per rendered cell, so bail before allocating an
+  // overlays array + result object in the empty case. (includeMdam surfaces —
+  // the describe popup — are rare and skip the fast path so MDAM still decodes.)
+  if (!opts.includeMdam
+      && (lo & STATUS_LO_BITS) === 0 && (hi & FG_POISON_MASK_HI) === 0
+      && icons.length === 0) {
+    return EMPTY_STATUS_OVERLAYS
+  }
+
   const overlays: IconOverlay[] = []
 
   // Trap / item-underneath markers and attitude gem: fixed authored positions.
