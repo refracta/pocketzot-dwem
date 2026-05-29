@@ -1208,8 +1208,9 @@ html, body {
   text-align: center;
 }
 
-.hs-id { font-size: 0.75rem; line-height: 1.2; }
-.hg-piety { margin-left: 0.4em; }
+.hs-id { font-size: 0.75rem; line-height: 1.2; display: flex; align-items: baseline; }
+.hs-id #hud-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.hg-piety { margin-left: 0.4em; flex-shrink: 0; }
 
 .hg-bar-pair {
   display: flex;
