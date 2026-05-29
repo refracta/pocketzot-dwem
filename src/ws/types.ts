@@ -176,6 +176,9 @@ export interface PlayerMsg {
   str?: number
   int?: number
   dex?: number
+  str_max?: number  // natural maxima; current < max means the stat is drained
+  int_max?: number
+  dex_max?: number
   xl?: number
   progress?: number
   gold?: number

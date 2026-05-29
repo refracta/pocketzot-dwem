@@ -99,13 +99,15 @@ export class StatsView {
     this.el.querySelector('#hud-hp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous|berserk/i))
     this.el.querySelector('#hud-mp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous/i))
 
-    this.renderStatValue('hud-str', s.str, this.statClass('str'))
-    this.renderStatValue('hud-int', s.int, this.statClass('int'))
-    this.renderStatValue('hud-dex', s.dex, this.statClass('dex'))
+    this.renderStatValue('hud-str', s.str, s.str_max, 'str')
+    this.renderStatValue('hud-int', s.int, s.int_max, 'int')
+    this.renderStatValue('hud-dex', s.dex, s.dex_max, 'dex')
 
     this.renderDefenseValue('hud-ac', s.ac, s.ac_mod)
     this.renderDefenseValue('hud-ev', s.ev, s.ev_mod)
     this.renderDefenseValue('hud-sh', s.sh, s.sh_mod)
+
+    this.renderWarnings()
 
     const xl = s.xl ?? '?'
     const place = s.place ?? ''
@@ -268,20 +270,55 @@ export class StatsView {
     return `<span class="hg-caption">${letter})</span> <span${classAttr}>${escHtml(name)}</span>`
   }
 
-  private statClass(stat: 'str' | 'int' | 'dex'): string {
+  // Mirrors stat_class() in player.js: lost (status) → boosted (status) →
+  // drained (current < max) → normal. Drained is the new case here.
+  private statClass(stat: 'str' | 'int' | 'dex', val: number, max: number): string {
     const statuses = this.state.status ?? []
     const lostRe = new RegExp(`lost ${stat}`, 'i')
     if (statuses.some(st => st.text && lostRe.test(st.text))) return 'stat-zero'
     if (statuses.some(st => st.text && /vitalised/i.test(st.text))) return 'stat-boosted'
+    if (val < max) return 'stat-degenerated'
     return ''
   }
 
-  private renderStatValue(id: string, val: number | undefined, cls: string): void {
+  // Mirrors update_stat() in player.js: append " (max)" when the stat is drained
+  // below its natural maximum, and colour the value accordingly.
+  private renderStatValue(id: string, val: number | undefined, max: number | undefined, stat: 'str' | 'int' | 'dex'): void {
     const el = this.el.querySelector<HTMLElement>(`#${id}`)
     if (!el) return
-    el.textContent = String(val ?? 0)
-    el.classList.remove('stat-boosted', 'stat-zero')
+    const v = val ?? 0
+    const m = max ?? v
+    // Drained: tuck the "(max)" tight against the value via .stat-max's margin
+    // (a small fixed gap), rather than a full space, so the readout stays compact.
+    if (v < m) el.innerHTML = `${v}<span class="stat-max">(${m})</span>`
+    else el.textContent = String(v)
+    el.classList.remove('stat-boosted', 'stat-zero', 'stat-degenerated')
+    const cls = this.statClass(stat, v, m)
     if (cls) el.classList.add(cls)
+  }
+
+  // Contamination and Doom, mirroring update_contam/update_doom in player.js.
+  // Both are shown only when nonzero (reference hides them at 0 unless
+  // always_show_doom_contam is set) and coloured by severity. They occupy the
+  // right end of the stats row (hidden when empty via .hg-warn:empty), where
+  // they get the prominent slot since they're active danger meters; Noise moves
+  // down to share the XL row with Time.
+  private renderWarnings(): void {
+    const parts: string[] = []
+    const contam = this.state.contam ?? 0
+    if (contam > 0) {
+      const c = contam >= 200 ? 'fg4' : contam >= 100 ? 'fg14' : 'fg8'
+      parts.push(`<span class="hg-grp"><span class="hg-caption">Contam</span><span class="${c}">${contam}%</span></span>`)
+    }
+    const doom = this.state.doom ?? 0
+    if (doom > 0) {
+      const c = doom >= 75 ? 'fg5' : doom >= 50 ? 'fg12' : doom >= 25 ? 'fg14' : 'fg7'
+      parts.push(`<span class="hg-grp"><span class="hg-caption">Doom</span><span class="${c}">${doom}%</span></span>`)
+    }
+    // Joined with a space so the Contam↔Doom gap matches the inter-stat gap
+    // (e.g. AC↔EV) — .hg-warn applies the same word-spacing to that space.
+    const el = this.el.querySelector<HTMLElement>('#hud-warn')
+    if (el) el.innerHTML = parts.join(' ')
   }
 
   private renderDefenseValue(id: string, val: number | undefined, mod: number | undefined): void {
@@ -315,11 +352,14 @@ export class StatsView {
           <span class="hg-grp"><span class="hg-caption">AC</span><span id="hud-ac"></span> <span class="hg-caption">EV</span><span id="hud-ev"></span> <span class="hg-caption">SH</span><span id="hud-sh"></span></span>
           <span class="hg-grp"><span class="hg-caption">St</span><span id="hud-str"></span> <span class="hg-caption">In</span><span id="hud-int"></span> <span class="hg-caption">Dx</span><span id="hud-dex"></span></span>
         </div>
-        <span class="hg-noise"><span class="hg-caption">N</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
+        <span class="hg-warn" id="hud-warn"></span>
       </div>
       <div class="hg-xl-row">
         <span class="hg-xl-place hg-grp" id="hud-xl-place"></span>
-        <span class="hg-time" id="hud-time"></span>
+        <span class="hg-noise-time">
+          <span class="hg-noise"><span class="hg-caption">N</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
+          <span class="hg-time" id="hud-time"></span>
+        </span>
       </div>
       <div class="hg-wq" id="hud-wq"></div>
       <div class="hg-wq" id="hud-wq-offhand"></div>

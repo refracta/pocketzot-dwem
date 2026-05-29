@@ -1184,9 +1184,12 @@ html, body {
 .hg-inline-stats {
   display: flex;
   flex-wrap: nowrap;
-  gap: 0.15rem 0.6rem;
+  gap: 0.15rem 0.4rem;
   font-size: 0.7rem;
   line-height: 1.2;
+  /* Tighten the spaces between stat items and inside the drained "(max)" parens
+     so the row reclaims width before the right-aligned Contam/Doom clips. */
+  word-spacing: -0.15em;
 }
 .hg-grp { white-space: nowrap; }
 
@@ -1198,18 +1201,18 @@ html, body {
   line-height: 1.2;
   overflow: hidden;
 }
-/* Non-shrinking, so the right-aligned .hg-noise on this row keeps its width.
-   Heads-up: we don't yet render drained stats as "St 5 (10)" (reference
-   update_stat appends " (max)" when val < max). When that lands, all three
-   stats drained with 2-digit maxes fits at >=386px (iPhone) but clips Noise on
-   the right at ~360px — let this shrink/wrap or drop the gap under a narrow
-   media query then. */
+/* Non-shrinking, so the right-aligned .hg-warn (Contam/Doom) keeps its width.
+   Edge case: the row only overflows (clipping the rightmost warning) when BOTH
+   Contam and Doom are active AND a stat is drained ("St 5 (10)") at the same
+   time — an uncommon conjunction, and Doom may not even be sent by 0.34. Any
+   single warning, or both with no drain, fits at iPhone width. If that triple
+   conjunction matters, let this shrink/wrap or tighten gaps in a media query. */
 .hg-stats-row .hg-inline-stats { flex: 0 0 auto; }
-/* Noise sits right-aligned on the stats row, stacked directly above Time (which
-   right-aligns on the XL row below), so the two read as a right-hand column.
-   inline-flex centers the small bar cell against the "N" cap; cap-to-bar spacing
-   comes from the shared .hg-caption + span rule (0.15em), like every other cap. */
-.hg-noise { margin-left: auto; display: inline-flex; align-items: center; white-space: nowrap; }
+/* Noise + Time form a right-aligned group on the XL row (.hg-noise-time pins it
+   right). inline-flex centers the bar cell against the "N" cap; the Noise↔Time
+   gap is set to match the inter-stat gap (e.g. AC↔EV ≈ 0.47em). */
+.hg-noise-time { margin-left: auto; display: inline-flex; align-items: center; gap: 0.47em; white-space: nowrap; }
+.hg-noise { display: inline-flex; align-items: center; white-space: nowrap; }
 
 /* Graphical noise bar, mirroring #stats_noise_bar in the reference client.
    Trough is darker than the HP/MP cell (#555753) so the darkgray decrease
@@ -1235,7 +1238,9 @@ html, body {
 .hg-noise-cell[data-level="blank"] { display: none; }
 .hg-noise-status { margin-left: 0.15em; color: #fd59fa; /* DCSS lightmagenta — reference #stats_noise_status */ }
 .hg-noise-status:empty { display: none; }
-.hg-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* word-spacing matches the inter-stat gap (5.3px) for the space between the
+   time value and its (delta), keeping it consistent with AC↔EV / Noise↔Time. */
+.hg-time { word-spacing: -0.15em; font-variant-numeric: tabular-nums; }
 .hg-xl-row {
   display: flex;
   align-items: baseline;
@@ -1244,7 +1249,9 @@ html, body {
   line-height: 1.2;
   overflow: hidden;
 }
-.hg-xl-place { flex: 0 0 auto; white-space: nowrap; }
+/* word-spacing tightens the literal spaces between the XL/progress/@/$ readouts
+   to the unified 5.3px inter-readout gap (matches AC↔EV, Noise↔Time, etc.). */
+.hg-xl-place { flex: 0 0 auto; white-space: nowrap; word-spacing: -0.15em; }
 .hg-quiver {
   font-size: 0.72rem;
   line-height: 1.2;
@@ -1271,8 +1278,25 @@ html, body {
    .corroded_weapon override). */
 .stat-boosted, .def-boosted { color: #5e78ff; /* DCSS lightblue (.fg9) */ }
 .stat-zero { color: #ef2929; /* DCSS lightred (.fg12) */ }
+.stat-degenerated { color: #fce94f; /* DCSS yellow (.fg14) — reference degenerated_stat (drained) */ }
+.stat-max { margin-left: 0.15em; /* tight gap from the drained value to its "(max)" */ }
 .def-degenerated { color: #b30009; /* DCSS red (.fg4) */ }
 .hg-wq .weapon-corroded { color: #b30009; /* DCSS red (.fg4) */ }
+
+/* Contamination / Doom readouts, right-aligned on the stats row (margin-left:
+   auto). Only rendered when nonzero, so :empty collapses them out entirely —
+   in the common case the stats row's right end is empty, like it was with the
+   short Time value. */
+.hg-warn {
+  margin-left: auto;
+  display: inline-block;
+  white-space: nowrap;
+  /* Contam and Doom are space-separated (see renderWarnings); the same negative
+     word-spacing as .hg-inline-stats makes that gap match the inter-stat gap
+     (e.g. AC↔EV). */
+  word-spacing: -0.15em;
+}
+.hg-warn:empty { display: none; }
 
 /* Status row is locked to a single fixed-height line. flex-wrap:nowrap +
    overflow:hidden prevents 10+ active lights from wrapping to a second
