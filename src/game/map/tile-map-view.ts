@@ -408,14 +408,36 @@ export class TileMapView {
     const offX = this.offX
     const offY = this.offY
     if (dirty) {
-      // Iterate dirty cells directly; skip those outside the viewport.
-      // See MapView.render for the rationale.
+      // Repaint the changed cells PLUS a one-cell halo around each. Sprites
+      // routinely paint outside their own 32×32 cell — tall monster tiles spill
+      // upward, status/MDAM marks and icons sit at the top edge and fan left,
+      // items/overlays carry sub-cell offsets — so clearing only the changed
+      // cell leaves that spill orphaned in an unchanged neighbour (a stale
+      // sliver at the neighbour's edge). The full sweep avoids this by clearing
+      // the whole canvas first; here we instead clear+redraw the neighbourhood.
+      // (ASCII MapView needs no halo — each cell is its own DOM span, no bleed.)
+      //
+      // Collected into a deduped screen-cell set keyed row*W+col, then painted
+      // in ascending (row-major) order so a cell's upward spill lands on the
+      // already-painted cell above and isn't wiped by a later clear — the exact
+      // draw order fullRender uses, just restricted to the touched region.
+      const cells = new Set<number>()
       for (const key of dirty) {
         const { x: mx, y: my } = parseCellKey(key)
-        const col = mx - offX
-        const row = my - offY
-        if (!this.inView(col, row)) continue
-        this.paintCell(col, row, mx, my)
+        const c0 = mx - offX
+        const r0 = my - offY
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const col = c0 + dc
+            const row = r0 + dr
+            if (this.inView(col, row)) cells.add(row * this.viewportW + col)
+          }
+        }
+      }
+      for (const tag of [...cells].sort((a, b) => a - b)) {
+        const col = tag % this.viewportW
+        const row = (tag - col) / this.viewportW
+        this.paintCell(col, row, offX + col, offY + row)
       }
       return
     }
