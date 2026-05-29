@@ -11,6 +11,8 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-05-29
 
+- Long character titles no longer wrap to a second line in the HUD; the title
+  is truncated with an ellipsis so piety stars stay visible.
 - After a game ends, the lobby now shows a dialog with your character summary
   and a link to the morgue/dump file.
 - The HUD now shows drained stats alongside their natural maximum
