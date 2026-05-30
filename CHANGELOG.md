@@ -96,7 +96,7 @@ Notable changes to PocketZot, newest first.
 - Menu highlight follows the d-pad immediately on up/down, instead of after a server
   round-trip.
 - D-pad diagonals page through long menus and jump to top/bottom.
-- Fixed a visible jerk-back after paging on phone-width menus with tall description
+- Fixed a visible jump-back after paging on phone-width menus with tall description
   rows.
 
 ## 2026-05-18
