@@ -4,6 +4,7 @@ import { clearSession, loadSession } from '../auth/session'
 import { tileLoader } from '../game/tiles/tile-loader'
 import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
+import { openAboutDoc, openChangelogDoc } from './docs'
 
 export function buildLobbyView(
   conn: WsConnection,
@@ -40,6 +41,8 @@ export function buildLobbyView(
           <span class="lobby-chip-caret">▾</span>
         </button>
         <div id="lobby-account-menu" class="lobby-account-menu" hidden>
+          <button id="lobby-about" type="button" class="lobby-account-menu-item">About</button>
+          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new</button>
           <button id="lobby-logout" type="button" class="lobby-account-menu-item">Logout</button>
         </div>
       </div>
@@ -99,6 +102,15 @@ export function buildLobbyView(
       if (menuEl.hidden) openMenu(); else closeMenu()
     })
     closeAccountMenu = closeMenu
+
+    view.querySelector('#lobby-about')!.addEventListener('click', () => {
+      closeMenu()
+      openAboutDoc()
+    })
+    view.querySelector('#lobby-changelog')!.addEventListener('click', () => {
+      closeMenu()
+      openChangelogDoc()
+    })
 
     logoutBtn.addEventListener('click', () => {
       closeMenu()

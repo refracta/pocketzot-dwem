@@ -2,7 +2,7 @@
 
 **Dungeon Crawl Stone Soup (DCSS) WebTiles in your pocket.**
 
-**▶ [Play now: pocketzot.pages.dev](https://pocketzot.pages.dev)**
+**[Play now: pocketzot.pages.dev](https://pocketzot.pages.dev)**
 
 PocketZot is an unofficial, mobile-first [WebTiles](https://crawl.develz.org/wordpress/howto)
 client for [DCSS](https://crawl.develz.org). It connects to standard DCSS WebTiles servers
@@ -27,8 +27,9 @@ Web App.
   supported too.
 - Log in with multiple WebTiles server accounts and switch between them.
 - Inline tap regions in many menus and descriptions for quick touch play.
+- Context-aware control sets for common situations.
 - Spectator mode with an expanded map view.
-- Floating monster list — tap for the full view.
+- Floating, collapsible monster list; tap for the full view.
 - Map double-tap toggles zoom; two-finger long-press toggles tiles.
 - Installs as a PWA — add to the home screen for the best experience.
 
@@ -42,11 +43,12 @@ holds no game logic, and gameplay runs entirely on DCSS servers.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). Copyright © 2026 the PocketZot contributors.
+[AGPL-3.0-or-later](LICENSE). Copyright © 2026 the PocketZot developer.
 PocketZot is an independent project, not affiliated with or endorsed by the
 DCSS development team. See [ATTRIBUTION.md](ATTRIBUTION.md) for the
 relationship to DCSS and third-party provenance.
 
 ## Feedback
 
-Comments, questions, and bug reports: <pocketzot@proton.me>
+Please send any comments, questions, or bug reports to <pocketzot@proton.me>.
+If you're enjoying the app, I'd love to hear from you.

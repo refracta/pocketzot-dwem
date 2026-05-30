@@ -16,10 +16,8 @@ design/
 scripts/
 TODO
 .env*.local
-# Hosted-site pages, screenshots, etc. — part of our
-# deployment, not the open-source client. 
-# robots.txt / sitemap.xml hardcode the live domain, 
-# so they are operator-specific too.
+# Operator-only deployment assets. About / What's new ship in-app from
+# ABOUT.md / CHANGELOG.md; the static .html files are web mirrors.
 public/about.html
 public/support.html
 public/changelog.html
