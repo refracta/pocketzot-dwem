@@ -9,6 +9,13 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-05-30
+
+- Info (`?`) controls now include a `$` button (show gold / shopping list),
+  in place of the save-and-exit button.
+- Map display mode (ASCII or tiles) is now remembered across sessions.
+- About and What's new pages are now viewable inside the app.
+
 ## 2026-05-29
 
 - Long character titles no longer wrap to a second line in the HUD; the title
