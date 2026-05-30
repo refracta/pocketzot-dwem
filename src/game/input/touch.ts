@@ -108,7 +108,7 @@ const TAB_BUTTONS: Record<TabKey, TabButtonDef[][]> = {
       { label: '\\',  title: 'Item knowledge',        text: '\\' },
     ],
     [
-      { label: 'S',    title: 'Save game and exit',   text: 'S' },
+      { label: '$',    title: 'Gold / shopping list',   text: '$' },
       { label: 'M',    title: 'Spell library',        text: 'M' },
       { label: 'I',   title: 'List memorised spells', text: 'I' },
       { label: '?',   title: 'Help',                  text: '?' },
