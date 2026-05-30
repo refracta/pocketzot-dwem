@@ -19,6 +19,7 @@ import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
 import { tileLoader, TEX } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { getPref, setPref } from '../prefs'
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
 // for the duration of the y/N read, regardless of whether a menu is open.
@@ -164,10 +165,12 @@ export function buildGameView(
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
-  // Map render mode. Always starts in ASCII — tile mode is reachable in-session
-  // via a two-finger long-press on the map (see below) but is not persisted, so
-  // each new session begins as if tiles don't exist. Atlases are ~10 MB so this
-  // also avoids surprise downloads on launch.
+  // Map render mode. Starts in ASCII regardless of the saved preference; tile
+  // mode (reachable in-session via a two-finger long-press on the map, see
+  // below) is applied just after setup via setRenderMode, which handles the
+  // view swap, atlas preload (~10 MB), and monster-list mode in one place.
+  // setRenderMode persists every change to prefs, so a tile-mode session
+  // resumes in tiles next launch.
   let renderMode: 'ascii' | 'tiles' = 'ascii'
   let mapView: MapView | TileMapView = new MapView(store)
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
@@ -482,6 +485,7 @@ export function buildGameView(
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
+    setPref('mapRenderMode', mode)
     const center = { x: store.playerPos.x, y: store.playerPos.y }
     fontScaleObserver.unobserve(mapView.element)
     const oldEl = mapView.element
@@ -512,6 +516,11 @@ export function buildGameView(
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
       (on) => setRenderMode(on === undefined ? (renderMode === 'tiles' ? 'ascii' : 'tiles') : (on ? 'tiles' : 'ascii'))
   }
+
+  // Apply the persisted render-mode preference now that the map element,
+  // font-scale observer, and monster-list view are all wired up. Routed
+  // through setRenderMode so the tile path runs the full swap + atlas preload.
+  if (getPref('mapRenderMode') === 'tiles') setRenderMode('tiles')
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
