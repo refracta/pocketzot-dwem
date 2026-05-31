@@ -19,6 +19,7 @@
   --border:    rgba(245, 158, 11, 0.12);
 
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, 'Courier New', monospace;
+  --font-ui:   system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --map-font-size: 17px;
   --map-line-height: 1.0;
   --crt-line-height: 1.2;
@@ -633,6 +634,9 @@ html, body {
   overflow-y: auto;
   padding: 0.25rem 1.25rem 1.5rem;
   color: var(--text);
+  /* Proportional font for prose readability; inline code/keys stay monospace
+     via the explicit --font-mono on .doc-body code below. */
+  font-family: var(--font-ui);
   font-size: 0.9rem;
   line-height: 1.6;
 }
