@@ -31,7 +31,7 @@ Web App.
 - Spectator mode with an expanded map view.
 - Floating, collapsible monster list; tap for the full view.
 - Map double-tap toggles zoom; two-finger long-press toggles tiles.
-- Installs as a PWA — add to the home screen for the best experience.
+- Installs to your home screen as a PWA.
 
 See [ABOUT.md](ABOUT.md) for the controls model and security details
 (credential handling, session cookies).
