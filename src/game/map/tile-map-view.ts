@@ -259,10 +259,11 @@ export class TileMapView {
     this.ctx.imageSmoothingEnabled = false
     this.container.appendChild(this.canvas)
 
-    // Kick off preload if the loader is already configured; otherwise the
-    // game-view game_client handler will call preloadAtlases() after
-    // tileLoader.configure() runs.
-    if (tileLoader.configured) void this.preloadAtlases()
+    // Note: the constructor does NOT preload. game-view drives preloadAtlases()
+    // explicitly, only once the loader is confirmed to hold *this game's*
+    // gamedata (its `gamedataReady` gate). Preloading here would latch against
+    // a singleton loader still configured for a previous game — see the
+    // game_client handler in game-view.ts.
   }
 
   // Public so game-view can call after tileLoader.configure() in the

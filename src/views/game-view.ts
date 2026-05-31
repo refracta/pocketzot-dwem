@@ -172,6 +172,15 @@ export function buildGameView(
   // setRenderMode persists every change to prefs, so a tile-mode session
   // resumes in tiles next launch.
   let renderMode: 'ascii' | 'tiles' = 'ascii'
+  // True once the singleton tileLoader is confirmed to hold *this* game's
+  // gamedata, which is the only safe moment to preload tile atlases. For a
+  // played game the version arrives via game_client (below) after this view
+  // mounts, so the loader may still be configured for a previous game at build
+  // time — don't trust it, wait. For a spectated game the lobby already
+  // consumed game_client and configured the loader before mounting us, so it's
+  // current now. Preloading before this is true is the black-screen bug: the
+  // tile view latches the old game's atlases, then game_client clears them.
+  let gamedataReady = !!spectating && tileLoader.configured
   let mapView: MapView | TileMapView = new MapView(store)
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
@@ -503,7 +512,11 @@ export function buildGameView(
     oldEl.replaceWith(next.element)
     mapView = next
     fontScaleObserver.observe(mapView.element)
-    if (mode === 'tiles' && tileLoader.configured) void (mapView as TileMapView).preloadAtlases()
+    // Only preload once the loader holds this game's gamedata (see
+    // gamedataReady). If we're switching to tiles before that — e.g. the
+    // persisted-pref application at build, or a gesture toggle before
+    // game_client — the game_client handler preloads when the version lands.
+    if (mode === 'tiles' && gamedataReady) void (mapView as TileMapView).preloadAtlases()
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
   }
@@ -519,7 +532,10 @@ export function buildGameView(
 
   // Apply the persisted render-mode preference now that the map element,
   // font-scale observer, and monster-list view are all wired up. Routed
-  // through setRenderMode so the tile path runs the full swap + atlas preload.
+  // through setRenderMode, which swaps in the tile view immediately (before
+  // first paint, so no ASCII flash). The atlas preload waits for gamedataReady:
+  // on a played game that's the game_client handler; on a spectated game it's
+  // already true here.
   if (getPref('mapRenderMode') === 'tiles') setRenderMode('tiles')
 
   const docKeyHandler = (e: KeyboardEvent) => {
@@ -595,12 +611,19 @@ export function buildGameView(
         // build URLs for tile atlases (gui.png, main.png, ...) served at
         // /gamedata/<version>/.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
-        if (msg.version) tileLoader.configure(httpBase, msg.version)
-        // If the user toggled to tile mode before game_client arrived (via
-        // the two-finger gesture or __dcssTiles), the loader had no URL
-        // base yet — nudge it to start loading now.
-        if (renderMode === 'tiles') void (mapView as TileMapView).preloadAtlases()
-        if (renderMode === 'tiles') monsterListView.update(store.getMonsters())
+        if (msg.version) {
+          // The loader now holds this game's gamedata (configure() cleared any
+          // stale previous-game atlases iff the version differed; a same-version
+          // resume is a no-op and keeps the warm cache). Atlas preloads are safe
+          // from here on — this is the moment a persisted tile-mode view (built
+          // before game_client) or a pre-game_client gesture toggle gets loaded.
+          tileLoader.configure(httpBase, msg.version)
+          gamedataReady = true
+          if (renderMode === 'tiles') {
+            void (mapView as TileMapView).preloadAtlases()
+            monsterListView.update(store.getMonsters())
+          }
+        }
         break
       }
 
