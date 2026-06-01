@@ -703,12 +703,20 @@ html, body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  /* Bottom-anchor the rendered grid: any container slack appears above the
-     map, leaving room for the floating monster-list overlay and visually
-     pinning the map to the message log. The row-drop hazard this used to
-     introduce (a 1-2px container shrink crossing floor(availH/lineH)) is
-     handled by the hysteresis in MapView.fitToContainer(). */
-  justify-content: flex-end;
+  /* Center the rendered grid vertically. The player glyph sits at the
+     viewport's center, so centering keeps it at the container's center
+     regardless of viewport row count — the map stays a fixed reticle the
+     world scrolls under, instead of sliding whenever a refit adds/removes
+     rows (e.g. the HUD revealing on load, or status lights growing it
+     mid-session). fitToContainer always expands the viewport to fill the
+     container, so steady-state slack is sub-row (~8px) and centering vs.
+     bottom-anchoring is visually a wash there; the difference only shows
+     during a resize, which is exactly when centering is calmer. The
+     floating monster-list overlay is position:absolute (top-left), so it
+     doesn't depend on slack landing above the map. The row-drop hazard a
+     1-2px container shrink could introduce (crossing floor(availH/lineH))
+     is handled by the hysteresis in MapView.fitToContainer(). */
+  justify-content: center;
 }
 
 #map-grid div { display: flex; }

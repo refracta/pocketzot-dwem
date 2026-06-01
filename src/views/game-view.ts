@@ -495,11 +495,24 @@ export function buildGameView(
   // way, but the recompute keeps the current viewport size if overflow is
   // small.
   //
+  // Gated on hudRevealed: the HUD starts display:none and only takes its
+  // ~106px row on the first `player` message. The observer's initial fire
+  // therefore lands while the HUD is hidden, sizing the map to a viewport
+  // ~5 rows too tall; when the HUD then appears the container shrinks and a
+  // second fit drops those rows. Centering the grid (style.css) keeps that
+  // re-fit from sliding the map far, but the first `map` of the same WS
+  // batch can still paint cells at the too-tall size a frame before the
+  // async re-fit corrects it. So we ignore pre-reveal fires and do the first
+  // fit explicitly, synchronously, once the HUD is in place (see the
+  // `player` handler) — early enough to beat that same-batch first `map`
+  // render, so the first painted frame is already at the settled size.
+  //
   // Some call sites (enterXMode/exitXMode, hideOverlay) also call
   // mapView.fitToContainer() explicitly. That's redundant with the observer
   // but resolves the layout one frame earlier — without it there'd be a
   // brief flash at the old size before the observer's callback runs.
   const fontScaleObserver = new ResizeObserver(() => {
+    if (!hudRevealed) return
     requestAnimationFrame(() => mapView.fitToContainer())
   })
   fontScaleObserver.observe(mapView.element)
@@ -680,7 +693,17 @@ export function buildGameView(
         statsView.update(msg)
         if (msg.status !== undefined) statusView.update(msg.status)
         if (msg.time !== undefined) markLastMsg('turn')
-        if (!hudRevealed) { hudRevealed = true; showHud() }
+        if (!hudRevealed) {
+          hudRevealed = true
+          showHud()
+          // First fit, now that the HUD occupies its row (showHud above) and
+          // statsView/statusView have populated it this same message — so the
+          // container is at its settled height. Synchronous (forces one
+          // layout) so a `map` message later in this same WS batch renders
+          // straight into the final viewport rather than the pre-fit size.
+          // The ResizeObserver stays gated until exactly here; see its comment.
+          mapView.fitToContainer()
+        }
         break
       }
 
