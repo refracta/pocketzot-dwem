@@ -22,6 +22,11 @@ describe('extractSkillHotkeys', () => {
     expect(extractSkillHotkeys([line])).toEqual(['m', '1'])
   })
 
+  it('captures translated skill names that do not start with ASCII capitals', () => {
+    const line = '  a - 전투 기술          0.0        0.8    c + 회피술            1.7        2.4'
+    expect(extractSkillHotkeys([line])).toEqual(['a', 'c'])
+  })
+
   // Bug: a left-column skill with a training manual appends "+4" (in red) to
   // its aptitude, filling APTITUDE_SIZE exactly. That eats the column gap, so
   // the right-column hotkey ends up with just one space before it instead of
@@ -47,6 +52,8 @@ describe('extractSkillHotkeys', () => {
     const lines = [
       ' [?] Help                [=] set a skill target',
       ' [/] auto|manual mode    [*] useful|all skills    [!] training|cost|targets',
+      ' [?] 도움말              [=] 스킬 수련 목표 설정',
+      ' [/] 자동|수동 모드      [*] 유용한|모든 스킬    [!] 훈련|비용|목표',
     ]
     expect(extractSkillHotkeys(lines)).toEqual([])
   })

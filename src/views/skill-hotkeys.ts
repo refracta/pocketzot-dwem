@@ -1,16 +1,17 @@
 // Parse the on-screen hotkeys from a rendered DCSS skill menu (CRT lines).
 //
 // Each selectable skill row carries `X S Name…` — a hotkey letter/digit, a
-// training sign (+, -, *), then the skill name (which always starts with a
-// capital letter). Anchoring on `<sign> <Capital>` is what keeps us from
-// false-matching the digits inside the level/cost/target columns.
+// training sign (+, -, *), then the skill name. The name may be translated,
+// so it is only required to start with a non-space character. Requiring the
+// hotkey prefix to begin at the start of a line or after whitespace keeps us
+// from false-matching the digits inside the level/cost/target columns.
 //
 // We deliberately do *not* anchor on leading spaces. When the left-column
 // skill has a manual, its aptitude column renders as e.g. "+5 +4" — exactly
 // APTITUDE_SIZE chars with no trailing pad — and the right column's hotkey
 // ends up preceded by just one space instead of two, which a `^  X` anchor
 // would miss.
-const SKILL_HOTKEY_RE = /([a-z0-9]) [+\-*] [A-Z]/g
+const SKILL_HOTKEY_RE = /(?:^|\s)([a-z0-9]) [+\-*] (?=\S)/g
 
 export function extractSkillHotkeys(lines: Iterable<string>): string[] {
   const seen = new Set<string>()
