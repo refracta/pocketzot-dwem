@@ -17,7 +17,7 @@ import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
-import { tileLoader, TEX } from '../game/tiles/tile-loader'
+import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { getPref, setPref } from '../prefs'
 
@@ -158,10 +158,20 @@ const MF_ARROWS_SELECT = 0x40000
 // 0.7 for now; tune in one place.
 const X_MODE_SCALE = 0.7
 
+// Identifies a spectated game when transitioning lobby → game. `loader` is the
+// per-version tile loader the lobby already obtained from its `game_client`
+// (the server doesn't resend it after we mount), so a spectated tiles-mode
+// session can preload immediately instead of waiting on a version it'll never
+// be told again.
+export interface SpectateTarget {
+  username: string
+  loader?: TileLoader
+}
+
 export function buildGameView(
   conn: WsConnection,
   onLobby: (exit?: GameExit) => void,
-  spectating?: { username: string },
+  spectating?: SpectateTarget,
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
@@ -172,15 +182,15 @@ export function buildGameView(
   // setRenderMode persists every change to prefs, so a tile-mode session
   // resumes in tiles next launch.
   let renderMode: 'ascii' | 'tiles' = 'ascii'
-  // True once the singleton tileLoader is confirmed to hold *this* game's
-  // gamedata, which is the only safe moment to preload tile atlases. For a
-  // played game the version arrives via game_client (below) after this view
-  // mounts, so the loader may still be configured for a previous game at build
-  // time — don't trust it, wait. For a spectated game the lobby already
-  // consumed game_client and configured the loader before mounting us, so it's
-  // current now. Preloading before this is true is the black-screen bug: the
-  // tile view latches the old game's atlases, then game_client clears them.
-  let gamedataReady = !!spectating && tileLoader.configured
+  // This game's per-version tile loader, or null until we know the version.
+  // For a played game the version arrives via game_client (below) after this
+  // view mounts; for a spectated game the lobby already consumed game_client
+  // and hands us the loader up front. Because each loader is pinned to one
+  // immutable gamedata version, there's no shared mutable state to clear and
+  // no way to read a previous game's atlas under this game's tileinfo — the
+  // black-tile-after-version-switch class is gone by construction. Tile views
+  // only paint once they're handed this loader.
+  let loader: TileLoader | null = spectating?.loader ?? null
   let mapView: MapView | TileMapView = new MapView(store)
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
@@ -192,6 +202,13 @@ export function buildGameView(
   const monsterListView = new MonsterListView(store)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
+  // Spectated games arrive with the loader already known (see SpectateTarget);
+  // hand it to the panels now so the persisted-pref tile swap below paints
+  // sprites immediately. Played games wire this up in the game_client handler.
+  if (loader) {
+    monsterListView.setLoader(loader)
+    monsterPanel.setLoader(loader)
+  }
 
   const uiStack: UiPushMsg[] = []
   const crtLines = new Map<number, string>()
@@ -512,11 +529,11 @@ export function buildGameView(
     oldEl.replaceWith(next.element)
     mapView = next
     fontScaleObserver.observe(mapView.element)
-    // Only preload once the loader holds this game's gamedata (see
-    // gamedataReady). If we're switching to tiles before that — e.g. the
-    // persisted-pref application at build, or a gesture toggle before
-    // game_client — the game_client handler preloads when the version lands.
-    if (mode === 'tiles' && gamedataReady) void (mapView as TileMapView).preloadAtlases()
+    // Only preload once we hold this game's loader. If we're switching to tiles
+    // before that — e.g. the persisted-pref application at build, or a gesture
+    // toggle before game_client — the game_client handler preloads when the
+    // version lands.
+    if (mode === 'tiles' && loader) void (mapView as TileMapView).preloadAtlases(loader)
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
   }
@@ -533,9 +550,9 @@ export function buildGameView(
   // Apply the persisted render-mode preference now that the map element,
   // font-scale observer, and monster-list view are all wired up. Routed
   // through setRenderMode, which swaps in the tile view immediately (before
-  // first paint, so no ASCII flash). The atlas preload waits for gamedataReady:
-  // on a played game that's the game_client handler; on a spectated game it's
-  // already true here.
+  // first paint, so no ASCII flash). The atlas preload waits until we hold the
+  // loader: on a played game that's the game_client handler; on a spectated
+  // game it's already set (from the lobby handoff) here.
   if (getPref('mapRenderMode') === 'tiles') setRenderMode('tiles')
 
   const docKeyHandler = (e: KeyboardEvent) => {
@@ -612,15 +629,17 @@ export function buildGameView(
         // /gamedata/<version>/.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
         if (msg.version) {
-          // The loader now holds this game's gamedata (configure() cleared any
-          // stale previous-game atlases iff the version differed; a same-version
-          // resume is a no-op and keeps the warm cache). Atlas preloads are safe
-          // from here on — this is the moment a persisted tile-mode view (built
-          // before game_client) or a pre-game_client gesture toggle gets loaded.
-          tileLoader.configure(httpBase, msg.version)
-          gamedataReady = true
+          // Resolve this game's per-version loader. getTileLoader memoizes by
+          // version, so a same-version resume reuses the warm cache while a
+          // different version gets a fully isolated instance — no shared state
+          // to clear, no stale-atlas race. This is the moment a persisted
+          // tile-mode view (built before game_client) or a pre-game_client
+          // gesture toggle gets its loader and starts painting.
+          loader = getTileLoader(httpBase, msg.version)
+          monsterListView.setLoader(loader)
+          monsterPanel.setLoader(loader)
           if (renderMode === 'tiles') {
-            void (mapView as TileMapView).preloadAtlases()
+            void (mapView as TileMapView).preloadAtlases(loader)
             monsterListView.update(store.getMonsters())
           }
         }
@@ -1066,7 +1085,7 @@ export function buildGameView(
   function appendMonsterStatusOverlays(wrap: HTMLElement, msg: UiPushMsg, scale: number): void {
     // The popup has no HP bar, so damage shows as the MDAM overlay (includeMdam),
     // matching the reference's draw_foreground(prepare_fg_flags(desc.flag), desc.icons).
-    appendIconOverlays(wrap, msg.flag ?? 0, msg.icons ?? [], scale, { includeMdam: true })
+    appendIconOverlays(loader, wrap, msg.flag ?? 0, msg.icons ?? [], scale, { includeMdam: true })
   }
 
   // Map each ui-push variant's tile-bearing fields onto a uniform tile list
@@ -1154,12 +1173,12 @@ export function buildGameView(
       if (tileSpec && tileSpec.length > 0) {
         const headerEl = uiOverlay.querySelector('.overlay-title')
         if (headerEl) {
-          const tileEl = renderTiles(tileSpec, 2, { expand: true })
+          const tileEl = renderTiles(loader, tileSpec, 2, { expand: true })
           tileEl.classList.add('overlay-title-tile')
           headerEl.insertBefore(tileEl, headerEl.firstChild)
           if (msg.type === 'describe-monster') {
             const halo = fgHaloDngnName(msg.flag ?? 0)
-            if (halo) prependDngnLayer(tileEl, halo, 2)
+            if (halo) prependDngnLayer(loader, tileEl, halo, 2)
             appendMonsterStatusOverlays(tileEl, msg, 2)
           }
         }
@@ -1187,7 +1206,7 @@ export function buildGameView(
           parts.forEach((part, i) => {
             if (i > 0) {
               for (const book of spellset) {
-                bodyEl.appendChild(renderSpellbook(book, colourSpells, onSpell))
+                bodyEl.appendChild(renderSpellbook(loader, book, colourSpells, onSpell))
               }
             }
             if (part) bodyEl.insertAdjacentHTML('beforeend', renderBodyLines(part, msg.highlight ?? '', terminal))
@@ -2248,7 +2267,7 @@ export function buildGameView(
           menuShift.consume()
         }, itemColor, separator, keyColor)
         if (item.tiles && item.tiles.length > 0) {
-          el.insertBefore(renderTiles(item.tiles), el.firstChild)
+          el.insertBefore(renderTiles(loader, item.tiles), el.firstChild)
         }
         el.dataset.menuIdx = String(i)
         if (separator === '+') el.classList.add('item-selected')
@@ -2775,7 +2794,7 @@ function keypressLabel(code: number): string {
 // by one row per spell with its tile, letter, name, damage effect, and
 // range string. Mirrors the reference client's _fmt_spells_list (see
 // crawl-ref/source/webserver/game_data/static/ui-layouts.js:33).
-function renderSpellbook(book: SpellBook, colourSpells: boolean, onSelect: (letter: string) => void): HTMLElement {
+function renderSpellbook(loader: TileLoader | null, book: SpellBook, colourSpells: boolean, onSelect: (letter: string) => void): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'overlay-spellbook'
   if (book.label?.trim()) {
@@ -2792,7 +2811,7 @@ function renderSpellbook(book: SpellBook, colourSpells: boolean, onSelect: (lett
     if (colourSpells && typeof spell.colour === 'number') {
       item.style.color = uiColor(spell.colour)
     }
-    item.appendChild(renderTiles([{ t: spell.tile, tex: TEX.GUI }], 1))
+    item.appendChild(renderTiles(loader, [{ t: spell.tile, tex: TEX.GUI }], 1))
     const text = document.createElement('span')
     text.className = 'overlay-spell-name'
     text.textContent = ` ${spell.letter} - ${spell.title}`

@@ -16,7 +16,7 @@ import {
   appendIconOverlays, appendTiles, monsterTileSpec,
   prependDngnIndex, prependDngnLayer,
 } from '../tiles/tile-view'
-import { tileLoader } from '../tiles/tile-loader'
+import type { TileLoader } from '../tiles/tile-loader'
 import { bgLo } from '../map/cell-flags'
 import { getPref, setPref } from '../../prefs'
 
@@ -78,6 +78,10 @@ export class MonsterListView {
   // (tap collapses upward), ▾ when collapsed (tap expands downward).
   private collapsed = getPref('monsterListCollapsed')
   private readonly toggleEl: HTMLElement
+  // Per-version tile loader for the sprite path; null until game-view hands it
+  // over (once this game's gamedata version is known). The tile path gates on
+  // it, falling back to ASCII glyphs until then.
+  private loader: TileLoader | null = null
 
   constructor(private readonly store: MapStore) {
     this.element = document.createElement('div')
@@ -111,6 +115,15 @@ export class MonsterListView {
     // last render.
     this.element.classList.remove('has-hostile')
     if (this.lastMonsters) this.update(this.lastMonsters)
+  }
+
+  // Called by game-view once this game's tile loader is known. A tiles-mode
+  // panel built before then rendered ASCII (loader was null); replay from the
+  // last snapshot so its rows swap to sprites.
+  setLoader(loader: TileLoader): void {
+    if (this.loader === loader) return
+    this.loader = loader
+    if (this.mode === 'tiles' && this.lastMonsters) this.update(this.lastMonsters)
   }
 
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
@@ -156,7 +169,7 @@ export class MonsterListView {
       // we haven't received `game_client` yet, fall back to ASCII rather
       // than paint empty squares; game-view re-runs update() once the
       // loader is ready, swapping the rows to sprites.
-      const useTiles = this.mode === 'tiles' && tileLoader.configured
+      const useTiles = this.mode === 'tiles' && !!this.loader
       if (useTiles) {
         this.renderTiles(groups, rowCount)
       } else {
@@ -272,7 +285,7 @@ export class MonsterListView {
     let total = 0
     for (const g of groups) total += g.length
     const suffix = total > top.length ? `+${total - top.length}` : undefined
-    const useTiles = this.mode === 'tiles' && tileLoader.configured
+    const useTiles = this.mode === 'tiles' && !!this.loader
 
     if (useTiles) {
       const row = this.buildTileRow({ ...this.rowData(top), extraClass: 'ml-collapsed', suffix })
@@ -362,13 +375,13 @@ export class MonsterListView {
         doll: cell?.doll,
         mcache: cell?.mcache,
       })
-      if (baseSpec.length > 0) appendTiles(stack, baseSpec, TILE_SCALE)
+      if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE)
       const halo = fgHaloDngnName(cell?.fg)
-      if (halo) prependDngnLayer(stack, halo, TILE_SCALE)
-      if (cell?.t_bg !== undefined) prependDngnIndex(stack, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
+      if (halo) prependDngnLayer(this.loader, stack, halo, TILE_SCALE)
+      if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
 
       // Damage shows as the ml-hp bar (rowData), so no MDAM overlay here.
-      appendIconOverlays(stack, cell?.fg, cell?.icons ?? [], TILE_SCALE)
+      appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE)
 
       glyphs.appendChild(stack)
     }

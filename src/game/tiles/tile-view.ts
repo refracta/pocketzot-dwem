@@ -4,7 +4,7 @@
 // GPL-2.0-or-later. Reused under the "or later" option as part of this
 // AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
-import { tileLoader, TEX, type TileinfoModule } from './tile-loader'
+import { TEX, type TileinfoModule, type TileLoader } from './tile-loader'
 import { buildStatusOverlays, mayHaveStatusOverlays, resolveOverlayId } from '../hud/monster-style'
 import { buildStatusIconSizeMap } from '../map/icon-sizes'
 
@@ -29,13 +29,13 @@ export interface TileRef {
 // (huge monsters in describe popups: Serpent of Hell, dragons, ...) reserve
 // vertical space in their flex parent instead of dripping into the row below.
 // Off by default — menu rows and the monster panel rely on the fixed cell.
-export function renderTiles(tiles: TileRef[], scale = 1, opts?: { expand?: boolean }): HTMLElement {
+export function renderTiles(loader: TileLoader | null, tiles: TileRef[], scale = 1, opts?: { expand?: boolean }): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'tile-stack'
   wrap.style.width = `${CELL * scale}px`
   wrap.style.height = `${CELL * scale}px`
   if (opts?.expand) wrap.dataset.expand = '1'
-  appendTiles(wrap, tiles, scale)
+  appendTiles(loader, wrap, tiles, scale)
   return wrap
 }
 
@@ -104,18 +104,19 @@ let iconSizeMapSource: TileinfoModule | null = null
 // Pass `includeMdam` for surfaces (the popup) that show damage as an overlay
 // rather than a separate HP bar.
 export function appendIconOverlays(
+  loader: TileLoader | null,
   wrap: HTMLElement,
   fg: number | number[] | undefined,
   icons: readonly number[] = [],
   scale = 1,
   opts: { includeMdam?: boolean } = {},
 ): void {
-  if (!tileLoader.configured) return
+  if (!loader) return
   // Skip the async module load for status-free monsters (the common case in a
   // crowded list) — the same fast-path predicate buildStatusOverlays gates on,
   // checked here before paying a Promise + microtask per row.
   if (!mayHaveStatusOverlays(fg, icons, opts)) return
-  tileLoader.getModule('icons').then((mod) => {
+  loader.getModule('icons').then((mod) => {
     if (iconSizeMapSource !== mod) {
       iconSizeMapCache = buildStatusIconSizeMap(mod)
       iconSizeMapSource = mod
@@ -127,20 +128,20 @@ export function appendIconOverlays(
       const id = resolveOverlayId(o, mod)
       if (id !== undefined) tiles.push({ t: id, tex: TEX.ICONS, xofs: o.xofs, yofs: o.yofs })
     }
-    if (tiles.length > 0) appendTiles(wrap, tiles, scale)
+    if (tiles.length > 0) appendTiles(loader, wrap, tiles, scale)
   }).catch((err) => console.warn('icon module load failed:', err))
 }
 
 // Adds tiles into an existing tile-stack wrapper. Used to layer extra
 // overlays (e.g. monster status icons that arrive after a constants
 // lookup) on top of an already-rendered base sprite.
-export function appendTiles(wrap: HTMLElement, tiles: TileRef[], scale = 1): void {
-  if (!tileLoader.configured) return
+export function appendTiles(loader: TileLoader | null, wrap: HTMLElement, tiles: TileRef[], scale = 1): void {
+  if (!loader) return
   for (const t of tiles) {
     const child = document.createElement('div')
     child.className = 'tile'
     wrap.appendChild(child)
-    paintSprite(child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0)
+    paintSprite(loader, child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0)
   }
 }
 
@@ -149,15 +150,15 @@ export function appendTiles(wrap: HTMLElement, tiles: TileRef[], scale = 1): voi
 // div before the module/atlas loads so DOM order — and therefore paint order
 // inside the .tile-stack stacking context — reflects the call site, not the
 // async resolution race between this and appendTiles for the doll.
-export function prependDngnLayer(wrap: HTMLElement, dngnName: string, scale = 1): void {
-  if (!tileLoader.configured) return
+export function prependDngnLayer(loader: TileLoader | null, wrap: HTMLElement, dngnName: string, scale = 1): void {
+  if (!loader) return
   const child = document.createElement('div')
   child.className = 'tile'
   wrap.insertBefore(child, wrap.firstChild)
-  tileLoader.getModule('feat').then((mod) => {
+  loader.getModule('feat').then((mod) => {
     const id = mod[dngnName]
     if (typeof id !== 'number') return
-    paintSprite(child, TEX.FEAT, id, scale, 0, 0)
+    paintSprite(loader, child, TEX.FEAT, id, scale, 0, 0)
   }).catch((err) => console.warn('feat module load failed:', err))
 }
 
@@ -165,19 +166,19 @@ export function prependDngnLayer(wrap: HTMLElement, dngnName: string, scale = 1)
 // rather than a named constant. The id can land in any of the floor/wall/feat
 // atlases — tileinfo-dngn dispatches via get_img(idx). Used for the dungeon
 // background under monster sprites in the panel, mirroring draw_background.
-export function prependDngnIndex(wrap: HTMLElement, dngnIdx: number, scale = 1): void {
-  if (!tileLoader.configured) return
+export function prependDngnIndex(loader: TileLoader | null, wrap: HTMLElement, dngnIdx: number, scale = 1): void {
+  if (!loader) return
   if (dngnIdx <= 0) return  // 0 = DNGN_UNSEEN; nothing to draw
   const child = document.createElement('div')
   child.className = 'tile'
   wrap.insertBefore(child, wrap.firstChild)
-  tileLoader.getDngnTex(dngnIdx).then((tex) => {
-    paintSprite(child, tex, dngnIdx, scale, 0, 0)
+  loader.getDngnTex(dngnIdx).then((tex) => {
+    paintSprite(loader, child, tex, dngnIdx, scale, 0, 0)
   }).catch((err) => console.warn('dngn tile load failed:', err))
 }
 
-function paintSprite(child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number): void {
-  tileLoader.getAsync(tex, id).then((s) => {
+function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number): void {
+  loader.getAsync(tex, id).then((s) => {
     const w = s.w * scale
     const h = s.h * scale
     const left = (s.ox + xofs) * scale

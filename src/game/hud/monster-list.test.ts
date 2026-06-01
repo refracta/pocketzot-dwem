@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { MonsterListView } from './monster-list'
 import { MapStore } from '../map/map-store'
-import { tileLoader } from '../tiles/tile-loader'
+import { getTileLoader, type TileLoader } from '../tiles/tile-loader'
 
 // Regression coverage for the cache-key collision in renderTiles. Setup:
 // MapStore populated with three monsters that monsterSort splits into three
@@ -12,12 +12,13 @@ import { tileLoader } from '../tiles/tile-loader'
 // group's row.remove() wiped the first one and the DOM ended up with one
 // fewer row than expected.
 describe('MonsterListView.renderTiles', () => {
+  let loader: TileLoader
   beforeEach(() => {
-    // The tile path is gated on tileLoader.configured; configure with dummy
-    // strings so the path runs. The sprite painters inside appendTiles /
-    // prependDngnLayer no-op gracefully without real atlas loads — we only
-    // care about the row-count structure here.
-    tileLoader.configure('http://test', '0.34.0')
+    // The tile path is gated on the view having a loader; hand it a dummy-URL
+    // instance so the path runs. The sprite painters inside appendTiles /
+    // prependDngnLayer fire async getAsync() calls that never resolve without
+    // real atlas loads — we only care about the row-count structure here.
+    loader = getTileLoader('http://test', '0.34.0')
   })
 
   it('renders one DOM row per group when same-name groups sort apart', () => {
@@ -42,6 +43,7 @@ describe('MonsterListView.renderTiles', () => {
     ])
 
     const view = new MonsterListView(store)
+    view.setLoader(loader)
     // Force tile mode without triggering the early-return short-circuit; the
     // constructor defaults to 'ascii', so setRenderMode('tiles') here is the
     // first mode transition and will run a fresh render.
@@ -77,6 +79,7 @@ describe('MonsterListView.renderTiles', () => {
     ])
 
     const view = new MonsterListView(store)
+    view.setLoader(loader)
     view.setRenderMode('tiles')
     view.update(store.getMonsters())
 
@@ -111,6 +114,7 @@ describe('MonsterListView.renderTiles', () => {
     ])
 
     const view = new MonsterListView(store)
+    view.setLoader(loader)
     view.update(store.getMonsters())
     // monsterSort orders by attitude ASC, so hostile lich comes first,
     // then the friendlies; iron troll zombie outranks Zenata on avghp.
@@ -143,6 +147,7 @@ describe('MonsterListView.renderTiles', () => {
     ])
 
     const view = new MonsterListView(store)
+    view.setLoader(loader)
     view.setRenderMode('tiles')
     view.update(store.getMonsters())
     expect(view.element.querySelectorAll('.ml-row').length).toBe(3)

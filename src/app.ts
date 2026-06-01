@@ -2,7 +2,7 @@ import type { WsConnection } from './ws/connection'
 import type { GameExit } from './ws/types'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
-import { buildGameView } from './views/game-view'
+import { buildGameView, type SpectateTarget } from './views/game-view'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -42,7 +42,7 @@ function showLobby(username: string, guest: boolean, exit?: GameExit): void {
   ))
 }
 
-function showGame(spectating?: { username: string }): void {
+function showGame(spectating?: SpectateTarget): void {
   state = 'game'
   setView(buildGameView(
     conn!,

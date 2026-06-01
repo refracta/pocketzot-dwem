@@ -8,7 +8,7 @@
 import type { Cell, MapStore } from './map-store'
 import { parseCellKey } from './map-store'
 import { decodeColor, DEFAULT_FG, flashColor } from './colors'
-import { tileLoader, TEX } from '../tiles/tile-loader'
+import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
 import {
   FG_TILE_ID_MASK,
   FG_ATTITUDE_MASK, FG_PET, FG_GD_NEUTRAL, FG_NEUTRAL,
@@ -215,9 +215,14 @@ export class TileMapView {
   // loaded. Until then we draw ASCII glyphs on the canvas — same shape, lets
   // the user see the map while ~10 MB of atlas downloads.
   private ready = false
-  // Guards against duplicate preload runs when the loader is reconfigured
-  // mid-session (shouldn't happen, but the configure() call is idempotent
-  // only when args match exactly).
+  // The per-version tile loader this view paints from, captured in
+  // preloadAtlases(). null until then. Bound to one immutable gamedata version
+  // (see tile-loader.ts), so this view can never read another version's
+  // atlas under this version's tileinfo.
+  private loader: TileLoader | null = null
+  // Guards against duplicate preload runs. Keyed implicitly by `this.loader`:
+  // preloadAtlases() re-runs if handed a *different* loader (a version switch
+  // without rebuilding the view), but no-ops on a repeat call with the same one.
   private preloadStarted = false
   // Named tile ids from the tileinfo modules, resolved after preload. Empty
   // until `ready` flips true. Per-cell paint looks them up by name
@@ -260,29 +265,32 @@ export class TileMapView {
     this.container.appendChild(this.canvas)
 
     // Note: the constructor does NOT preload. game-view drives preloadAtlases()
-    // explicitly, only once the loader is confirmed to hold *this game's*
-    // gamedata (its `gamedataReady` gate). Preloading here would latch against
-    // a singleton loader still configured for a previous game — see the
+    // explicitly, passing this game's per-version loader once it knows the
+    // version (from game_client, or the spectator handoff) — see the
     // game_client handler in game-view.ts.
   }
 
-  // Public so game-view can call after tileLoader.configure() in the
-  // game_client handler — the TileMapView is constructed before that fires
-  // when the user has tile mode persisted.
-  async preloadAtlases(): Promise<void> {
-    if (this.preloadStarted) return
-    if (!tileLoader.configured) return
+  // Public so game-view can call once it holds this game's loader (from the
+  // game_client handler, or the spectator handoff) — the TileMapView is
+  // constructed before that's known when the user has tile mode persisted.
+  async preloadAtlases(loader: TileLoader): Promise<void> {
+    if (this.loader === loader && this.preloadStarted) return
+    this.loader = loader
     this.preloadStarted = true
+    this.ready = false
     try {
       const [, , , , , , dngnMod, iconsMod, mainMod] = await Promise.all([
-        ...PRELOAD_TEX.map((t) => tileLoader.ensureLoaded(t)),
+        ...PRELOAD_TEX.map((t) => loader.ensureLoaded(t)),
         // tileinfo-dngn is the floor/wall/feat dispatch meta-module; it
         // re-exports every floor/wall/feat name (SANCTUARY, KRAKEN_OVERLAY_NW,
         // …) plus the range thresholds (FLOOR_MAX, WALL_MAX, …).
-        tileLoader.getModule('dngn'),
-        tileLoader.getModule('icons'),
-        tileLoader.getModule('main'),
+        loader.getModule('dngn'),
+        loader.getModule('icons'),
+        loader.getModule('main'),
       ])
+      // A newer preload (different loader) superseded us while we awaited —
+      // don't clobber its state or flip ready over the wrong version.
+      if (this.loader !== loader) return
       for (const [k, v] of Object.entries(dngnMod as Record<string, unknown>)) {
         if (typeof v === 'number') this.dngn[k] = v
       }
@@ -562,6 +570,40 @@ export class TileMapView {
     const bg = decodeBg(cell.t_bg)
     const inWater = bg.WATER && !fg.FLYING
 
+    // Resolve the background sprite once (tex dispatch + atlas lookup) and reuse
+    // it for both the safety net below and the actual bg paint further down, so
+    // the per-cell dngn dispatch runs once per redraw rather than twice.
+    const bgSprite = bg.value > 0 ? this.dngnSprite(bg.value) : null
+
+    // Safety net: an *explored* cell (bg past DNGN_UNSEEN) whose background
+    // tile id doesn't resolve in this loader's atlas would otherwise paint
+    // nothing and leave the cell black. That should never happen now that each
+    // loader is pinned to one version, but if it does (a stray out-of-range id,
+    // an atlas that 404'd), degrade visibly rather than silently black —
+    // mirroring the reference's "Tile not found" being loud, not blank.
+    // Crucially this only stands in for the *background*: when the cell has a
+    // foreground actor/item whose own sprite resolves fine, fall through and
+    // let it paint as a sprite rather than collapsing the whole cell to its
+    // ASCII glyph. Unexplored cells (bg.UNSEEN) are *meant* to be black.
+    if (bg.value > this.dngnUnseen && bgSprite === null) {
+      const hasFg = fg.value > 0 || !!cell.doll?.length || !!cell.mcache?.length
+      if (hasFg) {
+        // The foreground sprite carries the cell; lay down the glyph's
+        // background colour (usually black) so the missing feature isn't an
+        // odd gap, then fall through to the normal foreground paint.
+        const c = decodeColor(cell.col)
+        if (c.bg) {
+          this.ctx.fillStyle = c.bg
+          this.ctx.fillRect(px, py, ATLAS_CELL, ATLAS_CELL)
+        }
+      } else {
+        // Nothing else to draw — render the feature's ASCII glyph so the
+        // explored cell stays visible instead of black.
+        this.drawAsciiFallback(cell, px, py)
+        return
+      }
+    }
+
     // The order below mirrors cell_renderer.js do_render_cell + draw_background
     // + draw_foreground (in that overall sequence). Section comments cite the
     // line ranges in the reference for traceability.
@@ -592,11 +634,11 @@ export class TileMapView {
     // top half α=1.0, bottom half α=0.3 — so the shallow water laid down above
     // shows through the trunk's lower portion. Without the split the trees
     // look opaque on dry ground instead of standing in the swamp.
-    if (bg.value > 0) {
+    if (bg.value > 0 && bgSprite) {
       if (cell.mangrove_water) {
-        this.withWaterSplit(true, py, 1.0, 0.3, () => this.paintDngn(bg.value, px, py))
+        this.withWaterSplit(true, py, 1.0, 0.3, () => this.drawSprite(bgSprite.s, px, py))
       } else {
-        this.paintDngn(bg.value, px, py)
+        this.drawSprite(bgSprite.s, px, py)
       }
     }
 
@@ -920,8 +962,26 @@ export class TileMapView {
   // KRAKEN_OVERLAY_NW, etc. — tileinfo-dngn routes them to floor/wall/feat
   // per id-range).
   private paintDngn(id: number, px: number, py: number): void {
-    const tex = tileLoader.getDngnTexSync(id)
+    const tex = this.loader?.getDngnTexSync(id) ?? null
     if (tex !== null) this.paintTile(tex, id, px, py)
+  }
+
+  // Resolves a dngn-namespace background id to its atlas sprite in one shot
+  // (tex dispatch + atlas lookup), or null if either step fails. Used by
+  // drawCell for the black-cell safety net AND, when non-null, for the cell's
+  // actual background paint — so the dispatch happens once per cell, not twice.
+  // get_img can assert/throw on a wildly out-of-range id (a version mismatch);
+  // treat any failure as "won't resolve" so the caller falls back to ASCII.
+  private dngnSprite(id: number): { tex: number; s: TileSprite } | null {
+    if (!this.loader) return null
+    try {
+      const tex = this.loader.getDngnTexSync(id)
+      if (tex === null) return null
+      const s = this.loader.getSync(tex, id)
+      return s ? { tex, s } : null
+    } catch {
+      return null
+    }
   }
 
   // Looked-up-by-name version of paintDngn. No-op if the name isn't in the
@@ -962,8 +1022,20 @@ export class TileMapView {
     xofs = 0, yofs = 0,
     ymax = 0,
   ): void {
-    const s = tileLoader.getSync(tex, id)
+    const s = this.loader?.getSync(tex, id)
     if (!s) return
+    this.drawSprite(s, px, py, xofs, yofs, ymax)
+  }
+
+  // Draws an already-resolved atlas sprite. Split out of paintTile so drawCell
+  // can reuse the background sprite it resolved for the safety net (via
+  // dngnSprite) without a second getSync() lookup.
+  private drawSprite(
+    s: TileSprite,
+    px: number, py: number,
+    xofs = 0, yofs = 0,
+    ymax = 0,
+  ): void {
     // We draw in atlas-pixel space (1 cell = ATLAS_CELL px), so sprite offsets
     // and sizes pass through unscaled — the canvas itself is CSS-scaled to the
     // display size, which keeps tile edges aligned.

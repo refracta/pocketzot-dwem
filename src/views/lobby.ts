@@ -1,7 +1,8 @@
 import type { WsConnection } from '../ws/connection'
 import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession } from '../auth/session'
-import { tileLoader } from '../game/tiles/tile-loader'
+import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
+import type { SpectateTarget } from './game-view'
 import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
 import { openAboutDoc, openChangelogDoc } from './docs'
@@ -10,7 +11,7 @@ export function buildLobbyView(
   conn: WsConnection,
   username: string,
   guest: boolean,
-  onGameStart: (spectating?: { username: string }) => void,
+  onGameStart: (spectating?: SpectateTarget) => void,
   onDisconnect: () => void,
   exit?: GameExit,
 ): HTMLElement {
@@ -20,6 +21,11 @@ export function buildLobbyView(
   // (mirrors the official client at static/scripts/client.js:1219).
   const idleSinceMs = new Map<string, number>()
   let complete = false
+  // Per-version tile loader for the game we're about to spectate. game_client
+  // lands here (before watching_started) while the lobby is still active; we
+  // resolve the loader now and hand it to the game view, which the server
+  // won't re-tell the version to.
+  let activeLoader: TileLoader | null = null
 
   const view = document.createElement('div')
   view.id = 'lobby-view'
@@ -160,14 +166,15 @@ export function buildLobbyView(
         onGameStart()
         break
       case 'watching_started':
-        onGameStart({ username: msg.username })
+        onGameStart({ username: msg.username, loader: activeLoader ?? undefined })
         break
       case 'game_client': {
         // Sent on `watch` *before* `watching_started`, so it lands here while
-        // the lobby is still active. Configure the (singleton) tile loader now
-        // so the game view inherits the version when it mounts.
+        // the lobby is still active. Resolve this game's per-version loader now
+        // and pass it to the game view via watching_started — the server won't
+        // resend the version once we've mounted.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
-        if (msg.version) tileLoader.configure(httpBase, msg.version)
+        if (msg.version) activeLoader = getTileLoader(httpBase, msg.version)
         break
       }
       case 'set_layer':
