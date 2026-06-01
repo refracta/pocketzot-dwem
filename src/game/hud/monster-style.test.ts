@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   decodeMdam, decodeFgStatuses, decodeFgThreatTier,
-  fgOverlayIcons, loFlagOverlayIcons, fgTileIndex,
+  buildStatusOverlays, mdamIconName, fgTileIndex,
   nameColor, threatColor, isExcluded, monsterSort,
   mdamTier, MDAM_COLORS, THREAT_COLORS, FRIENDLY_COLOR, NEUTRAL_COLOR,
   filterAndSortMonsters,
@@ -134,36 +134,97 @@ describe('decodeFgThreatTier', () => {
   })
 })
 
-// ─── fg overlay icons ──────────────────────────────────────────────────────
+// ─── mdamIconName ──────────────────────────────────────────────────────────
 
-describe('loFlagOverlayIcons', () => {
-  it('attitude + behaviour + plain flags compose', () => {
-    expect(loFlagOverlayIcons(FG_PET | FG_STAB | FG_NET))
-      .toEqual(['FRIENDLY', 'STAB_BRAND', 'TRAP_NET'])
+describe('mdamIconName', () => {
+  it('undefined when uninjured', () => {
+    expect(mdamIconName(undefined)).toBeUndefined()
+    expect(mdamIconName(0)).toBeUndefined()
   })
 
-  it('attitude mask is exclusive — only one of PET/GD_NEUTRAL/NEUTRAL', () => {
-    expect(loFlagOverlayIcons(FG_GD_NEUTRAL)).toEqual(['GOOD_NEUTRAL'])
-    expect(loFlagOverlayIcons(FG_NEUTRAL)).toEqual(['NEUTRAL'])
-  })
-
-  it('returns empty for zero', () => {
-    expect(loFlagOverlayIcons(0)).toEqual([])
+  it('maps each damage tier to its icon constant', () => {
+    expect(mdamIconName(FG_MDAM_LIGHT_LO)).toBe('MDAM_LIGHTLY_DAMAGED')
+    expect(mdamIconName(FG_MDAM_MOD_LO)).toBe('MDAM_MODERATELY_DAMAGED')
+    expect(mdamIconName(FG_MDAM_HEAVY_LO)).toBe('MDAM_HEAVILY_DAMAGED')
+    expect(mdamIconName([0, FG_MDAM_HI_BIT])).toBe('MDAM_SEVERELY_DAMAGED')
+    expect(mdamIconName([FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT])).toBe('MDAM_ALMOST_DEAD')
   })
 })
 
-describe('fgOverlayIcons', () => {
-  it('appends poison icon from hi word', () => {
-    expect(fgOverlayIcons([FG_S_UNDER, FG_POISON]))
-      .toEqual(['SOMETHING_UNDER', 'POISON'])
+// ─── buildStatusOverlays ───────────────────────────────────────────────────
+// The single decision shared by the map (canvas) and the list/panel/popup
+// (DOM). Mirrors cell_renderer.js draw_foreground ordering + status_shift.
+
+describe('buildStatusOverlays', () => {
+  const noSizes = new Map<number, number>()
+
+  it('empty for no flags / no icons', () => {
+    expect(buildStatusOverlays(undefined, [], noSizes)).toEqual({ overlays: [], statusShift: 0 })
+    expect(buildStatusOverlays(0, [], noSizes)).toEqual({ overlays: [], statusShift: 0 })
   })
 
-  it('plain-number form has no poison (hi is implicit 0)', () => {
-    expect(fgOverlayIcons(FG_PET)).toEqual(['FRIENDLY'])
+  it('orders net/web/under → attitude → behaviour, all at the corner', () => {
+    const { overlays, statusShift } = buildStatusOverlays(FG_NET | FG_PET | FG_STAB, [], noSizes)
+    expect(overlays).toEqual([
+      { name: 'TRAP_NET', xofs: 0, yofs: 0 },
+      { name: 'FRIENDLY', xofs: 0, yofs: 0 },
+      { name: 'STAB_BRAND', xofs: 0, yofs: 0 },
+    ])
+    expect(statusShift).toBe(12)  // STAB bumps by 12
   })
 
-  it('returns empty for undefined', () => {
-    expect(fgOverlayIcons(undefined)).toEqual([])
+  it('attitude mask is exclusive', () => {
+    expect(buildStatusOverlays(FG_GD_NEUTRAL, [], noSizes).overlays).toEqual([
+      { name: 'GOOD_NEUTRAL', xofs: 0, yofs: 0 },
+    ])
+    expect(buildStatusOverlays(FG_NEUTRAL, [], noSizes).overlays).toEqual([
+      { name: 'NEUTRAL', xofs: 0, yofs: 0 },
+    ])
+  })
+
+  it('fans poison to the left of the behaviour icon by status_shift', () => {
+    // MAY_STAB bumps by 7, so poison lands at -7; shift ends at 7 + 5 = 12.
+    const { overlays, statusShift } = buildStatusOverlays([FG_MAY_STAB, FG_POISON], [], noSizes)
+    expect(overlays).toEqual([
+      { name: 'UNAWARE', xofs: 0, yofs: 0 },
+      { name: 'POISON', xofs: -7, yofs: 0 },
+    ])
+    expect(statusShift).toBe(12)
+  })
+
+  it('single-word fg has no poison (hi implicit 0)', () => {
+    expect(buildStatusOverlays(FG_S_UNDER, [], noSizes).overlays).toEqual([
+      { name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
+    ])
+  })
+
+  it('cell.icons: skip width<0, pin width 0, fan width>0', () => {
+    const sizes = new Map<number, number>([[100, 6], [200, 0]])
+    // No behaviour → shift starts at 0. 100 (w6) pins at 0 then advances to 6;
+    // 200 (w0) stays fixed and does not advance; 999 (absent → -1) is dropped.
+    const { overlays, statusShift } = buildStatusOverlays(0, [100, 200, 999], sizes)
+    expect(overlays).toEqual([
+      { id: 100, xofs: 0, yofs: 0 },
+      { id: 200, xofs: 0, yofs: 0 },
+    ])
+    expect(statusShift).toBe(6)
+  })
+
+  it('behaviour shift carries into cell.icons fan-out', () => {
+    const sizes = new Map<number, number>([[100, 6]])
+    // STAB shift 12 → icon 100 at -12, then shift 18.
+    const { overlays, statusShift } = buildStatusOverlays(FG_STAB, [100], sizes)
+    expect(overlays).toEqual([
+      { name: 'STAB_BRAND', xofs: 0, yofs: 0 },
+      { id: 100, xofs: -12, yofs: 0 },
+    ])
+    expect(statusShift).toBe(18)
+  })
+
+  it('includeMdam appends the MDAM overlay only when asked', () => {
+    expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes).overlays).toEqual([])
+    expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes, { includeMdam: true }).overlays)
+      .toEqual([{ name: 'MDAM_LIGHTLY_DAMAGED', xofs: 0, yofs: 0 }])
   })
 })
 

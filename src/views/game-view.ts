@@ -1,5 +1,6 @@
 import type { WsConnection } from '../ws/connection'
-import type { ClientMsg, ServerMsg } from '../ws/types'
+import type { ClientMsg, ServerMsg, GameExit } from '../ws/types'
+import { fitToWidth } from './fit-terminal'
 import { MapStore } from '../game/map/map-store'
 import { MapView } from '../game/map/map-view'
 import { TileMapView } from '../game/map/tile-map-view'
@@ -7,7 +8,7 @@ import { StatsView } from '../game/hud/stats-view'
 import { StatusView } from '../game/hud/status-view'
 import { MonsterListView } from '../game/hud/monster-list'
 import { MonsterPanelView } from '../game/hud/monster-panel'
-import { fgHaloDngnName, loFlagOverlayIcons } from '../game/hud/monster-style'
+import { fgHaloDngnName } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
@@ -16,8 +17,9 @@ import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
-import { tileLoader, TEX } from '../game/tiles/tile-loader'
+import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { getPref, setPref } from '../prefs'
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
 // for the duration of the y/N read, regardless of whether a menu is open.
@@ -83,7 +85,7 @@ interface UiPushMsg {
   fg_idx?: number  // describe-monster: monster's primary tile id (texture inferred)
   doll?: Array<[number, number]>  // describe-monster: player-doll part [tile_id, ymax] entries
   mcache?: Array<[number, number, number]> | null  // describe-monster: humanoid+equipment [tile_id, xofs, yofs]
-  flag?: number     // describe-monster: status overlay bitmask (attitude, behavior, etc.)
+  flag?: number | number[]  // describe-monster: status overlay bitmask (attitude, behavior, …); [lo, hi] when MDAM/threat bits overflow 32 bits
   icons?: number[]  // describe-monster: pre-decoded extra icon tile ids
   // describe-monster / describe-item: spell list rendered where SPELLSET_PLACEHOLDER
   // appears in the body. Each book has a header label and a list of spells.
@@ -156,18 +158,44 @@ const MF_ARROWS_SELECT = 0x40000
 // 0.7 for now; tune in one place.
 const X_MODE_SCALE = 0.7
 
+// Identifies a spectated game when transitioning lobby → game. `loader` is the
+// per-version tile loader the lobby already obtained from its `game_client`
+// (the server doesn't resend it after we mount), so a spectated tiles-mode
+// session can preload immediately instead of waiting on a version it'll never
+// be told again.
+export interface SpectateTarget {
+  username: string
+  loader?: TileLoader
+}
+
 export function buildGameView(
   conn: WsConnection,
-  onLobby: () => void,
-  spectating?: { username: string },
+  onLobby: (exit?: GameExit) => void,
+  spectating?: SpectateTarget,
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
-  // Map render mode. Starts in tiles; ASCII remains reachable in-session via
-  // a two-finger long-press on the map (see below).
-  let renderMode: 'ascii' | 'tiles' = 'tiles'
-  let mapView: MapView | TileMapView = new TileMapView(store)
-  mapView.setZoomMode(true)
+  // Map render mode. Starts in ASCII regardless of the saved preference; tile
+  // mode (reachable in-session via a two-finger long-press on the map, see
+  // below) is applied just after setup via setRenderMode, which handles the
+  // view swap, atlas preload (~10 MB), and monster-list mode in one place.
+  // setRenderMode persists every change to prefs, so a tile-mode session
+  // resumes in tiles next launch.
+  let renderMode: 'ascii' | 'tiles' = 'ascii'
+  // This game's per-version tile loader, or null until we know the version.
+  // For a played game the version arrives via game_client (below) after this
+  // view mounts; for a spectated game the lobby already consumed game_client
+  // and hands us the loader up front. Because each loader is pinned to one
+  // immutable gamedata version, there's no shared mutable state to clear and
+  // no way to read a previous game's atlas under this game's tileinfo — the
+  // black-tile-after-version-switch class is gone by construction. Tile views
+  // only paint once they're handed this loader.
+  let loader: TileLoader | null = spectating?.loader ?? null
+  let mapView: MapView | TileMapView = new MapView(store)
+  // Running HP/MP snapshot (merged across player deltas) for the tile view's
+  // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
+  // created view, which otherwise starts at zero until the next player message.
+  const playerStats: { hp?: number; hp_max?: number; mp?: number; mp_max?: number } = {}
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
@@ -175,6 +203,13 @@ export function buildGameView(
   monsterListView.setRenderMode(renderMode)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
+  // Spectated games arrive with the loader already known (see SpectateTarget);
+  // hand it to the panels now so the persisted-pref tile swap below paints
+  // sprites immediately. Played games wire this up in the game_client handler.
+  if (loader) {
+    monsterListView.setLoader(loader)
+    monsterPanel.setLoader(loader)
+  }
 
   const uiStack: UiPushMsg[] = []
   const crtLines = new Map<number, string>()
@@ -350,6 +385,16 @@ export function buildGameView(
 
   const hud = document.createElement('div')
   hud.id = 'game-hud'
+  // Hidden until the first `player` message — between layer:"game" and the
+  // first stats payload the HUD would otherwise show empty HP/MP bars and
+  // floating AC/EV/SH/… captions with no values. One display-based mechanism:
+  // showHud() is the sole un-hide and no-ops until hudRevealed flips on that
+  // first message, so the overlay/X-mode restore paths can call it
+  // unconditionally without revealing the HUD early. Hide paths set
+  // display:none directly.
+  hud.style.display = 'none'
+  let hudRevealed = false
+  const showHud = (): void => { if (hudRevealed) hud.style.display = '' }
   hud.appendChild(hudTop)
   hud.appendChild(statusView.element)
 
@@ -451,11 +496,24 @@ export function buildGameView(
   // way, but the recompute keeps the current viewport size if overflow is
   // small.
   //
+  // Gated on hudRevealed: the HUD starts display:none and only takes its
+  // ~106px row on the first `player` message. The observer's initial fire
+  // therefore lands while the HUD is hidden, sizing the map to a viewport
+  // ~5 rows too tall; when the HUD then appears the container shrinks and a
+  // second fit drops those rows. Centering the grid (style.css) keeps that
+  // re-fit from sliding the map far, but the first `map` of the same WS
+  // batch can still paint cells at the too-tall size a frame before the
+  // async re-fit corrects it. So we ignore pre-reveal fires and do the first
+  // fit explicitly, synchronously, once the HUD is in place (see the
+  // `player` handler) — early enough to beat that same-batch first `map`
+  // render, so the first painted frame is already at the settled size.
+  //
   // Some call sites (enterXMode/exitXMode, hideOverlay) also call
   // mapView.fitToContainer() explicitly. That's redundant with the observer
   // but resolves the layout one frame earlier — without it there'd be a
   // brief flash at the old size before the observer's callback runs.
   const fontScaleObserver = new ResizeObserver(() => {
+    if (!hudRevealed) return
     requestAnimationFrame(() => mapView.fitToContainer())
   })
   fontScaleObserver.observe(mapView.element)
@@ -463,16 +521,17 @@ export function buildGameView(
   // Swaps the active map view in place. Forces zoom on when switching INTO
   // tile mode (tiles at full 33×21 are ~10 px on a phone), and reuses the
   // current view-center so the swap doesn't flicker through an unset position.
-  // Not persisted: choice resets to tiles on next session.
+  // Persisted via prefs; the default for new sessions is tiles.
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
+    setPref('mapRenderMode', mode)
     const center = { x: store.playerPos.x, y: store.playerPos.y }
     fontScaleObserver.unobserve(mapView.element)
     const oldEl = mapView.element
     const next: MapView | TileMapView = mode === 'tiles' ? new TileMapView(store) : new MapView(store)
     next.setViewCenter(center)
-    // Default tile mode to zoom-on. Apply unconditionally — tile X-mode 
+    // Default tile mode to zoom-on. Apply unconditionally — tile X-mode
     // uses the zoom-on (17-floor) base shrunk by X_MODE_SCALE.
     if (mode === 'tiles') next.setZoomMode(true)
     // Carry the X-mode scale across the swap: the new view starts at 1.0
@@ -480,10 +539,15 @@ export function buildGameView(
     // is the source of truth (global flag), so re-apply directly.
     if (inXMode) next.setFontScale(X_MODE_SCALE)
     if (cursorLoc) next.setCursor(cursorLoc)
+    next.setPlayerStats(playerStats)
     oldEl.replaceWith(next.element)
     mapView = next
     fontScaleObserver.observe(mapView.element)
-    if (mode === 'tiles' && tileLoader.configured) void (mapView as TileMapView).preloadAtlases()
+    // Only preload once we hold this game's loader. If we're switching to tiles
+    // before that — e.g. the persisted-pref application at build, or a gesture
+    // toggle before game_client — the game_client handler preloads when the
+    // version lands.
+    if (mode === 'tiles' && loader) void (mapView as TileMapView).preloadAtlases(loader)
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
   }
@@ -496,6 +560,14 @@ export function buildGameView(
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
       (on) => setRenderMode(on === undefined ? (renderMode === 'tiles' ? 'ascii' : 'tiles') : (on ? 'tiles' : 'ascii'))
   }
+
+  // Apply the persisted render-mode preference now that the map element,
+  // font-scale observer, and monster-list view are all wired up. Routed
+  // through setRenderMode, which swaps in the tile view immediately (before
+  // first paint, so no ASCII flash). The atlas preload waits until we hold the
+  // loader: on a played game that's the game_client handler; on a spectated
+  // game it's already set (from the lobby handoff) here.
+  if (getPref('mapRenderMode') === 'tiles') setRenderMode('tiles')
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
@@ -570,20 +642,32 @@ export function buildGameView(
         // build URLs for tile atlases (gui.png, main.png, ...) served at
         // /gamedata/<version>/.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
-        if (msg.version) tileLoader.configure(httpBase, msg.version)
-        // If the user toggled to tile mode before game_client arrived (via
-        // the two-finger gesture or __dcssTiles), the loader had no URL
-        // base yet — nudge it to start loading now.
-        if (renderMode === 'tiles') void (mapView as TileMapView).preloadAtlases()
-        if (renderMode === 'tiles') monsterListView.update(store.getMonsters())
+        if (msg.version) {
+          // Resolve this game's per-version loader. getTileLoader memoizes by
+          // version, so a same-version resume reuses the warm cache while a
+          // different version gets a fully isolated instance — no shared state
+          // to clear, no stale-atlas race. This is the moment a persisted
+          // tile-mode view (built before game_client) or a pre-game_client
+          // gesture toggle gets its loader and starts painting.
+          loader = getTileLoader(httpBase, msg.version)
+          monsterListView.setLoader(loader)
+          monsterPanel.setLoader(loader)
+          if (renderMode === 'tiles') {
+            void (mapView as TileMapView).preloadAtlases(loader)
+            monsterListView.update(store.getMonsters())
+          }
+        }
         break
       }
 
       case 'map': {
         if (msg.clear) store.clear()
-        if (msg.vgrdc) mapView.setViewCenter(msg.vgrdc)
+        // vgrdc is resent on every map message even when it equals the
+        // current view center; setViewCenter returns true only on a real
+        // pan, so we can keep the dirty-render path live in steady state.
+        const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
         const dirty = store.merge(msg.cells ?? [])
-        if (msg.clear || msg.vgrdc) mapView.fullRender()
+        if (msg.clear || panned) mapView.fullRender()
         else mapView.render(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
@@ -592,17 +676,35 @@ export function buildGameView(
 
       case 'player': {
         if (msg.pos) {
-          const prev = { ...store.playerPos }
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
-          if (prev.x !== store.playerPos.x || prev.y !== store.playerPos.y) {
-            mapView.setViewCenter(store.playerPos)
-            mapView.fullRender()
-          }
+          // setViewCenter reports whether the center actually moved; reuse that
+          // instead of recomputing the prev/current comparison here. (Same gate
+          // as the 'map' case — full redraw only on a real pan.)
+          if (mapView.setViewCenter(store.playerPos)) mapView.fullRender()
         }
+        // Feed HP/MP to the renderer (tile mode draws under-tile mini-bars).
+        // After any fullRender above, so the player cell repaints with fresh
+        // values; merged into playerStats so a later tile-mode swap can seed.
+        if (msg.hp !== undefined) playerStats.hp = msg.hp
+        if (msg.hp_max !== undefined) playerStats.hp_max = msg.hp_max
+        if (msg.mp !== undefined) playerStats.mp = msg.mp
+        if (msg.mp_max !== undefined) playerStats.mp_max = msg.mp_max
+        mapView.setPlayerStats(playerStats)
         inventoryStore.update(msg.inv)
         statsView.update(msg)
         if (msg.status !== undefined) statusView.update(msg.status)
         if (msg.time !== undefined) markLastMsg('turn')
+        if (!hudRevealed) {
+          hudRevealed = true
+          showHud()
+          // First fit, now that the HUD occupies its row (showHud above) and
+          // statsView/statusView have populated it this same message — so the
+          // container is at its settled height. Synchronous (forces one
+          // layout) so a `map` message later in this same WS batch renders
+          // straight into the final viewport rather than the pre-fit size.
+          // The ResizeObserver stays gated until exactly here; see its comment.
+          mapView.fitToContainer()
+        }
         break
       }
 
@@ -866,8 +968,10 @@ export function buildGameView(
 
       case 'msgs': {
         if (msg.rollback) {
+          // msgLog is column-reverse: most-recent message is firstChild, so
+          // rollback (remove the last N appended) walks the DOM head.
           let n = msg.rollback
-          while (n-- > 0 && msgLog.lastChild) msgLog.lastChild.remove()
+          while (n-- > 0 && msgLog.firstChild) msgLog.firstChild.remove()
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
@@ -875,9 +979,7 @@ export function buildGameView(
             disableActivePrompt()
             const row = makePromptRow(m.text)
             activePromptEl = row
-            msgLog.appendChild(row)
-            while (msgLog.children.length > 50) msgLog.firstChild?.remove()
-            msgLog.scrollTop = msgLog.scrollHeight
+            pushMsgRow(row)
           } else {
             appendMessage(m.text, true)
           }
@@ -935,9 +1037,21 @@ export function buildGameView(
         break
 
       case 'go_lobby':
-      case 'game_ended':
       case 'close':
         onLobby()
+        break
+
+      case 'game_ended':
+        // Forward exit details so the lobby renders the exit dialog after the
+        // layer switch. The trailing go_lobby + lobby list (often batched with
+        // this) land on the lobby's message handler, not ours.
+        onLobby({
+          reason: msg.reason,
+          message: msg.message,
+          dump: msg.dump,
+          spectated: !!spectating,
+          spectatedName: spectating?.username,
+        })
         break
     }
   }
@@ -982,7 +1096,7 @@ export function buildGameView(
       mapView.element.style.display = 'none'
       touchControls.element.style.display = 'none'
     } else {
-      hud.style.display = ''
+      showHud()
       msgLog.style.display = ''
     }
   }
@@ -993,10 +1107,9 @@ export function buildGameView(
   // any pre-decoded numeric ids in msg.icons. Bitmask tables live in
   // monster-style.ts so the panel and this popup stay in lockstep.
   function appendMonsterStatusOverlays(wrap: HTMLElement, msg: UiPushMsg, scale: number): void {
-    appendIconOverlays(wrap, {
-      names: loFlagOverlayIcons(msg.flag ?? 0),
-      ids: msg.icons,
-    }, scale)
+    // The popup has no HP bar, so damage shows as the MDAM overlay (includeMdam),
+    // matching the reference's draw_foreground(prepare_fg_flags(desc.flag), desc.icons).
+    appendIconOverlays(loader, wrap, msg.flag ?? 0, msg.icons ?? [], scale, { includeMdam: true })
   }
 
   // Map each ui-push variant's tile-bearing fields onto a uniform tile list
@@ -1084,12 +1197,12 @@ export function buildGameView(
       if (tileSpec && tileSpec.length > 0) {
         const headerEl = uiOverlay.querySelector('.overlay-title')
         if (headerEl) {
-          const tileEl = renderTiles(tileSpec, 2, { expand: true })
+          const tileEl = renderTiles(loader, tileSpec, 2, { expand: true })
           tileEl.classList.add('overlay-title-tile')
           headerEl.insertBefore(tileEl, headerEl.firstChild)
           if (msg.type === 'describe-monster') {
             const halo = fgHaloDngnName(msg.flag ?? 0)
-            if (halo) prependDngnLayer(tileEl, halo, 2)
+            if (halo) prependDngnLayer(loader, tileEl, halo, 2)
             appendMonsterStatusOverlays(tileEl, msg, 2)
           }
         }
@@ -1097,6 +1210,15 @@ export function buildGameView(
       if (rawBody) {
         const bodyEl = document.createElement('div')
         bodyEl.className = 'overlay-body fg7'
+        // The end-of-game screen (the "Goodbye, …" character summary + the
+        // server's high-score table) is a single fixed-width terminal block,
+        // not a prose panel: every line shares one 80-column coordinate
+        // system. renderBodyLines' per-line isTabularLine heuristic shreds it
+        // — score rows with short names get multi-space padding (nowrap) while
+        // long-name rows wrap — so render it as one nowrap block and scale the
+        // font so the widest line fits the viewport (mirrors the morgue / the
+        // official client). describe-monster/item/god panels stay per-line.
+        const terminal = msg.type === 'game-over'
         if (spellset?.length && rawBody.includes('SPELLSET_PLACEHOLDER')) {
           // Reference client splits the body on SPELLSET_PLACEHOLDER and
           // renders the spellset between the halves (ui-layouts.js:24-31).
@@ -1108,15 +1230,20 @@ export function buildGameView(
           parts.forEach((part, i) => {
             if (i > 0) {
               for (const book of spellset) {
-                bodyEl.appendChild(renderSpellbook(book, colourSpells, onSpell))
+                bodyEl.appendChild(renderSpellbook(loader, book, colourSpells, onSpell))
               }
             }
-            if (part) bodyEl.insertAdjacentHTML('beforeend', renderBodyLines(part, msg.highlight ?? ''))
+            if (part) bodyEl.insertAdjacentHTML('beforeend', renderBodyLines(part, msg.highlight ?? '', terminal))
           })
         } else {
-          bodyEl.innerHTML = renderBodyLines(rawBody, msg.highlight ?? '')
+          bodyEl.innerHTML = renderBodyLines(rawBody, msg.highlight ?? '', terminal)
         }
         uiOverlay.appendChild(bodyEl)
+        // rAF re-fits once fonts settle (the sync call lands before paint).
+        if (terminal) {
+          fitToWidth(bodyEl)
+          requestAnimationFrame(() => fitToWidth(bodyEl))
+        }
         // formatted-scroller is a client-owned scroll widget (see the block
         // comment at scrollOverlayBody). Hook the scroll listener so touch
         // swipes and our own page-key handler sync back to the server; honor
@@ -2164,7 +2291,7 @@ export function buildGameView(
           menuShift.consume()
         }, itemColor, separator, keyColor)
         if (item.tiles && item.tiles.length > 0) {
-          el.insertBefore(renderTiles(item.tiles), el.firstChild)
+          el.insertBefore(renderTiles(loader, item.tiles), el.firstChild)
         }
         el.dataset.menuIdx = String(i)
         if (separator === '+') el.classList.add('item-selected')
@@ -2392,7 +2519,7 @@ export function buildGameView(
     menuControls.innerHTML = ''
     if (!inXMode) {
       msgLog.style.display = ''
-      hud.style.display = ''
+      showHud()
     }
     touchControls.element.style.display = ''
     requestAnimationFrame(() => {
@@ -2555,8 +2682,7 @@ export function buildGameView(
       }
     })
     row.appendChild(input)
-    msgLog.appendChild(row)
-    msgLog.scrollTop = msgLog.scrollHeight
+    pushMsgRow(row, false)  // input row isn't pruned by the 50-row cap
     requestAnimationFrame(() => input.focus())
     autoOpenKbd()
   }
@@ -2641,10 +2767,24 @@ export function buildGameView(
   // can color it (lightgrey turn, darkgrey cmd). If both classes land on
   // the same span the `turn` color wins, matching reference rule order.
   function markLastMsg(kind: 'turn' | 'cmd'): void {
-    const mark = msgLog.querySelector<HTMLElement>('.game-msg:last-child .msg-turn-mark')
+    // msgLog is column-reverse: visual "last" = DOM :first-child.
+    const mark = msgLog.querySelector<HTMLElement>('.game-msg:first-child .msg-turn-mark')
     if (!mark) return
     mark.textContent = '_'
     mark.classList.add(kind)
+  }
+
+  // msgLog uses flex column-reverse: the visual bottom (newest) is DOM
+  // firstChild and the visual top (oldest) is DOM lastChild, so prepend places
+  // a row at the visual bottom (the browser pins scroll there for free) and
+  // pruning the oldest means dropping the DOM lastChild. All message insertion
+  // goes through here so that convention — and the 50-row cap — lives in one
+  // place; reach for appendChild or prune firstChild elsewhere and the log
+  // silently inverts. (rollback / markLastMsg read the newest as firstChild to
+  // match this same convention.)
+  function pushMsgRow(node: Node, prune = true): void {
+    msgLog.prepend(node)
+    if (prune) while (msgLog.children.length > 50) msgLog.lastChild?.remove()
   }
 
   function appendMessage(text: string, html = false): void {
@@ -2658,9 +2798,7 @@ export function buildGameView(
     if (html) content.innerHTML = dcssToHtml(text)
     else content.textContent = text
     p.appendChild(content)
-    msgLog.appendChild(p)
-    while (msgLog.children.length > 50) msgLog.firstChild?.remove()
-    msgLog.scrollTop = msgLog.scrollHeight
+    pushMsgRow(p)
   }
 
   return view
@@ -2680,7 +2818,7 @@ function keypressLabel(code: number): string {
 // by one row per spell with its tile, letter, name, damage effect, and
 // range string. Mirrors the reference client's _fmt_spells_list (see
 // crawl-ref/source/webserver/game_data/static/ui-layouts.js:33).
-function renderSpellbook(book: SpellBook, colourSpells: boolean, onSelect: (letter: string) => void): HTMLElement {
+function renderSpellbook(loader: TileLoader | null, book: SpellBook, colourSpells: boolean, onSelect: (letter: string) => void): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'overlay-spellbook'
   if (book.label?.trim()) {
@@ -2697,7 +2835,7 @@ function renderSpellbook(book: SpellBook, colourSpells: boolean, onSelect: (lett
     if (colourSpells && typeof spell.colour === 'number') {
       item.style.color = uiColor(spell.colour)
     }
-    item.appendChild(renderTiles([{ t: spell.tile, tex: TEX.GUI }], 1))
+    item.appendChild(renderTiles(loader, [{ t: spell.tile, tex: TEX.GUI }], 1))
     const text = document.createElement('span')
     text.className = 'overlay-spell-name'
     text.textContent = ` ${spell.letter} - ${spell.title}`
@@ -2788,11 +2926,19 @@ function propagateDarkgreyColor(body: string): string {
   return result
 }
 
-function renderBodyLines(rawBody: string, highlight: string): string {
+// `terminal` renders the body as one fixed-width block: every line is nowrap
+// and the stat-row/per-line-tabular reformatting is skipped, so the caller can
+// scale the whole block to fit (see fitTerminalBody). Used for the game-over
+// screen; the describe-* panels keep the per-line heuristic (terminal=false).
+function renderBodyLines(rawBody: string, highlight: string, terminal = false): string {
   return balanceColorTagsAcrossLines(rawBody).split('\n').map(line => {
-    const stat = tryStatRow(line)
-    if (stat) return stat
-    const cls = isTabularLine(line) ? 'overlay-line overlay-line--nowrap' : 'overlay-line'
+    if (!terminal) {
+      const stat = tryStatRow(line)
+      if (stat) return stat
+    }
+    const cls = terminal || isTabularLine(line)
+      ? 'overlay-line overlay-line--nowrap'
+      : 'overlay-line'
     const html = applyHighlight(dcssToHtml(line), highlight) || '&nbsp;'
     return `<div class="${cls}">${html}</div>`
   }).join('')

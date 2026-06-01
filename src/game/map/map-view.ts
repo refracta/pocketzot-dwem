@@ -1,4 +1,5 @@
 import type { MapStore } from './map-store'
+import { parseCellKey } from './map-store'
 import { decodeColor, DEFAULT_BG, flashColor } from './colors'
 
 const NORMAL_W = 33
@@ -35,10 +36,20 @@ export class MapView {
     return this.container
   }
 
-  // Set the absolute viewport center (from vgrdc or playerPos).
-  setViewCenter(c: { x: number; y: number }): void {
+  // Set the absolute viewport center (from vgrdc or playerPos). Returns
+  // true if the center actually moved — the server resends vgrdc on every
+  // map message (even when nothing panned), so callers gate fullRender on
+  // this to keep the dirty-render path live in steady state.
+  setViewCenter(c: { x: number; y: number }): boolean {
+    const changed = c.x !== this.viewCenter.x || c.y !== this.viewCenter.y
     this.viewCenter = { ...c }
+    return changed
   }
+
+  // No-op in ASCII mode: HP/MP live in the HUD, not under the player glyph.
+  // Present so callers can treat MapView and TileMapView uniformly (the tile
+  // view draws under-tile mini-bars from these stats).
+  setPlayerStats(_p: { hp?: number; hp_max?: number; mp?: number; mp_max?: number }): void {}
 
   // Multiplier applied to the chosen font size in fitToContainer. Smaller
   // scale ⇒ smaller glyphs ⇒ viewport expansion fits more cells. Caller is
@@ -150,40 +161,62 @@ export class MapView {
     this.setViewportSize(NORMAL_W, NORMAL_H)
   }
 
+  // Screen↔dungeon origin: the top-left dungeon coord of the viewport. Screen
+  // cell (col,row) ↔ dungeon (offX+col, offY+row). One definition each so the
+  // centering rule lives in a single place (see CLAUDE.md coordinate system).
+  private get offX(): number { return this.viewCenter.x - Math.floor(this.viewportW / 2) }
+  private get offY(): number { return this.viewCenter.y - Math.floor(this.viewportH / 2) }
+  private inView(col: number, row: number): boolean {
+    return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
+  }
+
   // Re-render the viewport centered on viewCenter.
   render(dirty?: Set<string>): void {
-    const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
-    const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
+    const offX = this.offX
+    const offY = this.offY
+
+    if (dirty) {
+      // Dirty path: iterate just the changed cells. Skipping the full viewport
+      // sweep matters when only a handful of cells actually changed (a few
+      // monsters moving) but the viewport is ~700 cells. Cells outside the
+      // viewport are still in `dirty` (the dungeon changed off-screen) — we
+      // bounds-check and skip those.
+      for (const key of dirty) {
+        const { x: mx, y: my } = parseCellKey(key)
+        const col = mx - offX
+        const row = my - offY
+        if (!this.inView(col, row)) continue
+        this.#paintSpan(col, row, mx, my)
+      }
+      return
+    }
 
     for (let row = 0; row < this.viewportH; row++) {
       for (let col = 0; col < this.viewportW; col++) {
-        const mx = offX + col
-        const my = offY + row
-        const key = `${mx},${my}`
-
-        if (dirty && !dirty.has(key)) continue
-
-        const span = this.spans[row][col]
-        const cell = this.store.get(mx, my)
-
-        if (cell) {
-          const c = decodeColor(cell.col)
-          span.textContent = cell.g || ' '
-          span.style.color = c.fg
-          span.style.backgroundColor = c.bg ?? ''
-          // Flash overlay (damage flash, spell impact, blind, sanctuary, etc.).
-          // Inset box-shadow paints on top of the background but below the
-          // glyph text, so the flash tint layers over any HILITE bg without
-          // hiding the cell character.
-          const flash = flashColor(cell.flc, cell.fla)
-          span.style.boxShadow = flash ? `inset 0 0 0 999px ${flash}` : ''
-        } else {
-          span.textContent = ' '
-          span.style.color = DEFAULT_BG
-          span.style.backgroundColor = ''
-          span.style.boxShadow = ''
-        }
+        this.#paintSpan(col, row, offX + col, offY + row)
       }
+    }
+  }
+
+  #paintSpan(col: number, row: number, mx: number, my: number): void {
+    const span = this.spans[row][col]
+    const cell = this.store.get(mx, my)
+    if (cell) {
+      const c = decodeColor(cell.col)
+      span.textContent = cell.g || ' '
+      span.style.color = c.fg
+      span.style.backgroundColor = c.bg ?? ''
+      // Flash overlay (damage flash, spell impact, blind, sanctuary, etc.).
+      // Inset box-shadow paints on top of the background but below the
+      // glyph text, so the flash tint layers over any HILITE bg without
+      // hiding the cell character.
+      const flash = flashColor(cell.flc, cell.fla)
+      span.style.boxShadow = flash ? `inset 0 0 0 999px ${flash}` : ''
+    } else {
+      span.textContent = ' '
+      span.style.color = DEFAULT_BG
+      span.style.backgroundColor = ''
+      span.style.boxShadow = ''
     }
   }
 
@@ -203,10 +236,8 @@ export class MapView {
   private updateCursorSpan(): void {
     if (this.cursorSpan) { this.cursorSpan.classList.remove('map-cursor'); this.cursorSpan = null }
     if (!this.cursorLoc) return
-    const offX = this.viewCenter.x - Math.floor(this.viewportW / 2)
-    const offY = this.viewCenter.y - Math.floor(this.viewportH / 2)
-    const col = this.cursorLoc.x - offX
-    const row = this.cursorLoc.y - offY
+    const col = this.cursorLoc.x - this.offX
+    const row = this.cursorLoc.y - this.offY
     const span = this.spans[row]?.[col]
     if (span) { this.cursorSpan = span; span.classList.add('map-cursor') }
   }

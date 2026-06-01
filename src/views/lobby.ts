@@ -1,16 +1,20 @@
 import type { WsConnection } from '../ws/connection'
-import type { LobbyEntry, ServerMsg } from '../ws/types'
+import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession } from '../auth/session'
 import { cncUserinfo } from '../dwem'
-import { tileLoader } from '../game/tiles/tile-loader'
+import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
+import type { SpectateTarget } from './game-view'
 import { tagFor } from '../servers'
+import { fitToWidth } from './fit-terminal'
+import { openAboutDoc, openChangelogDoc } from './docs'
 
 export function buildLobbyView(
   conn: WsConnection,
   username: string,
   guest: boolean,
-  onGameStart: (spectating?: { username: string }) => void,
+  onGameStart: (spectating?: SpectateTarget) => void,
   onDisconnect: () => void,
+  exit?: GameExit,
 ): HTMLElement {
   const games = new Map<string, LobbyEntry>()
   // Wall-clock timestamp at which each idle game first went idle. Server only
@@ -18,6 +22,11 @@ export function buildLobbyView(
   // (mirrors the official client at static/scripts/client.js:1219).
   const idleSinceMs = new Map<string, number>()
   let complete = false
+  // Per-version tile loader for the game we're about to spectate. game_client
+  // lands here (before watching_started) while the lobby is still active; we
+  // resolve the loader now and hand it to the game view, which the server
+  // won't re-tell the version to.
+  let activeLoader: TileLoader | null = null
 
   const view = document.createElement('div')
   view.id = 'lobby-view'
@@ -40,6 +49,8 @@ export function buildLobbyView(
           <span class="lobby-chip-caret">▾</span>
         </button>
         <div id="lobby-account-menu" class="lobby-account-menu" hidden>
+          <button id="lobby-about" type="button" class="lobby-account-menu-item">About</button>
+          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new</button>
           <button id="lobby-logout" type="button" class="lobby-account-menu-item">Logout</button>
         </div>
       </div>
@@ -100,6 +111,15 @@ export function buildLobbyView(
     })
     closeAccountMenu = closeMenu
 
+    view.querySelector('#lobby-about')!.addEventListener('click', () => {
+      closeMenu()
+      openAboutDoc()
+    })
+    view.querySelector('#lobby-changelog')!.addEventListener('click', () => {
+      closeMenu()
+      openChangelogDoc()
+    })
+
     logoutBtn.addEventListener('click', () => {
       closeMenu()
       const stored = loadSession(conn.wsUrl, username)
@@ -148,14 +168,15 @@ export function buildLobbyView(
         onGameStart()
         break
       case 'watching_started':
-        onGameStart({ username: msg.username })
+        onGameStart({ username: msg.username, loader: activeLoader ?? undefined })
         break
       case 'game_client': {
         // Sent on `watch` *before* `watching_started`, so it lands here while
-        // the lobby is still active. Configure the (singleton) tile loader now
-        // so the game view inherits the version when it mounts.
+        // the lobby is still active. Resolve this game's per-version loader now
+        // and pass it to the game view via watching_started — the server won't
+        // resend the version once we've mounted.
         const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
-        if (msg.version) tileLoader.configure(httpBase, msg.version)
+        if (msg.version) activeLoader = getTileLoader(httpBase, msg.version)
         break
       }
       case 'set_layer':
@@ -324,7 +345,114 @@ export function buildLobbyView(
     updateIdleLabels()
   }, 1000)
 
+  if (exit) maybeShowExitDialog(view, exit)
+
   return view
+}
+
+// Expected end-of-game reasons; anything outside this set is "abnormal"
+// (crash/error/disconnect/…) and gets a reason sentence even first-person.
+// Matches the reference's normal_exit set (client.js:exit_reason_message).
+const NORMAL_EXIT = new Set(['quit', 'won', 'bailed out', 'dead', 'saved', 'cancel'])
+
+// Render the post-game exit dialog over the lobby. Mirrors the reference, which
+// has no title — just body content: an optional reason sentence on top, then
+// the summary blurb. The reason sentence appears only for abnormal (crash/
+// error/disconnect) or spectated exits ("Unfortunately your game crashed." /
+// "tdpma stopped playing (saved)."); a first-person normal exit (died/won/quit)
+// lets the summary speak for itself. The summary is always shown when present,
+// even when it repeats the game-over screen just seen, so the recap lives in
+// one place. Suppressed only when there's nothing to say (a first-person normal
+// exit with no summary, e.g. cancel), matching the reference's show condition.
+function maybeShowExitDialog(view: HTMLElement, exit: GameExit): void {
+  const abnormal = !NORMAL_EXIT.has(exit.reason)
+  const sentence = abnormal || !!exit.spectated
+  if (!sentence && !exit.message) return
+
+  const reason = sentence
+    ? reasonSentence(exit.reason, exit.spectated ? (exit.spectatedName ?? '') : null)
+    : null
+
+  const parts: string[] = []
+  if (reason) parts.push(`<div class="lobby-exit-reason">${escHtml(reason)}</div>`)
+  if (exit.message) {
+    parts.push(`<pre class="lobby-exit-summary">${escHtml(dedent(exit.message))}</pre>`)
+  }
+  // Footer action row, separated from the recap by a hairline. Close sits left
+  // and the morgue link is pushed right, matching the reference webtiles exit
+  // dialog so returning players' muscle memory holds.
+  const actions: string[] = ['<button type="button" class="lobby-exit-close">Close</button>']
+  if (exit.dump) {
+    const href = `${exit.dump}.txt`
+    actions.push(
+      `<a class="lobby-exit-link" href="${escHtml(href)}" target="_blank" rel="noopener">`
+      + `${escHtml(dumpLabel(exit.reason))}</a>`,
+    )
+  }
+  parts.push(`<div class="lobby-exit-footer">${actions.join('')}</div>`)
+
+  const backdrop = document.createElement('div')
+  backdrop.className = 'lobby-exit-backdrop'
+  backdrop.innerHTML = `<div class="lobby-exit-card">${parts.join('')}</div>`
+  view.appendChild(backdrop)
+
+  const close = () => backdrop.remove()
+  backdrop.querySelector('.lobby-exit-close')!.addEventListener('click', close)
+  // Tapping the dimmed area outside the card dismisses it too.
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
+
+  const summary = backdrop.querySelector<HTMLElement>('.lobby-exit-summary')
+  if (summary) requestAnimationFrame(() => fitToWidth(summary))
+}
+
+// Strip the common leading-space margin shared by every non-empty line. The
+// summary blurb is laid out for an 80-col terminal and arrives centred with a
+// wide left margin; removing the shared indent shifts it flush-left (so it
+// scales up larger) while leaving the relative column offsets — and thus the
+// CRT alignment — untouched. Also drops trailing whitespace.
+function dedent(text: string): string {
+  const lines = text.replace(/\s+$/, '').split('\n')
+  let min = Infinity
+  for (const l of lines) {
+    if (!l.trim()) continue
+    min = Math.min(min, l.match(/^ */)![0].length)
+  }
+  return min > 0 && Number.isFinite(min) ? lines.map(l => l.slice(min)).join('\n') : lines.join('\n')
+}
+
+// Reason sentence shown atop the dialog. `watched` is the spectated player's
+// name, or null for first-person. Returns null when there's no sentence to show
+// (the normal first-person/spectated outcomes), leaving the summary to speak
+// for itself. Ports client.js:exit_reason_message.
+function reasonSentence(reason: string, watched: string | null): string | null {
+  if (watched) {
+    switch (reason) {
+      case 'quit': case 'won': case 'bailed out': case 'dead': return null
+      case 'cancel': return `${watched} quit before creating a character.`
+      case 'saved': return `${watched} stopped playing (saved).`
+      case 'crash': return `${watched}'s game crashed.`
+      case 'error': return `${watched}'s game was terminated due to an error.`
+      case 'disconnect': return `${watched} has been disconnected.`
+      default: return `${watched}'s game ended unexpectedly.`
+        + (reason !== 'unknown' ? ` (${reason})` : '')
+    }
+  }
+  switch (reason) {
+    case 'quit': case 'won': case 'bailed out': case 'dead':
+    case 'saved': case 'cancel': return null
+    case 'crash': return 'Unfortunately your game crashed.'
+    case 'error': return 'Unfortunately your game terminated due to an error.'
+    case 'disconnect': return 'You have been disconnected.'
+    default: return 'Unfortunately your game ended unexpectedly.'
+      + (reason !== 'unknown' ? ` (${reason})` : '')
+  }
+}
+
+// Morgue/dump link label, per reason (client.js:show_exit_dialog).
+function dumpLabel(reason: string): string {
+  if (reason === 'saved') return 'Character dump'
+  if (reason === 'crash') return 'Crash log'
+  return 'Morgue file'
 }
 
 function escHtml(s: string): string {

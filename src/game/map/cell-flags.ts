@@ -126,3 +126,17 @@ export function bgHi(bg: number | number[] | undefined): number {
   if (bg === undefined || typeof bg === 'number') return 0
   return (bg[1] ?? 0) >>> 0
 }
+
+// fg uses the identical single-word-or-[lo, hi] encoding as bg. The `>>> 0`
+// uint32 coercion is load-bearing: high-bit fg masks (threat NASTY 0x80000000,
+// poison, MDAM hi bit) compare as negative int32 without it. Every t.fg
+// consumer should unpack through these rather than re-inlining the ternary.
+export function fgLo(fg: number | number[] | undefined): number {
+  if (fg === undefined) return 0
+  if (typeof fg === 'number') return fg >>> 0
+  return (fg[0] ?? 0) >>> 0
+}
+export function fgHi(fg: number | number[] | undefined): number {
+  if (fg === undefined || typeof fg === 'number') return 0
+  return (fg[1] ?? 0) >>> 0
+}

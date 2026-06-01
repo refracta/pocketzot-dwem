@@ -45,8 +45,9 @@ to TypeScript, following its structure and draw order:
 |------|------------------------------|------|
 | `src/game/map/tile-map-view.ts` | `cell_renderer.js` — `do_render_cell`, `draw_background`, `draw_foreground` | Tile cell composition and draw order |
 | `src/game/tiles/tile-view.ts` | `cell_renderer.js` — `draw_dolls` | Player-doll layer composition |
-| `src/game/hud/monster-style.ts` | `cell_renderer.js` — `draw_background` (attitude-halo slice) | Monster-panel background tile |
+| `src/game/hud/monster-style.ts` | `cell_renderer.js` — `draw_background` (attitude-halo slice), `draw_foreground` (status-icon order + `status_shift`) | Monster-panel background tile; shared status-overlay decision |
 | `src/game/hud/monster-style.ts` | `monster_list.js` — `monster_sort`, `is_excluded` | Monster ordering and display-exclusion predicate |
+| `src/game/map/icon-sizes.ts` | `rltiles/icon-sizes.txt` (input to `util/status-icon-sizes-gen.py` → `status_icon_size`) | Per-status-icon width table for `cell.icons` stacking |
 | `src/game/map/colors.ts` | `cell_renderer.js` — `split_term_colour`, `term_colour_apply_attributes` | Console colour-attribute decode |
 | `src/game/hud/monster-list.ts` | `monster_list.js` — `group_monsters` / `can_combine` | Consecutive same-rank monster grouping |
 

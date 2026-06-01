@@ -5,11 +5,13 @@ const KEY = 'pocketzot:prefs'
 export interface Prefs {
   lastGuestSpectateWsUrl: string | null
   monsterListCollapsed: boolean
+  mapRenderMode: 'ascii' | 'tiles'
 }
 
 const DEFAULTS: Prefs = {
   lastGuestSpectateWsUrl: null,
   monsterListCollapsed: false,
+  mapRenderMode: 'tiles',
 }
 
 function load(): Prefs {

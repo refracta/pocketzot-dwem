@@ -66,6 +66,18 @@ export interface MonsterCell {
 // When either is set, the cell has been explored but is not in the player's current FOV.
 const UNSEEN_MASK = 0x00060000
 
+// Cell-store key format: "x,y". The dirty Set returned by merge() holds these
+// keys and renderers decode them back to coords via parseCellKey — so the
+// encode and decode live together here and the store is the single owner of
+// its own key shape. Change the format and both ends move at once.
+export function cellKey(x: number, y: number): string {
+  return `${x},${y}`
+}
+export function parseCellKey(key: string): { x: number; y: number } {
+  const comma = key.indexOf(',')
+  return { x: +key.slice(0, comma), y: +key.slice(comma + 1) }
+}
+
 // Stores the known map state and merges delta updates from the server.
 // The server sends cells as diffs: only changed fields are included,
 // and x/y coordinates carry forward (if x omitted, use prev x+1; if y omitted use prev y).
@@ -108,7 +120,7 @@ export class MapStore {
         curX++
       }
 
-      const key = `${curX},${curY}`
+      const key = cellKey(curX, curY)
       const existing = this.cells.get(key)
 
       // Most per-cell render fields are inside `t` on the wire (tileweb.cc
@@ -273,7 +285,7 @@ export class MapStore {
   }
 
   get(x: number, y: number): Cell | undefined {
-    return this.cells.get(`${x},${y}`)
+    return this.cells.get(cellKey(x, y))
   }
 
   getMonsters(): ReadonlyMap<string, MonsterCell> {

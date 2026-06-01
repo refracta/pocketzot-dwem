@@ -2,11 +2,12 @@ import type { MapStore, MonsterCell } from '../map/map-store'
 import { decodeColor } from '../map/colors'
 import { bgLo } from '../map/cell-flags'
 import { appendTiles, appendIconOverlays, monsterTileSpec, prependDngnIndex, prependDngnLayer } from '../tiles/tile-view'
+import type { TileLoader } from '../tiles/tile-loader'
 import {
   MDAM_COLORS,
   decodeMdam, mdamTier,
   decodeFgStatuses,
-  fgHaloDngnName, fgOverlayIcons, fgTileIndex,
+  fgHaloDngnName, fgTileIndex,
   filterAndSortMonsters, nameColor,
 } from './monster-style'
 
@@ -14,16 +15,12 @@ import {
 // scale 1.5 lines up with the row's 48px height defined in .mp-tile / .mp-row.
 const TILE_SCALE = 1.5
 
-interface RowEntry {
-  cell: MonsterCell
-  tileEl: HTMLElement
-  iconNames: string[]
-  iconIds: number[]
-}
-
 export class MonsterPanelView {
   readonly element: HTMLElement
   private onPickCoord: ((x: number, y: number) => void) | null = null
+  // Per-version tile loader; null until game-view supplies it. The tile-view
+  // helpers no-op on null, so rows render glyph-only until then.
+  private loader: TileLoader | null = null
 
   constructor(private readonly store: MapStore) {
     this.element = document.createElement('div')
@@ -32,6 +29,10 @@ export class MonsterPanelView {
 
   setOnPickCoord(cb: (x: number, y: number) => void): void {
     this.onPickCoord = cb
+  }
+
+  setLoader(loader: TileLoader): void {
+    this.loader = loader
   }
 
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
@@ -46,17 +47,10 @@ export class MonsterPanelView {
       return
     }
 
-    const entries: RowEntry[] = []
-    let anyOverlay = false
-    for (const mc of list) {
-      const entry = this.renderRow(mc)
-      entries.push(entry)
-      if (entry.iconNames.length > 0 || entry.iconIds.length > 0) anyOverlay = true
-    }
-    if (anyOverlay) this.applyOverlays(entries)
+    for (const mc of list) this.renderRow(mc)
   }
 
-  private renderRow(mc: MonsterCell): RowEntry {
+  private renderRow(mc: MonsterCell): void {
     const mon = mc.mon
     const att = mon.att ?? 0
     const threat = mon.threat ?? 0
@@ -85,12 +79,12 @@ export class MonsterPanelView {
       doll: cell?.doll,
       mcache: cell?.mcache,
     })
-    if (baseSpec.length > 0) appendTiles(tileEl, baseSpec, TILE_SCALE)
+    if (baseSpec.length > 0) appendTiles(this.loader, tileEl, baseSpec, TILE_SCALE)
     const halo = fgHaloDngnName(cell?.fg)
-    if (halo) prependDngnLayer(tileEl, halo, TILE_SCALE)
+    if (halo) prependDngnLayer(this.loader, tileEl, halo, TILE_SCALE)
     // Order matters: each prepend slots in at index 0, so the floor (called
     // last) ends up at the bottom of the DOM stack, halo above, sprite on top.
-    if (cell?.t_bg !== undefined) prependDngnIndex(tileEl, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
+    if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, tileEl, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
 
     const mdam = decodeMdam(cell?.fg)
     const tier = mdamTier(mdam)
@@ -122,17 +116,9 @@ export class MonsterPanelView {
     })
 
     this.element.appendChild(row)
-    return {
-      cell: mc, tileEl,
-      iconNames: fgOverlayIcons(cell?.fg),
-      iconIds: cell?.icons ?? [],
-    }
-  }
-
-  private applyOverlays(entries: RowEntry[]): void {
-    for (const e of entries) {
-      if (e.iconNames.length === 0 && e.iconIds.length === 0) continue
-      appendIconOverlays(e.tileEl, { names: e.iconNames, ids: e.iconIds }, TILE_SCALE)
-    }
+    // Damage shows as the mp-hp bar above, so no MDAM overlay (includeMdam off).
+    // appendIconOverlays self-defers on the icons tileinfo module, so layering
+    // it here per row is equivalent to a separate second pass.
+    appendIconOverlays(this.loader, tileEl, cell?.fg, cell?.icons ?? [], TILE_SCALE)
   }
 }

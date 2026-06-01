@@ -1,12 +1,21 @@
-// Lazy-loads DCSS tile atlas PNGs and tileinfo modules from the connected
-// WebTiles server. The atlas is one big sprite sheet per texture; each
-// tileinfo file is an AMD module exporting `get_tile_info(id)` returning
-// the sprite's source-rect inside the atlas.
+// Loads DCSS tile atlas PNGs and tileinfo modules from the connected WebTiles
+// server. The atlas is one big sprite sheet per texture; each tileinfo file is
+// an AMD module exporting `get_tile_info(id)` returning the sprite's
+// source-rect inside the atlas.
 //
 // We can't fetch() the tileinfo JS cross-origin (the official server sends
 // no CORS headers), but cross-origin <script> execution and <img> display
 // both work without CORS. So we load tileinfo via a <script> tag with a
 // shimmed AMD `define`, and load atlases as plain Image objects.
+//
+// Each game *version* gets its own immutable TileLoader instance, obtained
+// from getTileLoader() and keyed by the gamedata base URL. This is the
+// in-SPA analog of the reference client's per-version page reload: a loader's
+// caches are valid by construction for its one version, so version X's atlas
+// can never be read under version Y's tileinfo. A late image onload from a
+// torn-down game writes into that game's own (now-orphaned) instance, never
+// the live one — which is the whole class of "black tile after switching
+// versions" bug, eliminated structurally rather than by a runtime guard.
 
 // Texture enum based on DCSS 0.34.1 (FLOOR=0..ICONS=6).
 const TEXTURE_NAMES = ['floor', 'wall', 'feat', 'player', 'main', 'gui', 'icons'] as const
@@ -49,13 +58,45 @@ export interface TileinfoModule {
   [k: string]: unknown
 }
 
-class TileLoader {
-  private httpBase = ''
-  private version = ''
+// Registry of loaders by gamedata base URL (`${httpBase}/gamedata/${version}`).
+// Memoized so repeated games of the same version reuse the warm atlas/tileinfo
+// cache, while different versions get fully isolated instances.
+const loaders = new Map<string, TileLoader>()
+
+// Bounds how many version-distinct atlas sets we keep resident (each holds a
+// few MB of decoded PNGs). A session realistically touches 1–3 versions; the
+// cap is a leak backstop, not a tuning knob. Evicting a base only drops it
+// from the registry — any live view still holding that instance keeps working;
+// a later re-request just builds a fresh instance and reloads.
+const MAX_LOADERS = 4
+
+export function getTileLoader(httpBase: string, version: string): TileLoader {
+  const base = `${httpBase}/gamedata/${version}`
+  const existing = loaders.get(base)
+  if (existing) {
+    // Refresh LRU recency.
+    loaders.delete(base)
+    loaders.set(base, existing)
+    return existing
+  }
+  installShim()
+  const loader = new TileLoader(base)
+  loaders.set(base, loader)
+  while (loaders.size > MAX_LOADERS) {
+    const oldest = loaders.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    loaders.delete(oldest)
+  }
+  return loader
+}
+
+export class TileLoader {
+  // Public so the routing shim and callers can identify this instance; never
+  // mutated after construction.
+  readonly base: string
   private atlases = new Map<string, Promise<HTMLImageElement>>()
   private modules = new Map<string, Promise<TileinfoModule>>()
   private moduleResolvers = new Map<string, (m: TileinfoModule) => void>()
-  private shimInstalled = false
   // Resolved-state mirrors of `atlases` / `modules` for synchronous lookup.
   // The async maps hold the in-flight promise; these hold the value once it
   // arrives. TileMapView paints from these so a 33×21 canvas redraw doesn't
@@ -63,30 +104,19 @@ class TileLoader {
   private atlasSync = new Map<string, HTMLImageElement>()
   private moduleSync = new Map<string, TileinfoModule>()
 
-  configure(httpBase: string, version: string): void {
-    if (this.httpBase === httpBase && this.version === version) return
-    this.httpBase = httpBase
-    this.version = version
-    this.atlases.clear()
-    this.modules.clear()
-    this.moduleResolvers.clear()
-    this.atlasSync.clear()
-    this.moduleSync.clear()
-  }
-
-  get configured(): boolean {
-    return this.httpBase !== '' && this.version !== ''
+  // Use getTileLoader() rather than `new TileLoader()` directly so instances
+  // are registry-memoized (and reachable by the routing shim).
+  constructor(base: string) {
+    this.base = base
   }
 
   // Returns a tileinfo module by texture name (e.g. 'icons') so callers
   // can read named tile-id constants (e.g. mod.UNAWARE) for status overlays.
   getModule(name: string): Promise<TileinfoModule> {
-    if (!this.configured) return Promise.reject(new Error('tile loader not configured'))
     return this.loadTileinfo(name)
   }
 
   async getAsync(tex: number, tileId: number): Promise<TileSprite> {
-    if (!this.configured) throw new Error('tile loader not configured')
     const name = TEXTURE_NAMES[tex]
     if (!name) throw new Error(`unknown texture: ${tex}`)
     const [img, mod] = await Promise.all([this.loadAtlas(name), this.loadTileinfo(name)])
@@ -106,7 +136,6 @@ class TileLoader {
   // Preload an atlas + its tileinfo so subsequent getSync() calls succeed.
   // Used by TileMapView before its first canvas paint.
   async ensureLoaded(tex: number): Promise<void> {
-    if (!this.configured) throw new Error('tile loader not configured')
     const name = TEXTURE_NAMES[tex]
     if (!name) throw new Error(`unknown texture: ${tex}`)
     const [img, mod] = await Promise.all([this.loadAtlas(name), this.loadTileinfo(name)])
@@ -150,7 +179,6 @@ class TileLoader {
   // a single id space across floor/wall/feat — its get_img(idx) returns
   // 'floor' | 'wall' | 'feat', which lines up with TEXTURE_NAMES[0..2].
   async getDngnTex(dngnIdx: number): Promise<number> {
-    if (!this.configured) throw new Error('tile loader not configured')
     const dngn = await this.loadTileinfo('dngn')
     const getImg = dngn.get_img as (i: number) => string
     const imgName = getImg(dngnIdx)
@@ -166,20 +194,25 @@ class TileLoader {
       const img = new Image()
       img.onload = () => { this.atlasSync.set(name, img); resolve(img) }
       img.onerror = () => reject(new Error(`failed to load atlas ${name}.png`))
-      img.src = `${this.httpBase}/gamedata/${this.version}/${name}.png`
+      img.src = `${this.base}/${name}.png`
     })
     this.atlases.set(name, p)
+    // Evict on failure so a later call retries the load instead of forever
+    // re-returning this rejected promise. The instance is immutable and
+    // registry-memoized — nothing else clears the cache — so without this a
+    // single transient network blip would pin this version to ASCII for the
+    // whole session. Guard the delete so a newer in-flight retry isn't dropped.
+    p.catch(() => { if (this.atlases.get(name) === p) this.atlases.delete(name) })
     return p
   }
 
   private loadTileinfo(name: string): Promise<TileinfoModule> {
     const cached = this.modules.get(name)
     if (cached) return cached
-    this.installShim()
     const p = new Promise<TileinfoModule>((resolve, reject) => {
       this.moduleResolvers.set(name, resolve)
       const s = document.createElement('script')
-      s.src = `${this.httpBase}/gamedata/${this.version}/tileinfo-${name}.js`
+      s.src = `${this.base}/tileinfo-${name}.js`
       s.onerror = () => {
         this.moduleResolvers.delete(name)
         reject(new Error(`failed to load tileinfo-${name}.js`))
@@ -187,45 +220,26 @@ class TileLoader {
       document.head.appendChild(s)
     })
     this.modules.set(name, p)
+    // See loadAtlas: evict a rejected load so the next call retries rather than
+    // re-returning the failure for the rest of this (immutable) loader's life.
+    p.catch(() => { if (this.modules.get(name) === p) this.modules.delete(name) })
     return p
   }
 
-  private installShim(): void {
-    if (this.shimInstalled) return
-    this.shimInstalled = true
-    const w = window as unknown as Record<string, unknown>
-    // tileinfo-dngn.js (and other generated modules) calls `assert(...)` at
-    // module init and inside get_img to validate the dngn dispatch ranges.
-    // The reference client defines this in its util.js bundle; we don't load
-    // util.js, so provide a minimal global assert that throws on failure.
-    if (typeof w['assert'] !== 'function') {
-      w['assert'] = (cond: unknown, msg?: string): void => {
-        if (!cond) throw new Error(msg || 'assert failed')
-      }
-    }
-    const define = (deps: string[], factory: (...args: unknown[]) => TileinfoModule) => {
-      // Identify which tileinfo module is being defined by the URL of the
-      // currently-executing <script>. This avoids ordering races between
-      // multiple in-flight loads.
-      const src = (document.currentScript as HTMLScriptElement | null)?.src ?? ''
-      const m = src.match(/tileinfo-([a-z]+)\.js/)
-      if (!m) return
-      const name = m[1]
-      Promise.all(deps.map((d) => this.loadDep(d)))
-        .then((args) => {
-          const mod = factory(...args)
-          this.moduleSync.set(name, mod)
-          const resolve = this.moduleResolvers.get(name)
-          this.moduleResolvers.delete(name)
-          resolve?.(mod)
-        })
-        .catch((err) => console.error('tileinfo factory failed:', name, err))
-    }
-    ;(define as unknown as { amd: object }).amd = {}
-    w['define'] = define
+  // Called by the global `define` shim once a tileinfo-<name>.js for THIS
+  // instance's base URL finishes executing. Module-internal (not part of the
+  // public API) — kept unmarked so the shim, defined at module scope, can
+  // reach it.
+  resolveModule(name: string, mod: TileinfoModule): void {
+    this.moduleSync.set(name, mod)
+    const resolve = this.moduleResolvers.get(name)
+    this.moduleResolvers.delete(name)
+    resolve?.(mod)
   }
 
-  private loadDep(dep: string): Promise<unknown> {
+  // Resolves an AMD dependency string a tileinfo module declares. Module-
+  // internal; called by the shim with this instance as `this`-equivalent.
+  loadDep(dep: string): Promise<unknown> {
     if (dep === 'jquery') {
       // The "jquery" dep is only used for `$.extend(exports, ...)` to merge
       // sub-module exports — Object.assign is a drop-in replacement.
@@ -237,4 +251,43 @@ class TileLoader {
   }
 }
 
-export const tileLoader = new TileLoader()
+// One global AMD `define` shim for every loader instance. tileinfo-*.js
+// modules call `define(deps, factory)` at execution; we route each call back
+// to the right instance by parsing the base URL out of the executing script's
+// src. A single shim (rather than per-instance) is what makes concurrent
+// cross-version loads safe — two instances installing rival `define`s on
+// `window` would otherwise clobber each other.
+let shimInstalled = false
+function installShim(): void {
+  if (shimInstalled) return
+  shimInstalled = true
+  const w = window as unknown as Record<string, unknown>
+  // tileinfo-dngn.js (and other generated modules) calls `assert(...)` at
+  // module init and inside get_img to validate the dngn dispatch ranges.
+  // The reference client defines this in its util.js bundle; we don't load
+  // util.js, so provide a minimal global assert that throws on failure.
+  if (typeof w['assert'] !== 'function') {
+    w['assert'] = (cond: unknown, msg?: string): void => {
+      if (!cond) throw new Error(msg || 'assert failed')
+    }
+  }
+  const define = (deps: string[], factory: (...args: unknown[]) => TileinfoModule) => {
+    // `${base}/tileinfo-<name>.js` — base identifies the instance, name the
+    // module. Splitting on the last `/tileinfo-` segment yields both.
+    const src = (document.currentScript as HTMLScriptElement | null)?.src ?? ''
+    const m = src.match(/^(.*)\/tileinfo-([a-z]+)\.js/)
+    if (!m) return
+    const base = m[1]
+    const name = m[2]
+    const loader = loaders.get(base)
+    if (!loader) return  // instance evicted/torn down while its script loaded
+    Promise.all(deps.map((d) => loader.loadDep(d)))
+      .then((args) => {
+        const mod = factory(...args)
+        loader.resolveModule(name, mod)
+      })
+      .catch((err) => console.error('tileinfo factory failed:', name, err))
+  }
+  ;(define as unknown as { amd: object }).amd = {}
+  w['define'] = define
+}

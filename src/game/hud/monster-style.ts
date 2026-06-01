@@ -16,6 +16,7 @@ import {
   FG_MDAM_LO_MASK, FG_MDAM_LIGHT_LO, FG_MDAM_MOD_LO, FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT,
   FG_POISON_MASK_HI, FG_POISON, FG_MORE_POISON, FG_MAX_POISON,
   FG_THREAT_MASK_HI, FG_THREAT_TRIVIAL, FG_THREAT_EASY, FG_THREAT_TOUGH, FG_THREAT_NASTY, FG_THREAT_UNUSUAL,
+  fgLo, fgHi,
 } from '../map/cell-flags'
 
 // attitude index → class label (mirrors reference monster_list.js)
@@ -61,8 +62,8 @@ export function mdamTier(name: string): number {
 // table for the (loMasked, hiMasked) pair is in cell-flags.ts.
 export function decodeMdam(fg: number | number[] | undefined): string {
   if (fg === undefined) return 'uninjured'
-  const lo = (Array.isArray(fg) ? (fg[0] ?? 0) : fg) >>> 0
-  const hi = (Array.isArray(fg) ? (fg[1] ?? 0) : 0) >>> 0
+  const lo = fgLo(fg)
+  const hi = fgHi(fg)
   // `& MASK` returns int32, which compares as negative against the positive
   // Number literal `0x80000000` / `0xC0000000`; re-coerce to uint32.
   const loMasked = (lo & FG_MDAM_LO_MASK) >>> 0
@@ -81,8 +82,8 @@ export function decodeMdam(fg: number | number[] | undefined): string {
 // flags like MB_ALLY_TARGET / MB_ABJURABLE are not transmitted via t.fg.
 export function decodeFgStatuses(fg: number | number[] | undefined): string[] {
   if (fg === undefined) return []
-  const lo = (Array.isArray(fg) ? (fg[0] ?? 0) : fg) >>> 0
-  const hi = (Array.isArray(fg) ? (fg[1] ?? 0) : 0) >>> 0
+  const lo = fgLo(fg)
+  const hi = fgHi(fg)
   const out: string[] = []
 
   const beh = lo & FG_BEHAVIOUR_MASK
@@ -102,67 +103,142 @@ export function decodeFgStatuses(fg: number | number[] | undefined): string[] {
   return out
 }
 
-// FG packed-tile → icon-name tables. Used by the monster panel (reads
-// t.fg as [lo, hi]) and the describe-monster popup in game-view.ts (single
-// 32-bit msg.flag, no poison high-word). Values are tile-constant names in
-// `tileinfo-icons`; callers resolve numeric ids at runtime via
-// tileLoader.getModule('icons').
-export const ATTITUDE_ICONS: Record<number, string> = {
-  [FG_PET]: 'FRIENDLY',
-  [FG_GD_NEUTRAL]: 'GOOD_NEUTRAL',
-  [FG_NEUTRAL]: 'NEUTRAL',
-}
-// Parallel attitude → dngn-atlas halo tile. The reference's draw_background
-// stamps these big coloured rings (HALO_FRIENDLY etc., from feat.png) under
-// the foreground sprite for any visible non-hostile cell — separate from the
-// small ATTITUDE_ICONS gem drawn on top.
+// Attitude → dngn-atlas halo tile. The reference's draw_background stamps
+// these big coloured rings (HALO_FRIENDLY etc., from feat.png) under the
+// foreground sprite for any visible non-hostile cell — separate from the
+// small attitude gem buildStatusOverlays draws on top.
 export const ATTITUDE_HALO_DNGN: Record<number, string> = {
   [FG_PET]: 'HALO_FRIENDLY',
   [FG_GD_NEUTRAL]: 'HALO_GD_NEUTRAL',
   [FG_NEUTRAL]: 'HALO_NEUTRAL',
 }
-export const BEHAVIOUR_ICONS: Record<number, string> = {
-  [FG_STAB]: 'STAB_BRAND',
-  [FG_MAY_STAB]: 'UNAWARE',
-  [FG_FLEEING]: 'FLEEING',
-  [FG_PARALYSED]: 'PARALYSED',
-}
-export const PLAIN_FLAG_ICONS: Array<[number, string]> = [
-  [FG_S_UNDER, 'SOMETHING_UNDER'],
-  [FG_NET, 'TRAP_NET'],
-  [FG_WEB, 'TRAP_WEB'],
-]
-export const POISON_ICONS: Record<number, string> = {
-  [FG_POISON]: 'POISON',
-  [FG_MORE_POISON]: 'MORE_POISON',
-  [FG_MAX_POISON]: 'MAX_POISON',
+
+// A status icon to overlay on a monster sprite: either a named tile-constant
+// (resolved against tileinfo-icons by the caller) or a raw numeric id from
+// cell.icons, plus the cell-space pixel offset draw_foreground would place it at.
+export interface IconOverlay { name?: string; id?: number; xofs: number; yofs: number }
+export interface StatusOverlays { overlays: IconOverlay[]; statusShift: number }
+
+// Lo-word bits that produce a status overlay (trap/under markers + attitude +
+// behaviour). Lets buildStatusOverlays test "any status at all?" in one mask
+// for its allocation-free fast path. Poison lives in the hi word, checked
+// separately. Shared result for the no-status case — callers only read it.
+const STATUS_LO_BITS = FG_NET | FG_WEB | FG_S_UNDER | FG_ATTITUDE_MASK | FG_BEHAVIOUR_MASK
+const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
+
+// Cheap, allocation-free predicate: could this (fg, icons) pair produce any
+// status overlay at all? The single source of truth for the empty case —
+// buildStatusOverlays' fast path uses it to skip allocating, and
+// appendIconOverlays uses it to skip the async icons-module load for the
+// (common) status-free monster before paying a Promise. includeMdam surfaces
+// always pass, since MDAM is decoded on the slow path.
+export function mayHaveStatusOverlays(
+  fg: number | number[] | undefined,
+  icons: readonly number[],
+  opts: { includeMdam?: boolean } = {},
+): boolean {
+  if (opts.includeMdam) return true
+  return (fgLo(fg) & STATUS_LO_BITS) !== 0
+    || (fgHi(fg) & FG_POISON_MASK_HI) !== 0
+    || icons.length > 0
 }
 
-// Decodes overlay icon-constant names from the low 32 bits of t.fg.
-// Used by both the monster panel (lo word of t.fg) and the describe-
-// monster popup (msg.flag — same bit layout, single word, no poison).
-export function loFlagOverlayIcons(lo: number): string[] {
-  const out: string[] = []
-  const att = ATTITUDE_ICONS[lo & FG_ATTITUDE_MASK]
-  if (att) out.push(att)
-  const beh = BEHAVIOUR_ICONS[lo & FG_BEHAVIOUR_MASK]
-  if (beh) out.push(beh)
-  for (const [bit, name] of PLAIN_FLAG_ICONS) if (lo & bit) out.push(name)
-  return out
+// MDAM damage tier → icons tile-constant name; absent (→ undefined) when uninjured.
+const MDAM_ICON_NAMES: Record<string, string> = {
+  lightly_damaged: 'MDAM_LIGHTLY_DAMAGED',
+  moderately_damaged: 'MDAM_MODERATELY_DAMAGED',
+  heavily_damaged: 'MDAM_HEAVILY_DAMAGED',
+  severely_damaged: 'MDAM_SEVERELY_DAMAGED',
+  almost_dead: 'MDAM_ALMOST_DEAD',
+}
+export function mdamIconName(fg: number | number[] | undefined): string | undefined {
+  return MDAM_ICON_NAMES[decodeMdam(fg)]
 }
 
-// Full t.fg overlay decode: low-word flags plus poison from the high word.
-// Poison only ships in the [lo, hi] two-word form, which is why the
-// describe-monster popup (single-word msg.flag) uses loFlagOverlayIcons
-// directly instead of this.
-export function fgOverlayIcons(fg: number | number[] | undefined): string[] {
-  if (fg === undefined) return []
-  const lo = Array.isArray(fg) ? (fg[0] ?? 0) : fg
-  const hi = Array.isArray(fg) ? (fg[1] ?? 0) : 0
-  const out = loFlagOverlayIcons(lo)
-  const pois = POISON_ICONS[hi & FG_POISON_MASK_HI]
-  if (pois) out.push(pois)
-  return out
+// Single source of truth for "which monster-status icons to draw, in what
+// order, at what offset" — a faithful port of cell_renderer.js draw_foreground
+// (the status-icon slice, lines 944-1090). Consumed by every surface that
+// renders a monster sprite: the canvas map (tile-map-view), the HUD monster
+// list, the touch monster panel, and the describe-monster popup. The surfaces
+// differ only in the final paint primitive (canvas vs DOM tile); the decision
+// lives here exactly once.
+//
+// `fg` may be a single word (msg.flag — hi == 0, so no poison and no
+// severe-or-worse MDAM, exactly as the reference's single-word desc.flag) or
+// the [lo, hi] cell form. `sizeMap` is the id→width table from
+// buildStatusIconSizeMap (icon-sizes.ts): cell.icons with width < 0 (absent)
+// are skipped, width 0 pins the icon at its authored spot, width > 0 fans the
+// stack left by that much. Returns the trailing statusShift so the map can gate
+// NEW_STAIR / NEW_TRANSPORTER (drawn only when no status icon occupies the corner).
+export function buildStatusOverlays(
+  fg: number | number[] | undefined,
+  icons: readonly number[],
+  sizeMap: ReadonlyMap<number, number>,
+  opts: { includeMdam?: boolean } = {},
+): StatusOverlays {
+  const lo = fgLo(fg)
+  const hi = fgHi(fg)
+
+  // Fast path: most map cells carry no status bits and no server icons. The
+  // canvas map calls this once per rendered cell, so bail before allocating an
+  // overlays array + result object in the empty case. (includeMdam surfaces —
+  // the describe popup — are rare and skip the fast path so MDAM still decodes.)
+  if (!mayHaveStatusOverlays(fg, icons, opts)) return EMPTY_STATUS_OVERLAYS
+
+  const overlays: IconOverlay[] = []
+
+  // Trap / item-underneath markers and attitude gem: fixed authored positions.
+  if (lo & FG_NET) overlays.push({ name: 'TRAP_NET', xofs: 0, yofs: 0 })
+  if (lo & FG_WEB) overlays.push({ name: 'TRAP_WEB', xofs: 0, yofs: 0 })
+  if (lo & FG_S_UNDER) overlays.push({ name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 })
+
+  const att = lo & FG_ATTITUDE_MASK
+  if (att === FG_PET) overlays.push({ name: 'FRIENDLY', xofs: 0, yofs: 0 })
+  else if (att === FG_GD_NEUTRAL) overlays.push({ name: 'GOOD_NEUTRAL', xofs: 0, yofs: 0 })
+  else if (att === FG_NEUTRAL) overlays.push({ name: 'NEUTRAL', xofs: 0, yofs: 0 })
+
+  // Behaviour icon at the corner; bumps status_shift so poison / cell.icons
+  // fan to its left. The +12/+7/+3 constants are literals in draw_foreground.
+  let shift = 0
+  const beh = lo & FG_BEHAVIOUR_MASK
+  if (beh === FG_PARALYSED) { overlays.push({ name: 'PARALYSED', xofs: 0, yofs: 0 }); shift += 12 }
+  else if (beh === FG_STAB) { overlays.push({ name: 'STAB_BRAND', xofs: 0, yofs: 0 }); shift += 12 }
+  else if (beh === FG_MAY_STAB) { overlays.push({ name: 'UNAWARE', xofs: 0, yofs: 0 }); shift += 7 }
+  else if (beh === FG_FLEEING) { overlays.push({ name: 'FLEEING', xofs: 0, yofs: 0 }); shift += 3 }
+
+  // `-shift || 0` avoids a -0 xofs when nothing has shifted yet (paints the
+  // same, but keeps the overlay data canonical).
+  const poison = hi & FG_POISON_MASK_HI
+  if (poison === FG_POISON) { overlays.push({ name: 'POISON', xofs: -shift || 0, yofs: 0 }); shift += 5 }
+  else if (poison === FG_MORE_POISON) { overlays.push({ name: 'MORE_POISON', xofs: -shift || 0, yofs: 0 }); shift += 5 }
+  else if (poison === FG_MAX_POISON) { overlays.push({ name: 'MAX_POISON', xofs: -shift || 0, yofs: 0 }); shift += 5 }
+
+  // Server-supplied status icons, sized via the per-icon width table
+  // (draw_icon_type): width < 0 → skip, 0 → fixed position, > 0 → fan then advance.
+  for (const id of icons) {
+    if (id <= 0) continue
+    const w = sizeMap.get(id) ?? -1
+    if (w < 0) continue
+    if (w === 0) { overlays.push({ id, xofs: 0, yofs: 0 }); continue }
+    overlays.push({ id, xofs: -shift || 0, yofs: 0 })
+    shift += w
+  }
+
+  if (opts.includeMdam) {
+    const mdam = mdamIconName(fg)
+    if (mdam) overlays.push({ name: mdam, xofs: 0, yofs: 0 })
+  }
+
+  return { overlays, statusShift: shift }
+}
+
+// Resolve an IconOverlay to its numeric icons-atlas tile id: a named overlay
+// looks the tile-constant up in the icons module; a raw-id overlay passes
+// through. Returns undefined for an unknown name or a non-positive id. The one
+// place the canvas map and the DOM tile path agree on overlay→id dispatch.
+export function resolveOverlayId(o: IconOverlay, icons: { [k: string]: unknown }): number | undefined {
+  const id = o.name !== undefined ? icons[o.name] : o.id
+  return typeof id === 'number' && id > 0 ? id : undefined
 }
 
 // Selects the dngn halo tile name (HALO_FRIENDLY / HALO_GD_NEUTRAL /
@@ -170,16 +246,12 @@ export function fgOverlayIcons(fg: number | number[] | undefined): string[] {
 // underneath the doll/sprite to mirror cell_renderer.js draw_background.
 // Accepts t.fg in either single-word (msg.flag) or [lo, hi] form.
 export function fgHaloDngnName(fg: number | number[] | undefined): string | undefined {
-  if (fg === undefined) return undefined
-  const lo = Array.isArray(fg) ? (fg[0] ?? 0) : fg
-  return ATTITUDE_HALO_DNGN[lo & FG_ATTITUDE_MASK]
+  return ATTITUDE_HALO_DNGN[fgLo(fg) & FG_ATTITUDE_MASK]
 }
 
 // FG tile id is packed in the low 16 bits of fg.lo (per enums.js fg_flags.mask).
 export function fgTileIndex(fg: number | number[] | undefined): number {
-  if (fg === undefined) return 0
-  const lo = Array.isArray(fg) ? (fg[0] ?? 0) : fg
-  return lo & FG_TILE_ID_MASK
+  return fgLo(fg) & FG_TILE_ID_MASK
 }
 
 export function nameColor(att: number, threat: number): string {
@@ -200,11 +272,9 @@ export function threatColor(threat: number): string {
 // place of the threat-color border.
 export type FgThreatTier = 'trivial' | 'easy' | 'tough' | 'nasty' | 'unusual'
 export function decodeFgThreatTier(fg: number | number[] | undefined): FgThreatTier | undefined {
-  if (fg === undefined) return undefined
-  const hi = (Array.isArray(fg) ? (fg[1] ?? 0) : 0) >>> 0
-  // `>>> 0` re-coerces to uint32 — without it, NASTY (0x80000000) and
-  // UNUSUAL (0xE0000000) compare as negative int32 and silently miss.
-  const masked = (hi & FG_THREAT_MASK_HI) >>> 0
+  // fgHi already uint32-coerces, so NASTY (0x80000000) / UNUSUAL (0xE0000000)
+  // mask correctly instead of comparing as negative int32.
+  const masked = (fgHi(fg) & FG_THREAT_MASK_HI) >>> 0
   if (masked === FG_THREAT_TRIVIAL) return 'trivial'
   if (masked === FG_THREAT_EASY) return 'easy'
   if (masked === FG_THREAT_TOUGH) return 'tough'

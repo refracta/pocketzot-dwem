@@ -100,6 +100,18 @@ export interface LobbyEntry {
   milestone?: string
 }
 
+// How a game session ended, forwarded from the game view to the lobby so the
+// exit dialog renders *after* the layer switch (the server batches game_ended
+// → go_lobby → lobby list, and a client-side go_lobby while idle won't re-
+// request the list, so we can't hold an overlay in the game view across it).
+export interface GameExit {
+  reason: string
+  message?: string  // morgue summary blurb (death/win/quit); empty on save
+  dump?: string     // morgue/dump URL without extension — append ".txt"
+  spectated?: boolean
+  spectatedName?: string
+}
+
 // --- Server → Client messages ---
 
 export type ServerMsg =
@@ -178,6 +190,9 @@ export interface PlayerMsg {
   str?: number
   int?: number
   dex?: number
+  str_max?: number  // natural maxima; current < max means the stat is drained
+  int_max?: number
+  dex_max?: number
   xl?: number
   progress?: number
   gold?: number

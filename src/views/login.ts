@@ -4,6 +4,7 @@ import { clearSession, listSessions, saveSession, type StoredSession } from '../
 import { cncUserinfo } from '../dwem'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
+import { openAboutDoc, openChangelogDoc } from './docs'
 
 export interface LoginResult {
   conn: WsConnection
@@ -40,17 +41,15 @@ export function buildLoginView(
     <button id="login-btn" type="submit" class="login-btn">Connect</button>
   `
 
-  // The About and What's new pages are part of the hosted deployment, not
-  // the open-source client. They (and these links) are only present when
-  // the site-pages flag is set in a local, gitignored env file.
-  const siteFooterHtml = import.meta.env.VITE_SITE_PAGES
-    ? `
-      <div class="login-footer">
-        <a href="about.html">About</a>
-        <a href="changelog.html">What's new</a>
-      </div>
-    `
-    : ''
+  // About / What's new are rendered in-app from the committed ABOUT.md /
+  // CHANGELOG.md (see ./docs), so they ship in every build — this footer is the
+  // always-present source/attribution surface required by the AGPL.
+  const siteFooterHtml = `
+    <div class="login-footer">
+      <a href="#" id="login-about">About</a>
+      <a href="#" id="login-changelog">What's new</a>
+    </div>
+  `
 
   const addAccountSection = hasSessions
     ? `
@@ -129,6 +128,15 @@ export function buildLoginView(
   } else if (topSession && SPECTATE_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
     spectateSelect.value = topSession.wsUrl
   }
+
+  view.querySelector('#login-about')!.addEventListener('click', (e) => {
+    e.preventDefault()
+    openAboutDoc()
+  })
+  view.querySelector('#login-changelog')!.addEventListener('click', (e) => {
+    e.preventDefault()
+    openChangelogDoc()
+  })
 
   renderResumeButtons()
 

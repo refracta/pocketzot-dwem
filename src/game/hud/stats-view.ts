@@ -1,8 +1,7 @@
 import type { PlayerMsg } from '../../ws/types'
 import type { InventoryStore } from '../inventory-store'
-import { escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../dcss-colors'
+import { escHtml, dcssToHtml } from '../dcss-colors'
 
-const NOISE_WIDTH = 9
 const BAR_RES = 10000  // basis points; matches reference player.js precision
 
 function indexToLetter(index: number): string {
@@ -11,11 +10,13 @@ function indexToLetter(index: number): string {
   return String.fromCharCode(0x41 + index - 26)
 }
 
-function noiseColor(level: number): string {
-  if (level <= 333) return DCSS_COLOR_MAP.lightgrey
-  if (level <= 666) return DCSS_COLOR_MAP.yellow
-  if (level < 1000) return DCSS_COLOR_MAP.red
-  return DCSS_COLOR_MAP.lightmagenta
+// Noise level → data-level category, mirroring update_bar_noise in player.js.
+// The matching colors live in style.css (.hg-noise-cell[data-level=...]).
+function noiseCat(level: number): string {
+  if (level <= 333) return 'quiet'
+  if (level <= 666) return 'loud'
+  if (level < 1000) return 'veryloud'
+  return 'superloud'
 }
 
 export class StatsView {
@@ -24,7 +25,7 @@ export class StatsView {
   private inv: InventoryStore
   private prevTime: number | undefined
   private timeDelta = 0
-  private prevNoiseSegs: number | undefined
+  private oldNoise: number | undefined
   private oldHp: number | undefined
   private oldMp: number | undefined
 
@@ -89,13 +90,24 @@ export class StatsView {
       : `${mp}/${mpMax}`
     this.setText('hud-mp', mpText)
 
-    this.renderStatValue('hud-str', s.str, this.statClass('str'))
-    this.renderStatValue('hud-int', s.int, this.statClass('int'))
-    this.renderStatValue('hud-dex', s.dex, this.statClass('dex'))
+    // Tint the HP/MP figure "boosted" (lightblue) while the relevant max is
+    // magically inflated, mirroring player.js stat_boosters: HP under divinely
+    // vigorous or berserk, MP under divinely vigorous. (The bar itself is
+    // unchanged — this is only the numeric readout, as in the reference.)
+    const statuses = s.status ?? []
+    const hasStatus = (re: RegExp): boolean => statuses.some(st => st.text != null && re.test(st.text))
+    this.el.querySelector('#hud-hp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous|berserk/i))
+    this.el.querySelector('#hud-mp')?.classList.toggle('stat-boosted', hasStatus(/divinely vigorous/i))
+
+    this.renderStatValue('hud-str', s.str, s.str_max, 'str')
+    this.renderStatValue('hud-int', s.int, s.int_max, 'int')
+    this.renderStatValue('hud-dex', s.dex, s.dex_max, 'dex')
 
     this.renderDefenseValue('hud-ac', s.ac, s.ac_mod)
     this.renderDefenseValue('hud-ev', s.ev, s.ev_mod)
     this.renderDefenseValue('hud-sh', s.sh, s.sh_mod)
+
+    this.renderWarnings()
 
     const xl = s.xl ?? '?'
     const place = s.place ?? ''
@@ -122,9 +134,8 @@ export class StatsView {
     this.renderBar('hp', hp, hpMax, s.poison_survival)
     this.renderBar('mp', mp, mpMax, undefined)
 
-    // Noise bar
-    const noiseBar = this.el.querySelector<HTMLElement>('#hud-noise-bar')
-    if (noiseBar) noiseBar.innerHTML = this.buildNoiseBar(s.adjusted_noise ?? 0)
+    // Noise bar (graphical, mirrors update_bar_noise in player.js)
+    this.renderNoiseBar(s.adjusted_noise ?? 0, hasStatus(/silenced?/i))
 
     // Weapon row (own line, ellipsis if too long)
     const wqRow = this.el.querySelector<HTMLElement>('#hud-wq')
@@ -193,24 +204,41 @@ export class StatsView {
     if (el) el.style.width = `${basisPoints / 100}%`
   }
 
-  private buildNoiseBar(level: number): string {
-    const segs = Math.ceil((level * NOISE_WIDTH) / 1000)
-    const prev = this.prevNoiseSegs ?? segs
-    this.prevNoiseSegs = segs
-
-    const col = noiseColor(level)
-    let bar = ''
-    for (let i = 0; i < NOISE_WIDTH; i++) {
-      if (i < segs) {
-        bar += `<span style="color:${col}">=</span>`
-      } else if (i < prev) {
-        // decrease indicator: dim dash in noise color for one frame
-        bar += `<span style="color:${col}">-</span>`
-      } else {
-        bar += `<span class="noise-empty">-</span>`
-      }
+  // Mirrors update_bar_noise() in player.js:69-139. adjusted_noise is already
+  // rescaled server-side to 0–1000. The full segment is colored by level via a
+  // data-level attribute (see style.css); the decrease segment shows the
+  // receding tail in darkgray for one tick when noise drops. When silenced the
+  // bar blanks to black and the caption reads "Silenced".
+  private renderNoiseBar(level: number, silenced: boolean): void {
+    const max = 1000
+    if (level < 0) level = 0
+    let oldValue = Math.min(this.oldNoise ?? level, max)
+    let cat = noiseCat(level)
+    if (silenced) {
+      level = 0
+      oldValue = 0
+      cat = 'blank'
     }
-    return bar
+    this.oldNoise = level
+
+    const fullBar = Math.round((BAR_RES * level) / max)
+    let changeBar = Math.round((BAR_RES * Math.abs(oldValue - level)) / max)
+    if (fullBar + changeBar > BAR_RES) changeBar = BAR_RES - fullBar
+
+    const cell = this.el.querySelector<HTMLElement>('#hud-noise-cell')
+    if (cell) cell.setAttribute('data-level', cat)
+    this.setSegWidth('noise-full', fullBar)
+    // Reference shows the decrease tail whenever there was prior noise; we only
+    // show it on an actual drop, matching the HP/MP decrease semantics and
+    // avoiding a spurious tail when noise rises.
+    this.setSegWidth('noise-decrease', level < oldValue ? changeBar : 0)
+
+    // The "N" caption stays put; "Silenced" shows in a separate span to the
+    // right of the (now-black) bar, mirroring the reference's #stats_noise_status
+    // rather than hiding the caption. (game.html keeps <span class="stats_caption">
+    // static; player.js only sets #stats_noise_status.)
+    const status = this.el.querySelector<HTMLElement>('#hud-noise-status')
+    if (status) status.textContent = silenced ? 'Silenced' : ''
   }
 
   private buildWeapon(offhand: boolean): string {
@@ -242,20 +270,55 @@ export class StatsView {
     return `<span class="hg-caption">${letter})</span> <span${classAttr}>${escHtml(name)}</span>`
   }
 
-  private statClass(stat: 'str' | 'int' | 'dex'): string {
+  // Mirrors stat_class() in player.js: lost (status) → boosted (status) →
+  // drained (current < max) → normal. Drained is the new case here.
+  private statClass(stat: 'str' | 'int' | 'dex', val: number, max: number): string {
     const statuses = this.state.status ?? []
     const lostRe = new RegExp(`lost ${stat}`, 'i')
     if (statuses.some(st => st.text && lostRe.test(st.text))) return 'stat-zero'
     if (statuses.some(st => st.text && /vitalised/i.test(st.text))) return 'stat-boosted'
+    if (val < max) return 'stat-degenerated'
     return ''
   }
 
-  private renderStatValue(id: string, val: number | undefined, cls: string): void {
+  // Mirrors update_stat() in player.js: append " (max)" when the stat is drained
+  // below its natural maximum, and colour the value accordingly.
+  private renderStatValue(id: string, val: number | undefined, max: number | undefined, stat: 'str' | 'int' | 'dex'): void {
     const el = this.el.querySelector<HTMLElement>(`#${id}`)
     if (!el) return
-    el.textContent = String(val ?? 0)
-    el.classList.remove('stat-boosted', 'stat-zero')
+    const v = val ?? 0
+    const m = max ?? v
+    // Drained: tuck the "(max)" tight against the value via .stat-max's margin
+    // (a small fixed gap), rather than a full space, so the readout stays compact.
+    if (v < m) el.innerHTML = `${v}<span class="stat-max">(${m})</span>`
+    else el.textContent = String(v)
+    el.classList.remove('stat-boosted', 'stat-zero', 'stat-degenerated')
+    const cls = this.statClass(stat, v, m)
     if (cls) el.classList.add(cls)
+  }
+
+  // Contamination and Doom, mirroring update_contam/update_doom in player.js.
+  // Both are shown only when nonzero (reference hides them at 0 unless
+  // always_show_doom_contam is set) and coloured by severity. They occupy the
+  // right end of the stats row (hidden when empty via .hg-warn:empty), where
+  // they get the prominent slot since they're active danger meters; Noise moves
+  // down to share the XL row with Time.
+  private renderWarnings(): void {
+    const parts: string[] = []
+    const contam = this.state.contam ?? 0
+    if (contam > 0) {
+      const c = contam >= 200 ? 'fg4' : contam >= 100 ? 'fg14' : 'fg8'
+      parts.push(`<span class="hg-grp"><span class="hg-caption">Contam</span><span class="${c}">${contam}%</span></span>`)
+    }
+    const doom = this.state.doom ?? 0
+    if (doom > 0) {
+      const c = doom >= 75 ? 'fg5' : doom >= 50 ? 'fg12' : doom >= 25 ? 'fg14' : 'fg7'
+      parts.push(`<span class="hg-grp"><span class="hg-caption">Doom</span><span class="${c}">${doom}%</span></span>`)
+    }
+    // Joined with a space so the Contam↔Doom gap matches the inter-stat gap
+    // (e.g. AC↔EV) — .hg-warn applies the same word-spacing to that space.
+    const el = this.el.querySelector<HTMLElement>('#hud-warn')
+    if (el) el.innerHTML = parts.join(' ')
   }
 
   private renderDefenseValue(id: string, val: number | undefined, mod: number | undefined): void {
@@ -289,11 +352,12 @@ export class StatsView {
           <span class="hg-grp"><span class="hg-caption">AC</span><span id="hud-ac"></span> <span class="hg-caption">EV</span><span id="hud-ev"></span> <span class="hg-caption">SH</span><span id="hud-sh"></span></span>
           <span class="hg-grp"><span class="hg-caption">St</span><span id="hud-str"></span> <span class="hg-caption">In</span><span id="hud-int"></span> <span class="hg-caption">Dx</span><span id="hud-dex"></span></span>
         </div>
+        <span class="hg-warn" id="hud-warn"></span>
       </div>
       <div class="hg-xl-row">
         <span class="hg-xl-place hg-grp" id="hud-xl-place"></span>
         <span class="hg-noise-time">
-          <span class="hg-noise"><span class="hg-caption">N</span><span id="hud-noise-bar"></span></span>
+          <span class="hg-noise"><span class="hg-caption">N</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
           <span class="hg-time" id="hud-time"></span>
         </span>
       </div>
