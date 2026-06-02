@@ -11,7 +11,7 @@ export function buildLobbyView(
   conn: WsConnection,
   username: string,
   guest: boolean,
-  onGameStart: (spectating?: SpectateTarget) => void,
+  onGameStart: (spectating?: SpectateTarget, loader?: TileLoader) => void,
   onDisconnect: () => void,
   exit?: GameExit,
 ): HTMLElement {
@@ -21,10 +21,13 @@ export function buildLobbyView(
   // (mirrors the official client at static/scripts/client.js:1219).
   const idleSinceMs = new Map<string, number>()
   let complete = false
-  // Per-version tile loader for the game we're about to spectate. game_client
-  // lands here (before watching_started) while the lobby is still active; we
-  // resolve the loader now and hand it to the game view, which the server
-  // won't re-tell the version to.
+  // Per-version tile loader for the game we're about to enter. When game_client
+  // lands while the lobby is still the active handler (always before
+  // watching_started, and before game_started on servers like CPO), we resolve
+  // the loader here and hand it to the game view via onGameStart — the server
+  // won't re-tell it the version once it has mounted. Stays null when
+  // game_client only arrives after the transition (e.g. CDI), where the game
+  // view's own game_client handler resolves the loader instead.
   let activeLoader: TileLoader | null = null
 
   const view = document.createElement('div')
@@ -163,22 +166,26 @@ export function buildLobbyView(
         renderList()
         break
       case 'game_started':
-        onGameStart()
+        onGameStart(undefined, activeLoader ?? undefined)
         break
       case 'watching_started':
-        onGameStart({ username: msg.username, loader: activeLoader ?? undefined })
+        onGameStart({ username: msg.username }, activeLoader ?? undefined)
         break
       case 'game_client': {
         // Sent on `watch` *before* `watching_started`, so it lands here while
         // the lobby is still active. Resolve this game's per-version loader now
         // and pass it to the game view via watching_started — the server won't
         // resend the version once we've mounted.
-        const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
-        if (msg.version) activeLoader = getTileLoader(httpBase, msg.version)
+        if (msg.version) activeLoader = getTileLoader(conn.httpBase, msg.version)
         break
       }
+      case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game' || msg.layer === 'crt') onGameStart()
+        // `layer` is the real message (0.34 + trunk send bare `layer`);
+        // `set_layer` is a defensive alias the server never actually sends.
+        // game-view.ts handles both identically — match that here so a
+        // layer-driven transition still forwards the captured loader.
+        if (msg.layer === 'game' || msg.layer === 'crt') onGameStart(undefined, activeLoader ?? undefined)
         break
       case 'close':
         onDisconnect()
