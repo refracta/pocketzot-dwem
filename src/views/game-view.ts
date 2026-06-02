@@ -158,20 +158,19 @@ const MF_ARROWS_SELECT = 0x40000
 // 0.7 for now; tune in one place.
 const X_MODE_SCALE = 0.7
 
-// Identifies a spectated game when transitioning lobby → game. `loader` is the
-// per-version tile loader the lobby already obtained from its `game_client`
-// (the server doesn't resend it after we mount), so a spectated tiles-mode
-// session can preload immediately instead of waiting on a version it'll never
-// be told again.
+// Identifies a spectated game when transitioning lobby → game. Carries only the
+// spectated player's name; the per-version tile loader is passed separately (see
+// the `initialLoader` param of buildGameView) because it's orthogonal to whether
+// we're spectating — a played game can also arrive with a pre-resolved loader.
 export interface SpectateTarget {
   username: string
-  loader?: TileLoader
 }
 
 export function buildGameView(
   conn: WsConnection,
   onLobby: (exit?: GameExit) => void,
   spectating?: SpectateTarget,
+  initialLoader?: TileLoader,
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
@@ -183,14 +182,19 @@ export function buildGameView(
   // resumes in tiles next launch.
   let renderMode: 'ascii' | 'tiles' = 'ascii'
   // This game's per-version tile loader, or null until we know the version.
-  // For a played game the version arrives via game_client (below) after this
-  // view mounts; for a spectated game the lobby already consumed game_client
-  // and hands us the loader up front. Because each loader is pinned to one
-  // immutable gamedata version, there's no shared mutable state to clear and
-  // no way to read a previous game's atlas under this game's tileinfo — the
+  // The lobby consumes `game_client` (which carries the version) whenever it
+  // arrives before the lobby→game transition, and hands us the resolved loader
+  // as `initialLoader`: always for a spectated game, and for a played game on
+  // servers that send game_client before game_started (e.g. CPO). When it
+  // arrives only after the transition (e.g. CDI) initialLoader is undefined and
+  // the game_client handler below resolves the loader once we hold it. Either
+  // way the server never resends the version after we mount, so this is the one
+  // chance to learn it. Because each loader is pinned to one immutable gamedata
+  // version, there's no shared mutable state to clear and no way to read a
+  // previous game's atlas under this game's tileinfo — the
   // black-tile-after-version-switch class is gone by construction. Tile views
   // only paint once they're handed this loader.
-  let loader: TileLoader | null = spectating?.loader ?? null
+  let loader: TileLoader | null = initialLoader ?? null
   let mapView: MapView | TileMapView = new MapView(store)
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
@@ -203,9 +207,9 @@ export function buildGameView(
   monsterListView.setRenderMode(renderMode)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
-  // Spectated games arrive with the loader already known (see SpectateTarget);
-  // hand it to the panels now so the persisted-pref tile swap below paints
-  // sprites immediately. Played games wire this up in the game_client handler.
+  // When the loader is already known at mount (handed up from the lobby as
+  // initialLoader), wire it to the panels now so the persisted-pref tile swap
+  // below paints sprites immediately. Otherwise the game_client handler does it.
   if (loader) {
     monsterListView.setLoader(loader)
     monsterPanel.setLoader(loader)
@@ -641,7 +645,6 @@ export function buildGameView(
         // Server tells us the gamedata version on game start. Use it to
         // build URLs for tile atlases (gui.png, main.png, ...) served at
         // /gamedata/<version>/.
-        const httpBase = conn.wsUrl.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
         if (msg.version) {
           // Resolve this game's per-version loader. getTileLoader memoizes by
           // version, so a same-version resume reuses the warm cache while a
@@ -649,7 +652,7 @@ export function buildGameView(
           // to clear, no stale-atlas race. This is the moment a persisted
           // tile-mode view (built before game_client) or a pre-game_client
           // gesture toggle gets its loader and starts painting.
-          loader = getTileLoader(httpBase, msg.version)
+          loader = getTileLoader(conn.httpBase, msg.version)
           monsterListView.setLoader(loader)
           monsterPanel.setLoader(loader)
           if (renderMode === 'tiles') {
@@ -696,14 +699,22 @@ export function buildGameView(
         if (msg.time !== undefined) markLastMsg('turn')
         if (!hudRevealed) {
           hudRevealed = true
-          showHud()
-          // First fit, now that the HUD occupies its row (showHud above) and
-          // statsView/statusView have populated it this same message — so the
-          // container is at its settled height. Synchronous (forces one
-          // layout) so a `map` message later in this same WS batch renders
-          // straight into the final viewport rather than the pre-fit size.
-          // The ResizeObserver stays gated until exactly here; see its comment.
-          mapView.fitToContainer()
+          // Don't reveal the HUD while an overlay covers the screen: the
+          // newgame-choice character-creation screens send `player` messages
+          // carrying placeholder stats ("the Conjurer — Yak", 0/0 HP, …)
+          // before any character exists. uiOverlay being shown is the signal
+          // a full overlay is up; when it closes, hideOverlay()/exitXMode()
+          // call showHud() (hudRevealed is now true) and reveal it then.
+          if (uiOverlay.style.display === 'none') {
+            showHud()
+            // First fit, now that the HUD occupies its row (showHud above) and
+            // statsView/statusView have populated it this same message — so the
+            // container is at its settled height. Synchronous (forces one
+            // layout) so a `map` message later in this same WS batch renders
+            // straight into the final viewport rather than the pre-fit size.
+            // The ResizeObserver stays gated until exactly here; see its comment.
+            mapView.fitToContainer()
+          }
         }
         break
       }

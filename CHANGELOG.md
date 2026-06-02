@@ -11,8 +11,12 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-06-01
 
+- Switching the map from ASCII to tiles now works during your own game on
+  servers where it previously only worked while spectating.
 - Fixed the map shifting downward shortly after loading a game or starting to
   spectate.
+- The status bar no longer appears with placeholder values while creating a
+  character.
 
 ## 2026-05-30
 

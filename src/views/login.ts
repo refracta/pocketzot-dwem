@@ -1,7 +1,7 @@
 import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
 import { clearSession, listSessions, saveSession, type StoredSession } from '../auth/session'
-import { cncUserinfo } from '../dwem'
+import { cncUserinfo } from '../dwem/cnc-userinfo'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'

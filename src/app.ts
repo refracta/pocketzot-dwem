@@ -3,7 +3,8 @@ import type { GameExit } from './ws/types'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
-import { siteInformation } from './dwem'
+import { siteInformation } from './dwem/site-information'
+import type { TileLoader } from './game/tiles/tile-loader'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -39,19 +40,20 @@ function showLobby(username: string, guest: boolean, exit?: GameExit): void {
     conn!,
     username,
     guest,
-    (spectating) => showGame(spectating),
+    (spectating, loader) => showGame(spectating, loader),
     () => showLogin(),
     exit,
   ))
 }
 
-function showGame(spectating?: SpectateTarget): void {
+function showGame(spectating?: SpectateTarget, loader?: TileLoader): void {
   state = 'game'
   siteInformation.setGame(conn, currentUsername, currentIsGuest, spectating)
   setView(buildGameView(
     conn!,
     (exit) => showLobby(currentUsername, currentIsGuest, exit),
     spectating,
+    loader,
   ))
 }
 

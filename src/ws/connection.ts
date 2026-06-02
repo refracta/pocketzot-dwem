@@ -24,6 +24,13 @@ export class WsConnection {
     return this.url
   }
 
+  // HTTP base for version-pinned gamedata assets (tile atlases served at
+  // /gamedata/<version>/). Derived from the socket URL: swap the ws scheme
+  // for http and drop the trailing /socket.
+  get httpBase(): string {
+    return this.url.replace(/^ws/, 'http').replace(/\/socket\/?$/, '')
+  }
+
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Request no-compression to keep message handling simple.
