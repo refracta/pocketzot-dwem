@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-03
+
+- A stray "–" no longer appears before entries in the "Items not yet
+  recognised" menu.
+
 ## 2026-06-02
 
 - The stable and trunk buttons now look distinct.
