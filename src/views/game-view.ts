@@ -1936,19 +1936,12 @@ export function buildGameView(
   }
 
   function syncMenuShiftLabels(): void {
-    // Shop item hotkeys are rendered into .overlay-list rows; skill-letter
-    // buttons live in the menu-controls bar. Update both so what the user
-    // sees matches what tapping will send.
+    // Skill-letter buttons in the menu-controls bar echo the shift state so
+    // what the user sees matches what tapping will send. (Shop rows used to
+    // toggle an inline hotkey chip here too, but rows now render their text
+    // verbatim — the hotkey lives inside item.text — so the ⇧ control's own
+    // active/locked styling is the shift indicator there.)
     const shiftOn = menuShift.isOn
-    if (activeMenu?.tag === 'shop') {
-      const listEl = uiOverlay.querySelector('.overlay-list')
-      listEl?.querySelectorAll<HTMLElement>('.overlay-item .overlay-key').forEach(el => {
-        const t = el.textContent ?? ''
-        if (t.length === 1 && /[a-zA-Z]/.test(t)) {
-          el.textContent = shiftOn ? t.toUpperCase() : t.toLowerCase()
-        }
-      })
-    }
     menuControls.querySelectorAll<HTMLElement>('.skill-letter-btn').forEach(el => {
       const t = el.textContent ?? ''
       if (t.length === 1 && /[a-zA-Z]/.test(t)) {
@@ -2231,41 +2224,31 @@ export function buildGameView(
         if (item.colour != null) hdr.style.color = uiColor(item.colour)
         hdr.innerHTML = dcssToHtml(String(item.text ?? ''))
         listEl.appendChild(hdr)
-      } else {                        // level 2: selectable item
+      } else {                        // level 2: item row
         const keycode = item.hotkeys?.[0]
-        const keyLabel = keycode != null ? keypressLabel(keycode) : ''
-        let rawText = String(item.text ?? '').trimStart()
-        // Two prefix shapes to handle:
-        //
-        //  1) Gods menu (god-menu.cc): " <yellow>A</yellow> - Ashenzari"
-        //     — the hotkey is wrapped in a matched colour pair; separator
-        //     and name are outside the pair. Strip the whole pair so the
-        //     deity name renders in the default menu colour (matching the
-        //     upstream client). The wrap colour still drives the hotkey
-        //     span via keyColor.
-        //
-        //  2) Shop rows: "<lightgreen>a - </lightgreen><lightgrey>72 gold
-        //     ...</lightgrey>" — the opening tag spans the whole prefix
-        //     and is meant to colour the row (affordability). Preserve
-        //     that opening tag in the label so the colour carries onto
-        //     the rest of the row.
-        let separator = '-'
-        let keyTagName: string | undefined
-        const wrappedHotkey = rawText.match(/^<([a-zA-Z]+)>.<\/\1>\s([-+# $])\s/)
-        if (wrappedHotkey) {
-          separator = wrappedHotkey[2]
-          keyTagName = wrappedHotkey[1].toLowerCase()
-          rawText = rawText.replace(/^<[a-zA-Z]+>.<\/[a-zA-Z]+>\s[-+# $]\s/, '')
-        } else {
-          const stateMatch = rawText.match(/^(?:<[^>]+>)*.\s([-+# $])\s/)
-          if (stateMatch) separator = stateMatch[1]
-          keyTagName = rawText.match(/^<([a-zA-Z]+)>/)?.[1]?.toLowerCase()
-          rawText = rawText.replace(/^((?:<[^>]+>)*).\s[-+# $]\s/, '$1')
-        }
-        const labelHtml = dcssToHtml(rawText)
+        // Render the row text verbatim (markup → HTML), mirroring the
+        // reference client (menu.js set_item_contents): the hotkey letter and
+        // the " - "/" + " selection marker are part of item.text — DCSS bakes
+        // them in for letter-selectable rows — so we don't destructure them
+        // into separate key/separator chips. The base colour comes from
+        // item.colour (like the reference's fg<col> class); inline markup in
+        // the text overrides per span. The label wraps at our display width.
+        // The hotkey still drives clicks below.
         const itemColor = item.colour != null ? uiColor(item.colour) : undefined
-        const keyColor = (keyTagName && DCSS_COLOR_MAP[keyTagName]) || itemColor
-        const el = makeItemButton(keyLabel, labelHtml, () => {
+        // Detect the DCSS "<key> - " prefix without stripping it (rendering
+        // stays verbatim). Two shapes: a plain hotkey ("a - ...", shop
+        // "<col>a - </col>...") and the gods-style colour-wrapped hotkey
+        // ("<yellow>A</yellow> - ..."). Two things key off the result:
+        //   • the " + " marker drives the selected-row highlight (multiselect
+        //     menus — shop purchase, known-items autopickup);
+        //   • a prefix means wrapped continuation lines should hang-indent 4ch
+        //     (the fixed "<key> - " width) so they sit under the item title.
+        // Prefixless rows (the unrecognised-items list — bare " staff of air"
+        // / " scroll of fog (uncommon)") start at column 0 and must NOT indent.
+        const prefix = String(item.text ?? '')
+          .match(/^\s*(?:<[a-zA-Z]+>.<\/[a-zA-Z]+>|(?:<[^>]+>)*.)\s([-+# $])\s/)
+        const selected = prefix?.[1] === '+'
+        const el = makeItemButton(dcssToHtml(String(item.text ?? '')), () => {
           // Shop shift-tap: shopping list uses the uppercase letter as a direct
           // keybind (shopping.cc), separate from the arrows-select activate-on-
           // hover path — so route it before the MF_ARROWS_SELECT branch below,
@@ -2299,12 +2282,13 @@ export function buildGameView(
           if (keycode == null) return
           conn.send({ msg: 'key', keycode })
           menuShift.consume()
-        }, itemColor, separator, keyColor)
+        }, itemColor)
         if (item.tiles && item.tiles.length > 0) {
           el.insertBefore(renderTiles(loader, item.tiles), el.firstChild)
         }
         el.dataset.menuIdx = String(i)
-        if (separator === '+') el.classList.add('item-selected')
+        if (selected) el.classList.add('item-selected')
+        if (prefix) el.classList.add('item-hang')
         if (i === hoveredMenuIdx) el.classList.add('item-hovered')
         listEl.appendChild(el)
       }
@@ -2538,15 +2522,11 @@ export function buildGameView(
     })
   }
 
-  function makeItemButton(key: string, labelHtml: string, onClick: () => void, color?: string, separator = '–', keyColor?: string): HTMLButtonElement {
+  function makeItemButton(labelHtml: string, onClick: () => void, color?: string): HTMLButtonElement {
     const el = document.createElement('button')
     el.className = 'overlay-item'
     const labelStyle = color ? ` style="color:${color}"` : ''
-    const keyStyle = keyColor ? ` style="color:${keyColor}"` : ''
-    const sepHtml = key
-      ? ` <span class="overlay-sep" data-sep="${escHtml(separator)}">${escHtml(separator)}</span> `
-      : ''
-    el.innerHTML = `<span class="overlay-key"${keyStyle}>${escHtml(key)}</span>${sepHtml}<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
+    el.innerHTML = `<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
     el.addEventListener('click', () => {
       onClick()
       view.focus({ preventScroll: true })
@@ -2812,16 +2792,6 @@ export function buildGameView(
   }
 
   return view
-}
-
-// Convert a numeric keycode to a display label (printable char or symbol)
-function keypressLabel(code: number): string {
-  if (code >= 32 && code < 127) return String.fromCharCode(code)
-  if (code === 8)  return '⌫'
-  if (code === 27) return '⎋'
-  if (code === 13) return '⏎'
-  if (code === 9)  return '⇥'
-  return ''
 }
 
 // Render a single spellset book as DOM: an optional header line followed

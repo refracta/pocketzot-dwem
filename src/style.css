@@ -1560,6 +1560,13 @@ html, body {
 
 .overlay-item .tile-stack {
   margin-right: -0.2rem;
+  /* Centre the 32px tile on the FIRST text line (not the whole row): the row
+     is align-items:flex-start, so pull the tile up by half its overhang vs one
+     line-height. Matches the reference client's vertical-align:middle tile on
+     its (non-wrapping) rows, but stays correct when our rows wrap to 2+ lines —
+     the icon sits next to the title/first line instead of floating at the
+     vertical middle of the block. */
+  margin-top: calc((1lh - 32px) / 2);
 }
 .overlay-close:active { color: var(--text); }
 
@@ -1575,7 +1582,7 @@ html, body {
 
 .overlay-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.6rem;
   background: transparent;
   border: none;
@@ -1597,18 +1604,16 @@ html, body {
   background: var(--surface);
 }
 
-.overlay-key {
-  color: var(--accent);
-  min-width: 1.4rem;
-  text-align: center;
-  flex-shrink: 0;
-}
+/* Rows render item.text verbatim (hotkey + selection marker are inline in
+   the text), so the label span carries the whole row and wraps at width. */
+.overlay-label { color: var(--text); min-width: 0; }
 
-.overlay-label { color: var(--text); }
-
-.overlay-sep { color: var(--text-dim); flex-shrink: 0; }
-.overlay-sep[data-sep="$"] { color: #34e2e2; font-weight: bold; }
-.overlay-sep[data-sep="+"] { color: #fce94f; font-weight: bold; }
+/* Rows carrying a fixed-width "<key> - " prefix (4 monospace cells) get a 4ch
+   hanging indent so wrapped continuation lines sit under the item title:
+   pull the first line back 4ch, pad the rest in by 4ch. Gated by .item-hang
+   (set in fillMenuItems) — prefixless rows like the unrecognised-items list
+   start at column 0 and must wrap flush, not indent. */
+.overlay-item.item-hang .overlay-label { padding-left: 4ch; text-indent: -4ch; }
 
 .overlay-header {
   font-size: 0.8rem;
