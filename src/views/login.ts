@@ -53,7 +53,7 @@ export function buildLoginView(
   const addAccountSection = hasSessions
     ? `
       <details id="add-account" class="login-section login-add-section">
-        <summary class="login-add-toggle">+ Add another account</summary>
+        <summary class="login-add-toggle">Add another account</summary>
         <form id="login-form" autocomplete="on" novalidate class="login-add-form">
           ${formInnerHtml}
         </form>

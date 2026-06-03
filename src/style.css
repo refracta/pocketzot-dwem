@@ -142,6 +142,14 @@ html, body {
   list-style: none;
 }
 .login-add-section > summary::-webkit-details-marker { display: none; }
+.login-add-section > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1ch;
+  margin-right: 0.5ch;
+  text-align: center;
+}
+.login-add-section[open] > summary::before { content: "−"; }
 .login-add-section[open] > summary { margin-bottom: 0.6rem; }
 
 .login-spectate-select {
