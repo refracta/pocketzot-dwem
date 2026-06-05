@@ -44,36 +44,63 @@ export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// Convert DCSS colour markup (`<red>…</red>`, `<w>K</w>`) to safe HTML.
+// Mirrors the server client's formatted_string_to_html (webserver
+// game_data/static/util.js): only one span is open at a time, unterminated
+// tags are auto-closed, and a doubled `<<` is the engine's escape for a
+// literal `<` (the char is doubled because a single `<` opens a markup tag).
+// One emitter: item-use.cc `_item_swap_prompt` sends `<w><<</w> or …` for the
+// `<` swap slot, so without escape handling the leading `<` is dropped.
 export function dcssToHtml(text: string): string {
-  const parts = text.split(/(<[^>]+>)/)
+  // Match a markup tag (optionally `<<`-escaped) or a bare `>` / `&`. Every
+  // `<`, `>`, `&` in the input is consumed here, so the text between matches
+  // is already HTML-safe and can be appended verbatim.
+  const re = /<?<(\/?(?:bg:)?[a-z]*)>?|>|&/gi
   const colorStack: string[] = []
-  let spanOpen = false
   let out = ''
-  for (const part of parts) {
-    if (part.startsWith('<') && part.endsWith('>')) {
-      const tag = part.slice(1, -1).toLowerCase()
-      if (tag.startsWith('/')) {
-        if (colorStack.length > 0) {
-          if (spanOpen) { out += '</span>'; spanOpen = false }
-          colorStack.pop()
-          if (colorStack.length > 0) {
-            out += `<span style="color:${colorStack[colorStack.length - 1]}">`
-            spanOpen = true
-          }
-        }
-      } else {
-        const hex = DCSS_COLOR_MAP[tag]
-        if (hex) {
-          if (spanOpen) { out += '</span>'; spanOpen = false }
-          colorStack.push(hex)
-          out += `<span style="color:${hex}">`
-          spanOpen = true
-        }
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    out += text.slice(last, m.index)
+    last = re.lastIndex
+    const whole = m[0]
+    if (whole === '>') { out += '&gt;'; continue }
+    if (whole === '&') { out += '&amp;'; continue }
+    if (whole.startsWith('<<')) {
+      // Escaped literal `<`: drop one `<`, keep the remainder as text.
+      out += escHtml(whole.slice(1))
+      continue
+    }
+    if (!whole.endsWith('>')) {
+      // A stray `<` that isn't a complete tag — render it literally.
+      out += escHtml(whole)
+      continue
+    }
+    let name = m[1].toLowerCase()
+    const closing = name.startsWith('/')
+    if (closing) name = name.slice(1)
+    if (name.startsWith('bg:') || !(name in DCSS_COLOR_MAP)) {
+      // Background or unknown colour. Named unknown tags (e.g. `<bogus>`) are
+      // dropped, but an empty `<>` was never a tag to the engine — render it
+      // literally, matching the official client (util.js escapes it too).
+      if (name === '' && !closing) out += escHtml(whole)
+      continue
+    }
+    if (closing) {
+      if (colorStack.length > 0) {
+        colorStack.pop()
+        out += '</span>'
+        if (colorStack.length > 0)
+          out += `<span style="color:${colorStack[colorStack.length - 1]}">`
       }
     } else {
-      out += escHtml(part)
+      if (colorStack.length > 0) out += '</span>'
+      const hex = DCSS_COLOR_MAP[name]
+      colorStack.push(hex)
+      out += `<span style="color:${hex}">`
     }
   }
-  if (spanOpen) out += '</span>'
+  out += text.slice(last)
+  if (colorStack.length > 0) out += '</span>'
   return out
 }
