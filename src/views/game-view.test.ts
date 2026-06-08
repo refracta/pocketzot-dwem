@@ -300,3 +300,137 @@ describe('lobby transitions', () => {
     expect(b.onLobby).toHaveBeenCalledWith()
   })
 })
+
+// Silent spell harvest: fire `I`, capture the default columns, toggle with `!`
+// to capture power/damage/range/noise, then Escape — all without rendering the
+// menu. Driven via the dev hooks (window.__dcssHarvestSpells / __dcssSpellCache,
+// present because vitest runs with import.meta.env.DEV — cf. __dcssStore above).
+// These lock in the three regressions from review:
+//   1. the preselected (last-cast) row's " a + " preface must be stripped, or
+//      its title and every column shift (parseSpellItem);
+//   2. same for the toggled extra columns' fixed-width slices (mergeSpellExtra);
+//   3. the close-swallow latch must not leak past the harvest and eat a later
+//      real menu's close_menu, and a teardown mid-harvest must reset cleanly.
+describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
+  type CachedSpell = {
+    letter: string; title: string; schools?: string; fail?: string; level?: number
+    power?: string; damage?: string; range_string?: string; noise?: string
+  }
+  const hooks = () => window as unknown as { __dcssHarvestSpells: () => void; __dcssSpellCache: CachedSpell[] }
+  const cache = () => hooks().__dcssSpellCache
+  const byLetter = (l: string) => cache().find(s => s.letter === l)!
+
+  const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + ' '.repeat(n - s.length))
+  // Default-column row. Columns are separated by 2+ spaces (the parser splits on
+  // padding runs). `sign` is '-' for a normal row but '+' for the preselected
+  // you.last_cast_spell row (SpellMenuEntry::_get_text_preface in the engine).
+  const baseRow = (sign: '-' | '+', letter: string, hot: number, name: string, schools: string, fail: string, level: number) =>
+    ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
+       text: ` ${letter} ${sign} <lightgrey>${pad(name, 32)}${pad(schools, 26)}${fail}       ${level}      </lightgrey>` })
+  // Toggled extra row — fixed-width chop_string columns (no 2-space guarantee):
+  // name(32) power(10) damage(10) range(8) noise(14), after the preface.
+  const extraRow = (sign: '-' | '+', letter: string, hot: number, name: string, power: string, damage: string, range: string, noise: string) =>
+    ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
+       text: ` ${letter} ${sign} <lightgrey>${pad(name, 32)}${pad(power, 10)}${pad(damage, 10)}${pad(range, 8)}${pad(noise, 14)}</lightgrey>` })
+
+  // 'a' Freeze is the preselected '+' row — the case that regressed; 'c'
+  // Ozocubu's Armour is a normal '-' row (a buff: N/A damage/range). The
+  // preselected row carries a long, space-containing noise ("Almost silent",
+  // 13 chars): a left-in ' a + ' preface shifts the fixed-width slices by 5, so
+  // a near-full field gets truncated/garbled — which a short value would hide
+  // (the trailing column padding + .trim() absorb a small shift). That makes
+  // the extra-column slice genuinely sensitive to the preface bug.
+  const BASE = [
+    baseRow('+', 'a', 97, 'Freeze', 'Ice', '1%', 1),
+    baseRow('-', 'c', 99, "Ozocubu's Armour", 'Ice', '4%', 3),
+  ]
+  const EXTRA = [
+    extraRow('+', 'a', 97, 'Freeze', '88%', '1d9', '1', 'Almost silent'),
+    extraRow('-', 'c', 99, "Ozocubu's Armour", '22%', 'N/A', 'N/A', 'Quiet'),
+  ]
+  const startHarvest = () => hooks().__dcssHarvestSpells()
+  const feedBase = (h: Harness) => h.dispatch({ msg: 'menu', tag: 'spell', items: BASE })
+  const feedExtra = (h: Harness) => h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: EXTRA })
+  const fullHarvest = (h: Harness) => { startHarvest(); feedBase(h); feedExtra(h) }
+  const sentInputI = (h: Harness) => sent(h).filter(m => m.msg === 'input' && (m as { text?: string }).text === 'I')
+
+  it('drives exactly the silent I → ! → Esc sequence and never shows an overlay', () => {
+    const h = setup()
+    fullHarvest(h)
+    expect(sent(h)).toEqual([
+      { msg: 'input', text: 'I' },
+      { msg: 'input', text: '!' },
+      { msg: 'key', keycode: 27 },
+    ])
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('strips the "+" preface on the preselected row so title and columns are not shifted', () => {
+    const h = setup()
+    startHarvest()
+    feedBase(h)
+    // Regression: ' a + ' left in place → title "a + Freeze" + shifted columns.
+    const a = byLetter('a')
+    expect(a.title).toBe('Freeze')
+    expect(a.title).not.toContain('+')
+    expect(a).toMatchObject({ schools: 'Ice', fail: '1%', level: 1 })
+    // The normal '-' row parses fine (control).
+    expect(byLetter('c')).toMatchObject({ title: "Ozocubu's Armour", schools: 'Ice', fail: '4%', level: 3 })
+    feedExtra(h) // finish the harvest so the fallback timer is cleared
+  })
+
+  it('merges the toggled extra columns by fixed-width slice for the "+" preselected row too', () => {
+    const h = setup()
+    fullHarvest(h)
+    // Regression: unstripped ' a + ' shifts every slice by 5; the 13-char noise
+    // is truncated ("Almost si…") unless the preface is stripped first.
+    expect(byLetter('a')).toMatchObject({ power: '88%', damage: '1d9', range_string: '1', noise: 'Almost silent' })
+    expect(byLetter('c')).toMatchObject({ power: '22%', damage: 'N/A', range_string: 'N/A', noise: 'Quiet' })
+  })
+
+  it('keeps a space-containing noise value intact (fixed-width slice, not a whitespace split)', () => {
+    const h = setup()
+    fullHarvest(h)
+    expect(byLetter('a').noise).toBe('Almost silent')
+  })
+
+  it('does NOT leak the close-swallow latch: a real menu opened after a harvest closes normally', () => {
+    const h = setup()
+    fullHarvest(h) // Escape sent, pendingHarvestClose latched
+    // The finding's abnormal teardown: the harvest's own close_menu never comes.
+    // A real menu then opens and is closed by the user.
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inv' }, items: [] })
+    expect(isHidden(overlay(h))).toBe(false)
+    h.dispatch({ msg: 'close_menu' })
+    // Regression: a leaked latch swallows this close_menu, stranding the overlay.
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('swallows only the harvest Escape close_menu, leaving a later real menu intact', () => {
+    const h = setup()
+    fullHarvest(h)
+    h.dispatch({ msg: 'close_menu' }) // the harvest's own close — swallowed
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inv' }, items: [] })
+    expect(isHidden(overlay(h))).toBe(false)
+    h.dispatch({ msg: 'close_menu' })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  // Each full-state teardown must reset the harvest (clear phase + latch) so an
+  // interrupted harvest can't strand input suppression or the close latch. We
+  // observe the phase reset behaviorally: a fresh harvest only fires a new `I`
+  // if the prior phase was cleared (harvestSpells() bails while non-idle).
+  for (const { name, reset } of [
+    { name: 'close_all_menus', reset: { msg: 'close_all_menus' } },
+    { name: 'layer:game', reset: { msg: 'layer', layer: 'game' } },
+    { name: 'go_lobby', reset: { msg: 'go_lobby' } },
+  ]) {
+    it(`${name} aborts an in-flight harvest so a new harvest can start`, () => {
+      const h = setup()
+      startHarvest()        // I #1; phase 'base'
+      h.dispatch(reset)     // resetHarvest(): phase → idle (+ clears latch/timer)
+      fullHarvest(h)        // I #2 only fires if phase was reset
+      expect(sentInputI(h)).toHaveLength(2)
+    })
+  }
+})

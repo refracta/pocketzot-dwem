@@ -56,10 +56,19 @@ interface SpellEntry {
   letter: string
   tile: number
   colour?: number
+  // `effect` / `range_string` are the server's spellset wire fields, present
+  // only on describe-monster/item spell lists (the spell's damage effect and
+  // range). The player's own memorised-spell list has neither — its harvest
+  // parser fills `fail`/`level` from the default columns and
+  // `power`/`damage`/`range_string`/`noise` from the toggled "extra" columns.
   effect?: string
   range_string?: string
+  fail?: string
   schools?: string
   level?: number
+  power?: string
+  damage?: string
+  noise?: string
 }
 
 interface SpellBook {
@@ -246,6 +255,33 @@ export function buildGameView(
   // default. After the first user-driven move the flag stays on for the
   // lifetime of the menu, and server echoes track normally.
   let menuHoverFromUser = false
+
+  // --- Spellcaster spell harvest (step 1) ---------------------------------
+  // The player's memorised spells are never pushed proactively over WebTiles;
+  // they surface only when the `list_spells` menu opens (tag:"spell"). We
+  // harvest them silently: fire the `I` command (CMD_DISPLAY_SPELLS →
+  // inspect_spells → list_spells(viewing=true) — view-only, costs no turn and
+  // can't cast), capture the resulting menu items, Escape it closed, and never
+  // render it. The cache will feed a tap-to-cast spell panel (later steps).
+  //
+  // The spell menu is a ToggleableMenu with two column sets: the default
+  // (schools / failure% / level) arrives in the `menu` message, but the
+  // alternate (power / damage / range / noise) is only the items' `alt_text`
+  // and is NOT transmitted until a toggle. So we harvest in two phases:
+  //   base  → send `I`, capture the `menu` columns, then send `!`
+  //           (CMD_MENU_CYCLE_MODE — swaps text↔alt_text and re-emits all rows
+  //           as `update_menu_items`)
+  //   extra → capture that `update_menu_items`, merge the extra columns, Escape
+  // We don't display the extra columns yet; this just makes them available.
+  let spellCache: SpellEntry[] = []
+  let harvestPhase: 'idle' | 'base' | 'extra' = 'idle'
+  let harvestTimer = 0
+  let harvestStartTs = 0  // dev: stamp at fire, for elapsed in the debug trace
+  // Set when we send the harvest-closing Escape so the matching server
+  // close_menu — for a menu we deliberately never pushed onto menuStack — is
+  // swallowed instead of popping/clearing our real overlay state.
+  let pendingHarvestClose = false
+
   let activePromptEl: HTMLElement | null = null
   let inXMode = false
   let exitedXModeForInput = false
@@ -297,6 +333,7 @@ export function buildGameView(
   const msgLog = document.createElement('div')
   msgLog.id = 'game-messages'
   msgLog.addEventListener('click', (e) => {
+    if (isHarvesting()) return
     if (uiOverlay.style.display === 'none' && !(e.target as HTMLElement).closest('button, input, .game-text-input-row')) {
       conn.send({ msg: 'key', keycode: 16 })
       view.focus({ preventScroll: true })
@@ -376,7 +413,7 @@ export function buildGameView(
   // Refuse while a server-side prompt is up so we don't drop the user out
   // of an in-progress targeting/menu/etc.
   monsterListView.element.addEventListener('click', (e) => {
-    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu) return
+    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu || isHarvesting()) return
     if (monsterListView.element.childElementCount === 0) return
     e.stopPropagation()
     openMonsterPanel()
@@ -406,6 +443,7 @@ export function buildGameView(
   moreBtn.textContent = '— more —'
   moreBtn.style.display = 'none'
   moreBtn.addEventListener('click', () => {
+    if (isHarvesting()) return
     conn.send({ msg: 'key', keycode: 32 })
     view.focus({ preventScroll: true })
   })
@@ -436,6 +474,7 @@ export function buildGameView(
   }
 
   const touchControls: TouchControls = buildTouchControls((msg) => {
+    if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
     if (msg.msg === 'key' && menuNavActive()) {
       if (msg.keycode === CK_DOWN) { cycleMenuHover(false); return }
       if (msg.keycode === CK_UP) { cycleMenuHover(true); return }
@@ -562,6 +601,13 @@ export function buildGameView(
   if (import.meta.env.DEV) {
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
       (on) => setRenderMode(on === undefined ? (renderMode === 'tiles' ? 'ascii' : 'tiles') : (on ? 'tiles' : 'ascii'))
+    // Spell harvest (step 1): __dcssHarvestSpells() fires a silent `I` and
+    // fills __dcssSpellCache with the parsed memorised spells; the harvest
+    // traces its phases to the console and prints a console.table on
+    // completion. __dcssSpellTable() reprints that table on demand.
+    ;(window as unknown as { __dcssHarvestSpells: () => void }).__dcssHarvestSpells = harvestSpells
+    ;(window as unknown as { __dcssSpellTable: () => void }).__dcssSpellTable = printSpellTable
+    exposeSpellCache()
   }
 
   // Apply the persisted render-mode preference now that the map element,
@@ -574,6 +620,7 @@ export function buildGameView(
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
+    if (isHarvesting()) { e.preventDefault(); return }  // suppress during silent harvest
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -603,7 +650,7 @@ export function buildGameView(
       // actually sends.
       case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; hideOverlay() }
+        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; resetHarvest(); hideOverlay() }
         break
 
       // Raw-HTML modal pushed by the server (save-transfer prompt on trunk
@@ -846,6 +893,23 @@ export function buildGameView(
 
       case 'menu': {
         const m = msg as unknown as MenuMsg
+        // Silent spell harvest, base phase: capture the default columns, then
+        // toggle for the extra ones (don't escape yet). See harvestSpells().
+        if (harvestPhase === 'base' && m.tag === 'spell') {
+          spellCache = (m.items ?? [])
+            .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
+            .map(parseSpellItem)
+          exposeSpellCache()
+          dbgSpell(`base columns: ${spellCache.length} spell(s); toggling for extra…`)
+          harvestPhase = 'extra'
+          conn.send({ msg: 'input', text: '!' })  // CMD_MENU_CYCLE_MODE
+          armHarvestTimeout()
+          break  // swallow: never render the menu
+        }
+        // A real menu is opening, so any pending harvest-close expectation is
+        // stale (its close_menu already came or never will). Drop the latch —
+        // otherwise THIS menu's eventual close_menu would be wrongly swallowed.
+        pendingHarvestClose = false
         if (m.type === 'crt') showCrt(m.tag)
         else {
           if (m.replace) menuStack.pop()
@@ -906,6 +970,19 @@ export function buildGameView(
         // unhighlighted entries when the server sent a single-item update to
         // mark the current selection.
         const m = msg as unknown as { chunk_start?: number; items?: MenuItem[] }
+        // Spell harvest, extra phase: this is the `!` toggle re-send carrying
+        // the power/damage/range/noise columns. Merge them, then Escape.
+        if (harvestPhase === 'extra' && m.items) {
+          clearTimeout(harvestTimer)
+          harvestPhase = 'idle'
+          mergeSpellExtra(m.items)
+          exposeSpellCache()
+          dbgSpell(`complete in ${Date.now() - harvestStartTs}ms`)
+          printSpellTable()
+          pendingHarvestClose = true
+          conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
+          break
+        }
         if (activeMenu && m.items) {
           const start = m.chunk_start ?? 0
           const items = activeMenu.items ?? []
@@ -1021,6 +1098,9 @@ export function buildGameView(
         break
 
       case 'close_menu': {
+        // Swallow the close for a spell menu we harvested but never pushed,
+        // so it can't pop/clear a real overlay underneath.
+        if (pendingHarvestClose) { pendingHarvestClose = false; break }
         menuStack.pop()
         const prev = menuStack[menuStack.length - 1] ?? null
         activeMenu = prev
@@ -1043,11 +1123,13 @@ export function buildGameView(
         menuShift.reset()
         monsterPanelOpen = false
         titlePromptInput = null
+        resetHarvest()
         hideOverlay()
         break
 
       case 'go_lobby':
       case 'close':
+        resetHarvest()
         onLobby()
         break
 
@@ -2111,6 +2193,148 @@ export function buildGameView(
     if (e.key === 'Home') { e.preventDefault(); jumpMenu(false); return true }
     if (e.key === 'End') { e.preventDefault(); jumpMenu(true); return true }
     return false
+  }
+
+  // Strip the menu hotkey preface from a spell row, leaving the column text at
+  // offset 0. It's " a - <text>" for a normal row, but " a + <text>" for the
+  // preselected (you.last_cast_spell) row — SpellMenuEntry::_get_text_preface
+  // (spl-cast.cc) uses '+' there. Match either sign: miss it and that row's
+  // title (and every fixed-width column below) shifts. Anyone who has cast a
+  // spell this game hits this, so it's the common case, not an edge.
+  function stripSpellPreface(rawText: string | undefined): string {
+    return stripDcss(rawText ?? '').replace(/^\s*\S+\s*[-+]\s*/, '')
+  }
+
+  // Parse one row of the list_spells menu into a SpellEntry. Letter and icon
+  // come straight off the wire (hotkeys[0], tiles[0]); only the name/columns
+  // need teasing out of the text. After the preface the row is
+  // "<name padded to 32><schools>…<failure> <level>" wrapped in a utility-
+  // highlight colour tag (see _spell_base_description in the 0.34 source).
+  // Split on the padding runs into [name, schools, failure, level].
+  function parseSpellItem(it: MenuItem): SpellEntry {
+    const letter = String.fromCharCode(it.hotkeys![0])
+    const plain = stripSpellPreface(it.text)
+    const cols = plain.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean)
+    const level = Number(cols[3])
+    return {
+      letter,
+      tile: it.tiles![0].t,
+      colour: it.colour,
+      title: cols[0] ?? plain.trim(),
+      schools: cols[1],
+      fail: cols[2],
+      level: Number.isFinite(level) ? level : undefined,
+    }
+  }
+
+  // Merge the toggled "extra" columns from the `!` re-send into spellCache.
+  // Unlike the default row, _spell_extra_description is all fixed-width
+  // chop_string fields, so slice by position (a self-target's empty range
+  // would shift a whitespace split): after the preface the layout is
+  // name(32) power(10) damage(10) range(8) noise(14). Match rows by letter,
+  // not index, to stay robust against any non-spell entries.
+  function mergeSpellExtra(items: MenuItem[]): void {
+    const byLetter = new Map(spellCache.map((s) => [s.letter, s]))
+    for (const it of items) {
+      if (!it.hotkeys?.length) continue
+      const entry = byLetter.get(String.fromCharCode(it.hotkeys[0]))
+      if (!entry) continue
+      const s = stripSpellPreface(it.text)
+      entry.power = s.slice(32, 42).trim() || undefined
+      entry.damage = s.slice(42, 52).trim() || undefined
+      entry.range_string = s.slice(52, 60).trim() || undefined
+      entry.noise = s.slice(60, 74).trim() || undefined
+    }
+  }
+
+  // Keep the dev inspection hook pointing at the current cache array.
+  function exposeSpellCache(): void {
+    if (import.meta.env.DEV)
+      (window as unknown as { __dcssSpellCache: SpellEntry[] }).__dcssSpellCache = spellCache
+  }
+
+  // Dev-only harvest trace. Prefixed + styled so it's easy to filter in the
+  // console. No-op in production builds (tree-shaken via the env guard).
+  function dbgSpell(...args: unknown[]): void {
+    if (import.meta.env.DEV) console.log('%c[spell-harvest]', 'color:#5ec8ff;font-weight:bold', ...args)
+  }
+
+  // Dev-only: render the harvested spells as a console.table so the columns
+  // (letter/name/schools/level/fail and the toggled power/damage/range/noise)
+  // can be eyeballed against the in-game `I` screen. Also exposed as
+  // window.__dcssSpellTable() to reprint on demand.
+  function printSpellTable(): void {
+    if (!import.meta.env.DEV) return
+    if (!spellCache.length) { dbgSpell('(no spells memorised)'); return }
+    console.table(spellCache.map((s) => ({
+      key: s.letter,
+      name: s.title,
+      schools: s.schools,
+      lvl: s.level,
+      fail: s.fail,
+      power: s.power,
+      damage: s.damage,
+      range: s.range_string,
+      noise: s.noise,
+      tile: s.tile,
+    })))
+  }
+
+  // True while a silent harvest owns the input channel. During this brief
+  // window (a couple of round-trips) the server is sitting in the spell menu
+  // while the client still looks like normal play (activeMenu stays null), so
+  // user input must be suppressed — otherwise a stray keystroke lands in that
+  // menu (describing a spell, scrolling, or Escaping it) and desyncs the
+  // harvest. Suppression can't get stuck: harvestPhase is always reset within
+  // 1.5s by armHarvestTimeout even if a message is dropped. (Crawl is turn-
+  // based, so a suppressed keystroke just means the player re-presses it.)
+  function isHarvesting(): boolean {
+    return harvestPhase !== 'idle'
+  }
+
+  // Abort any in-flight harvest and clear its latches. Called from the
+  // full-state teardowns (layer:"game", close_all_menus, go_lobby) so a bulk
+  // menu close or a game transition mid-harvest can't leave input suppressed
+  // (harvestPhase stuck) or pendingHarvestClose latched — the latter would
+  // otherwise swallow the NEXT genuine close_menu and strand a real overlay.
+  function resetHarvest(): void {
+    clearTimeout(harvestTimer)
+    harvestPhase = 'idle'
+    pendingHarvestClose = false
+  }
+
+  // Fire a silent `I` to (re)populate spellCache. Only from a clean game
+  // state — otherwise the keystroke is swallowed by whatever prompt/menu/
+  // overlay is up (and could mean something else entirely).
+  function harvestSpells(): void {
+    if (harvestPhase !== 'idle') return
+    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu) return
+    harvestStartTs = Date.now()
+    dbgSpell('fired (silent I)…')
+    harvestPhase = 'base'
+    conn.send({ msg: 'input', text: 'I' })
+    armHarvestTimeout()
+  }
+
+  // Fallback if an expected harvest message never arrives. In `base` the `I`
+  // opened no menu (no spells) — clear the cache. In `extra` the base columns
+  // are captured but the toggle re-send was lost; keep them, but the menu is
+  // still open server-side, so Escape it (else the next keystroke is eaten).
+  function armHarvestTimeout(): void {
+    clearTimeout(harvestTimer)
+    harvestTimer = window.setTimeout(() => {
+      if (harvestPhase === 'base') {
+        spellCache = []
+        dbgSpell('timed out in base phase — no spell menu opened (no spells?)')
+      } else if (harvestPhase === 'extra') {
+        pendingHarvestClose = true
+        conn.send({ msg: 'key', keycode: 27 })
+        dbgSpell('timed out in extra phase — toggle re-send lost; keeping base columns only')
+      }
+      harvestPhase = 'idle'
+      exposeSpellCache()
+      printSpellTable()
+    }, 1500)
   }
 
   function showMenu(msg: MenuMsg): void {
