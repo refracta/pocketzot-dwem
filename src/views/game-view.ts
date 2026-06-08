@@ -502,7 +502,7 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  })
+  }, spectating ? {} : { spellTab: { render: renderSpellGrid } })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'
@@ -2306,12 +2306,37 @@ export function buildGameView(
   }
 
   // Keep the dev inspection hook pointing at the current cache array, and
-  // refresh the persistent quick-cast rail so an auto/re-harvest fills it in as
-  // the base then extra columns land.
+  // refresh both spell surfaces (the quick-cast rail and the ✦ tab grid) so an
+  // auto/re-harvest fills them in as the base then extra columns land.
   function exposeSpellCache(): void {
     if (import.meta.env.DEV)
       (window as unknown as { __dcssSpellCache: SpellEntry[] }).__dcssSpellCache = spellCache
     renderSpellRail()
+    touchControls.refreshSpellTab()
+  }
+
+  // Build the spell grid for the touch-panel ✦ tab from spellCache, or null when
+  // there's nothing to show (no spells / spectating) → the tab shows its empty
+  // state. Mirrors the rail's per-spell button (tile + letter badge) but in the
+  // panel's content area: costs no map space and scrolls past the visible rows.
+  function renderSpellGrid(): HTMLElement | null {
+    if (spectating || spellCache.length === 0) return null
+    const grid = document.createElement('div')
+    grid.className = 'tc-spell-grid'
+    for (const s of spellCache) {
+      const btn = document.createElement('button')
+      btn.className = 'tc-spell-btn'
+      btn.title = `${s.title}${s.fail ? ` (${s.fail})` : ''}`
+      if (typeof s.colour === 'number') btn.style.color = uiColor(s.colour)
+      btn.appendChild(renderTiles(loader, [{ t: s.tile, tex: TEX.GUI }], 1))
+      const lbl = document.createElement('span')
+      lbl.className = 'tc-spell-letter'
+      lbl.textContent = s.letter
+      btn.appendChild(lbl)
+      btn.addEventListener('click', () => castSpellLetter(s.letter))
+      grid.appendChild(btn)
+    }
+    return grid
   }
 
   // Cast a memorised spell from normal play: `z` opens the cast prompt and the

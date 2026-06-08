@@ -11,7 +11,7 @@ import {
 import { createShiftToggle } from './shift-state'
 
 type SendFn = (msg: ClientMsg) => void
-type TabKey = 'micro' | 'macro' | 'info'
+type TabKey = 'micro' | 'macro' | 'info' | 'spells'
 
 interface TabButtonDef {
   label: string
@@ -24,12 +24,20 @@ type DpadDef =
   | { label: string; plain: number; shifted: number; ctrled: number }
   | { label: string; text: string }
 
+// game-view owns the spell data (and the tile loader / cast logic), so it
+// supplies the grid DOM for the ✦ tab; touch.ts just hosts it in the panel's
+// content area and manages tab switching.
+export interface SpellTabConfig {
+  render: () => HTMLElement | null  // grid for the current spells, or null if none
+}
+
 export interface TouchControls {
   element: HTMLElement
   enterXMode(): void
   exitXMode(): void
   openKbd(): void
   closeKbd(): void
+  refreshSpellTab(): void  // re-render the ✦ tab if it is the active tab
 }
 
 // Arrow + numpad keycodes; shift = run-variant; ctrl = open-door / attack-stationary.
@@ -53,7 +61,8 @@ const DPAD_LAYOUT: DpadDef[][] = [
   ],
 ]
 
-const TAB_BUTTONS: Record<TabKey, TabButtonDef[][]> = {
+// Static tabs only; the 'spells' tab renders dynamic content from game-view.
+const TAB_BUTTONS: Record<Exclude<TabKey, 'spells'>, TabButtonDef[][]> = {
   micro: [
     [
       { label: '⇥',   title: 'Auto-fight nearest',    key: 9 },
@@ -394,8 +403,9 @@ function buildKeyboardOverlay(send: SendFn): { element: HTMLElement; open: () =>
   return { element: overlay, open, close }
 }
 
-export function buildTouchControls(send: SendFn): TouchControls {
+export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConfig } = {}): TouchControls {
   let ctrlActive = false
+  let activeTab: TabKey = 'micro'
 
   // Forward declarations — assigned during DOM construction below
   let shiftBtn!: HTMLButtonElement
@@ -503,6 +513,9 @@ export function buildTouchControls(send: SendFn): TouchControls {
     { key: 'macro', label: '>' },
     { key: 'info',  label: '?' },
   ]
+  // Quick-cast spells get their own tab (playing client only — spectators have
+  // no spells to cast). Swaps the content grid like any other tab.
+  if (opts.spellTab) tabDefs.push({ key: 'spells', label: '✦' })
   for (const td of tabDefs) {
     const btn = document.createElement('button')
     btn.className = 'tc-tab' + (td.key === 'micro' ? ' active' : '')
@@ -588,10 +601,31 @@ export function buildTouchControls(send: SendFn): TouchControls {
   }
 
   function renderTab(tab: TabKey): void {
+    activeTab = tab
     tabsEl.querySelectorAll<HTMLElement>('.tc-tab').forEach(el => {
       el.classList.toggle('active', el.dataset.tab === tab)
     })
-    renderContent(TAB_BUTTONS[tab])
+    if (tab === 'spells') renderSpellContent()
+    else renderContent(TAB_BUTTONS[tab])
+  }
+
+  // The ✦ tab hosts the spell grid game-view builds (it owns the spell data,
+  // tile loader, and cast logic). Sticky like any tab — it stays until the
+  // player switches away, so repeat-casting in a fight is one tap each.
+  function renderSpellContent(): void {
+    contentEl.innerHTML = ''
+    const grid = opts.spellTab?.render() ?? null
+    if (grid) { contentEl.appendChild(grid); return }
+    const empty = document.createElement('div')
+    empty.className = 'tc-spell-empty'
+    empty.textContent = 'No spells.'
+    contentEl.appendChild(empty)
+  }
+
+  // Called by game-view after a (re)harvest so an open ✦ tab reflects the new
+  // spell list (count / letters / fail). No-op unless the ✦ tab is showing.
+  function refreshSpellTab(): void {
+    if (activeTab === 'spells') renderSpellContent()
   }
 
   function renderContent(rows: TabButtonDef[][]): void {
@@ -633,5 +667,5 @@ export function buildTouchControls(send: SendFn): TouchControls {
   buildDpad()
   renderContent(TAB_BUTTONS.micro)
 
-  return { element: root, enterXMode, exitXMode, openKbd, closeKbd }
+  return { element: root, enterXMode, exitXMode, openKbd, closeKbd, refreshSpellTab }
 }

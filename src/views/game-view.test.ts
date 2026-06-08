@@ -551,4 +551,50 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       expect(sentInputI(h)).toHaveLength(1)
     })
   })
+
+  // The ✦ tab hosts a quick-cast grid in the touch panel (no map coverage).
+  // game-view supplies the grid DOM via the spellTab.render callback; touch.ts
+  // hosts it and re-renders on refreshSpellTab() after each (re)harvest.
+  describe('✦ spell tab (touch-panel quick-cast grid)', () => {
+    const spellTab = (h: Harness) => h.view.querySelector<HTMLElement>('.tc-tab[data-tab="spells"]')
+    const gridBtns = (h: Harness) => [...h.view.querySelectorAll<HTMLElement>('.tc-spell-grid .tc-spell-btn')]
+    const gridBtn = (h: Harness, letter: string) =>
+      gridBtns(h).find(b => b.querySelector('.tc-spell-letter')?.textContent === letter)!
+
+    it('renders one grid button (tile + letter) per harvested spell when the ✦ tab is tapped', () => {
+      const h = setup()
+      fullHarvest(h)
+      spellTab(h)!.click()
+      expect(gridBtns(h)).toHaveLength(BASE.length)
+      expect(gridBtn(h, 'a').querySelector('.tile-stack')).toBeTruthy()
+    })
+
+    it('casts the tapped spell (z + letter) from the grid', () => {
+      const h = setup()
+      h.dispatch({ msg: 'input_mode', mode: 1 }) // command mode (+ the once-per-game auto-harvest)
+      feedBase(h); feedExtra(h)                   // complete that harvest → cache populated, idle
+      spellTab(h)!.click()
+      gridBtn(h, 'a').click()
+      expect(sent(h)).toContainEqual({ msg: 'input', text: 'z' })
+      expect(sent(h)).toContainEqual({ msg: 'input', text: 'a' })
+    })
+
+    it('updates an open grid in place when a re-harvest changes the spell list', () => {
+      const h = setup()
+      fullHarvest(h)
+      spellTab(h)!.click()
+      expect(gridBtns(h)).toHaveLength(2)
+      // A re-harvest yields a 3rd spell; the visible grid reflects it (via
+      // refreshSpellTab) without the player re-tapping the tab.
+      startHarvest()
+      h.dispatch({ msg: 'menu', tag: 'spell', items: [...BASE, baseRow('-', 'd', 100, 'Magic Dart', 'Conj', '3%', 1)] })
+      expect(gridBtns(h)).toHaveLength(3)
+      feedExtra(h) // settle the harvest's fallback timer
+    })
+
+    it('omits the ✦ tab while spectating (no spells to cast)', () => {
+      const h = setup({ username: 'bob' })
+      expect(spellTab(h)).toBeNull()
+    })
+  })
 })

@@ -2129,6 +2129,55 @@ html, body {
   line-height: 1;
 }
 
+/* ✦ tab: quick-cast spell grid hosted in the panel's content area. Same column
+   density as the action tabs (4-wide), but scrolls when spells overflow the
+   visible rows — so it scales to any spell count without covering the map. */
+.tc-spell-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: min-content;
+  gap: 2px;
+  align-content: start;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tc-spell-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  line-height: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.tc-spell-btn:active { background: var(--surface); border-color: var(--accent); }
+.tc-spell-letter {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-size: 0.62rem;
+  line-height: 1;
+  font-weight: bold;
+  color: var(--text);
+  text-shadow: 0 0 2px #000, 0 0 3px #000;
+  pointer-events: none;
+}
+.tc-spell-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  opacity: 0.6;
+  font-size: 0.85rem;
+}
+
 /* Footer: Shift, Ctrl, Keyboard */
 .tc-footer {
   display: flex;
