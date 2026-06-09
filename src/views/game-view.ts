@@ -512,7 +512,7 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  }, spectating ? {} : { spellTab: { render: renderSpellGrid } })
+  }, spectating ? {} : { spellTab: { render: renderSpellGrid, hasSpells: () => spellCache.length > 0 } })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'
@@ -932,6 +932,7 @@ export function buildGameView(
 
       case 'menu': {
         const m = msg as unknown as MenuMsg
+        const titlePlain = stripDcss(m.title?.text ?? '')
         // Silent spell harvest, base phase: capture the default columns, then
         // toggle for the extra ones (don't escape yet). See harvestSpells().
         // In `late-base` (slow link; suppression already lifted) the user has
@@ -942,7 +943,7 @@ export function buildGameView(
         if (m.tag === 'spell'
             && (harvestPhase === 'base'
                 || (harvestPhase === 'late-base'
-                    && /^Your spells \(describe\)/.test(stripDcss(m.title?.text ?? ''))))) {
+                    && /^Your spells \(describe\)/.test(titlePlain)))) {
           spellCache = (m.items ?? [])
             .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
             .map(parseSpellItem)
@@ -972,7 +973,7 @@ export function buildGameView(
         // it), so the title is the only discriminator — "Your spells (adjust)"
         // vs "(describe)" etc. Flag the rail stale; it re-harvests once the
         // player finishes and we're back at a command prompt (input_mode→1).
-        if (m.tag === 'spell' && /\(adjust\)/i.test(stripDcss(m.title?.text ?? ''))) spellsDirty = true
+        if (m.tag === 'spell' && /\(adjust\)/i.test(titlePlain)) spellsDirty = true
         if (m.type === 'crt') showCrt(m.tag)
         else {
           if (m.replace) menuStack.pop()
@@ -1043,8 +1044,10 @@ export function buildGameView(
         if (harvestPhase === 'extra' && m.items && !activeMenu) {
           clearTimeout(harvestTimer)
           harvestPhase = 'idle'
+          // No exposeSpellCache() here: the merge mutates the already-exposed
+          // entries in place, and nothing rendered (tile/letter/title/fail)
+          // comes from the extra columns — the base-phase render is current.
           mergeSpellExtra(m.items)
-          exposeSpellCache()
           pendingHarvestClose = true
           conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
           break
@@ -1130,7 +1133,6 @@ export function buildGameView(
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
-          const plain = stripDcss(m.text).trim()
           // A non-caster's silent-harvest `I` prints "You don't know any
           // spells." (canned MSG_NO_SPELLS) and opens no menu, so the base
           // phase has no menu to capture. Recognise this line as the harvest's
@@ -1141,7 +1143,10 @@ export function buildGameView(
           // `continue` swallows the line so the player never sees our probe.
           // Checks harvestPhase (not isHarvesting()) so a reply slow enough to
           // land in `late-base` still terminates the harvest silently.
-          if (harvestPhase !== 'idle' && /^You don't know any spells\b/.test(plain)) {
+          // The strip+trim is gated behind the phase check: this loop runs for
+          // every line of every msgs batch, and only a mid-harvest line can be
+          // the terminator.
+          if (harvestPhase !== 'idle' && /^You don't know any spells\b/.test(stripDcss(m.text).trim())) {
             spellCache = []
             resetHarvest()
             exposeSpellCache()
@@ -1160,7 +1165,10 @@ export function buildGameView(
           // Match as SUBSTRINGS, never whole-line: DCSS joins same-turn,
           // same-channel mprs onto one msgs line (e.g. "You finish memorising.
           // Spell assigned to 'b'."), so an anchored `$` would miss it.
-          if (/Spell assigned to\b/.test(plain) || /Your memory of .+ unravels\b/.test(plain)) spellsDirty = true
+          // Tested against the raw wire text (no stripDcss): colour tags wrap
+          // whole messages, they never split a phrase, and skipping the strip
+          // keeps this per-line check allocation-free.
+          if (/Spell assigned to\b/.test(m.text) || /Your memory of .+ unravels\b/.test(m.text)) spellsDirty = true
           if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
@@ -2429,6 +2437,12 @@ export function buildGameView(
   // tracks rail visibility: while set, CSS floats the message log over the map's
   // bottom edge so the rail's grid row reuses the log's old slot and the map
   // keeps its full height.
+  // The cache array the rail's buttons were last built from. Every harvest
+  // (and the dev fake-spells hook) assigns a NEW array to spellCache, so
+  // reference identity distinguishes "content changed, rebuild" from
+  // "visibility toggled, just un/hide" — the X-mode enter/exit calls land on
+  // the cheap path instead of rebuilding every button + tile per examine.
+  let railBuiltFrom: SpellEntry[] | null = null
   function renderSpellRail(): void {
     // Hidden while examining (X-mode): the zoomed-out examine map claims the
     // log/HUD rows, and the rail's row (plus the log overlay) would shrink and
@@ -2436,8 +2450,11 @@ export function buildGameView(
     const visible = !spectating && !inXMode && spellCache.length > 0
     view.classList.toggle('spell-row', visible)
     if (!visible) { spellRail.style.display = 'none'; return }
-    spellRail.innerHTML = ''
-    for (const s of spellCache) spellRail.appendChild(makeSpellButton(s, 'spell-rail-btn'))
+    if (railBuiltFrom !== spellCache) {
+      spellRail.innerHTML = ''
+      for (const s of spellCache) spellRail.appendChild(makeSpellButton(s, 'spell-rail-btn'))
+      railBuiltFrom = spellCache
+    }
     spellRail.style.display = ''
   }
 

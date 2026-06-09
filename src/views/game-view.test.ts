@@ -321,18 +321,17 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
   const cache = () => hooks().__dcssSpellCache
   const byLetter = (l: string) => cache().find(s => s.letter === l)!
 
-  const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + ' '.repeat(n - s.length))
   // Default-column row. Columns are separated by 2+ spaces (the parser splits on
   // padding runs). `sign` is '-' for a normal row but '+' for the preselected
   // you.last_cast_spell row (SpellMenuEntry::_get_text_preface in the engine).
   const baseRow = (sign: '-' | '+', letter: string, hot: number, name: string, schools: string, fail: string, level: number) =>
     ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
-       text: ` ${letter} ${sign} <lightgrey>${pad(name, 32)}${pad(schools, 26)}${fail}       ${level}      </lightgrey>` })
+       text: ` ${letter} ${sign} <lightgrey>${name.padEnd(32)}${schools.padEnd(26)}${fail}       ${level}      </lightgrey>` })
   // Toggled extra row — fixed-width chop_string columns (no 2-space guarantee):
   // name(32) power(10) damage(10) range(8) noise(14), after the preface.
   const extraRow = (sign: '-' | '+', letter: string, hot: number, name: string, power: string, damage: string, range: string, noise: string) =>
     ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
-       text: ` ${letter} ${sign} <lightgrey>${pad(name, 32)}${pad(power, 10)}${pad(damage, 10)}${pad(range, 8)}${pad(noise, 14)}</lightgrey>` })
+       text: ` ${letter} ${sign} <lightgrey>${name.padEnd(32)}${power.padEnd(10)}${damage.padEnd(10)}${range.padEnd(8)}${noise.padEnd(14)}</lightgrey>` })
 
   // 'a' Freeze is the preselected '+' row — the case that regressed; 'c'
   // Ozocubu's Armour is a normal '-' row (a buff: N/A damage/range). The
@@ -458,8 +457,6 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
   // must be swallowed so the player never sees a message they didn't trigger.
   describe('no-spells terminator (non-caster)', () => {
     const NO_SPELLS = "You don't know any spells."
-    const msgTextsIn = (h: Harness) =>
-      [...h.view.querySelectorAll<HTMLElement>('#game-messages .game-msg')].map(r => r.textContent?.trim())
 
     it('ends the harvest immediately when the no-spells line arrives (no 1.5s lockout)', () => {
       const h = setup()
@@ -476,7 +473,7 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       const h = setup()
       startHarvest()
       h.dispatch({ msg: 'msgs', messages: [{ text: NO_SPELLS }] })
-      expect(msgTextsIn(h)).not.toContain(NO_SPELLS)
+      expect(msgTexts(h)).not.toContain(NO_SPELLS)
     })
 
     it('leaves the spell rail/z tab empty (no spells harvested)', () => {
@@ -493,7 +490,7 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       // Not harvesting → a literal "You don't know any spells." is a real game
       // message (e.g. the player pressed `z` with none) and must show.
       h.dispatch({ msg: 'msgs', messages: [{ text: NO_SPELLS }] })
-      expect(msgTextsIn(h)).toContain(NO_SPELLS)
+      expect(msgTexts(h)).toContain(NO_SPELLS)
     })
   })
 

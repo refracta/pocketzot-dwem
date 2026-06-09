@@ -690,10 +690,15 @@ html, body {
 
 /* ── Game view ────────────────────────────────────────────── */
 #game-view {
-  /* Message-log height: 5 lines at the log's 0.75rem font / 1.3 line-height
-     (≡ the old `5lh`). A var so the spell-row rules below can offset #more-btn
+  /* Message-log typography, declared once so the height calc below can never
+     drift from what #game-messages actually renders at. */
+  --msglog-font: 0.75rem;
+  --msglog-line: 1.3;
+  /* Message-log height: 5 lines (≡ the old `5lh`, but usable from other
+     elements' contexts — `lh` would re-resolve against the consumer's own
+     line-height). A var so the spell-row rules below can offset #more-btn
      by exactly the log's height. */
-  --msglog-h: calc(5 * 0.75rem * 1.3);
+  --msglog-h: calc(5 * var(--msglog-font) * var(--msglog-line));
   position: relative;
   flex: 1;
   display: grid;
@@ -787,8 +792,8 @@ html, body {
 #game-messages {
   grid-area: msg;
   background: var(--bg);
-  font-size: 0.75rem;
-  line-height: 1.3;
+  font-size: var(--msglog-font);
+  line-height: var(--msglog-line);
   /* Reserve the full 5 lines from the start so the map only sizes itself
      once. Otherwise the log grows 0 → 5 lines as the first messages arrive
      and the map re-fits (and may drop a row) on each step. */
@@ -812,26 +817,32 @@ html, body {
    floats over the map's bottom edge on a translucent scrim — the map keeps its
    full height (it actually gains the log/rail height difference). An abspos
    grid item's containing block is its grid area (same trick as #more-btn), so
-   bottom:0 here = the map cell's bottom edge, directly above the rail. */
-#game-view.spell-row #game-messages {
-  grid-area: map;
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 3;
-  background: color-mix(in srgb, var(--bg) 30%, transparent);
+   bottom:0 here = the map cell's bottom edge, directly above the rail.
+   Portrait-only by construction (the trade only makes sense where the log has
+   a full-width row to give up), and scoped so the landscape block doesn't
+   have to neutralize each rule individually — there the log is a sidebar
+   column and the rail floats over the map instead. */
+@media (orientation: portrait) {
+  #game-view.spell-row #game-messages {
+    grid-area: map;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    background: color-mix(in srgb, var(--bg) 30%, transparent);
+  }
+  /* --more-- is bottom-anchored in the map cell (z-index 4); lift it above the
+     overlaid log so it never covers the newest message lines. */
+  #game-view.spell-row #more-btn { bottom: var(--msglog-h); }
+  /* Overlays normally reclaim the log's grid row (the log hides via inline
+     display:none and the row collapses); in spell-row mode the rail holds that
+     row, so span the overlay across both rows to keep its height unchanged —
+     it simply covers the (tap-inert) rail. */
+  #game-view.spell-row #ui-overlay { grid-row: map / msg; }
 }
-/* --more-- is bottom-anchored in the map cell (z-index 4); lift it above the
-   overlaid log so it never covers the newest message lines. */
-#game-view.spell-row #more-btn { bottom: var(--msglog-h); }
-/* Overlays normally reclaim the log's grid row (the log hides via inline
-   display:none and the row collapses); in spell-row mode the rail holds that
-   row, so span the overlay across both rows to keep its height unchanged —
-   it simply covers the (tap-inert) rail. */
-#game-view.spell-row #ui-overlay { grid-row: map / msg; }
 
-.game-msg { color: var(--text); line-height: 1.3; }
+.game-msg { color: var(--text); line-height: var(--msglog-line); }
 
 .msg-turn-mark {
   display: inline-block;
@@ -1105,15 +1116,15 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-}
-/* Non-casters have the log sitting directly on the HUD — text above text at
-   near-identical size, and a yellow log warning can scan as part of the
-   yellow name line. Keep the hairline for that boundary only; in spell-row
-   mode the rail's icon band already separates log from HUD, so casters get
-   the fully borderless stack. */
-#game-view:not(.spell-row) #game-hud {
+  /* Non-casters have the log sitting directly on the HUD — text above text at
+     near-identical size, and a yellow log warning can scan as part of the
+     yellow name line. Keep the hairline for that boundary. */
   border-top: 1px solid var(--border);
 }
+/* In spell-row mode the rail's icon band already separates log from HUD, so
+   casters get the fully borderless stack. (Landscape drops the border for
+   everyone — its sidebar HUD rule below wins over the base by source order.) */
+#game-view.spell-row #game-hud { border-top: none; }
 
 #hud-top {
   display: flex;
@@ -1807,12 +1818,11 @@ html, body {
   padding: 2px;
   line-height: 0;
   background: color-mix(in srgb, var(--bg) 70%, transparent);
-  border: 0px solid var(--border);
-  border-radius: 0px;
+  border: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.spell-rail-btn:active { background: var(--surface); border-color: var(--accent); }
+.spell-rail-btn:active { background: var(--surface); }
 /* Corner cast-keystroke letter ("za"), shared by the rail and the z-tab grid
    (both built by makeSpellButton) so it looks/sits the same in both. */
 .spell-letter {
@@ -2012,7 +2022,7 @@ html, body {
 
 /* ── Unified touch controls ─────────────────────────────────── */
 #touch-controls {
-  --tc-dpad: 3.6rem;  /* d-pad cell size (kept in sync with .tc-dpad below) */
+  --tc-dpad: 3.6rem;  /* d-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) */
   grid-area: touch;
   display: flex;
   flex-direction: row;
@@ -2063,8 +2073,8 @@ html, body {
   border-radius: 4px;
   color: var(--text);
   font-size: 1.4rem;
-  width: 3.6rem;
-  height: 3.6rem;
+  width: var(--tc-dpad);
+  height: var(--tc-dpad);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2480,10 +2490,6 @@ html, body {
 
   #map-wrap { grid-area: map; }
 
-  /* :not(.spell-row) matches the portrait non-caster border rule's
-     specificity — a bare #game-hud would lose to it and the sidebar HUD
-     would sprout a stray top border in non-caster landscape games. */
-  #game-view:not(.spell-row) #game-hud,
   #game-hud {
     grid-area: hud;
     border-top: none;
@@ -2542,18 +2548,10 @@ html, body {
   #touch-controls { display: contents !important; }
 
   /* Spell-row mode doesn't apply in landscape — the log is a sidebar column,
-     so there's no log slot to trade for a rail row. Neutralize the portrait
-     spell-row rules and float the rail across the map's bottom-right corner
-     instead (the buttons keep their own translucent scrims, like the old
-     vertical rail). */
-  #game-view.spell-row #game-messages {
-    grid-area: msg;
-    position: static;
-    z-index: auto;
-    background: var(--bg);
-  }
-  #game-view.spell-row #more-btn { bottom: auto; }
-  #game-view.spell-row #ui-overlay { grid-area: map; }
+     so there's no log slot to trade for a rail row (the portrait spell-row
+     rules are scoped to their own orientation query). Float the rail across
+     the map's bottom-right corner instead (the buttons keep their own
+     translucent scrims, like the old vertical rail). */
   #spell-rail {
     grid-area: map;
     align-self: end;

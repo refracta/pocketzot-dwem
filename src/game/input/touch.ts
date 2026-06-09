@@ -36,6 +36,7 @@ type DpadDef =
 // content area and manages tab switching.
 export interface SpellTabConfig {
   render: () => HTMLElement | null  // grid for the current spells, or null if none
+  hasSpells: () => boolean          // cheap visibility probe — no DOM built
 }
 
 export interface TouchControls {
@@ -628,9 +629,14 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
   function refreshSpellTab(): void {
     const tab = tabsEl.querySelector<HTMLElement>('.tc-tab[data-tab="spells"]')
     if (!tab) return  // spectator — there is no z tab
-    const grid = opts.spellTab?.render() ?? null
-    tab.style.display = ENABLE_SPELL_TAB && grid ? '' : 'none'
+    // Visibility comes from the cheap probe; the grid DOM is built only when
+    // the spells tab is the one on screen (render() per harvest was otherwise
+    // constructed and immediately discarded). ENABLE_SPELL_TAB gates only the
+    // tab's visibility — the grid stays wired (and testable) behind it.
+    const has = !!opts.spellTab?.hasSpells()
+    tab.style.display = ENABLE_SPELL_TAB && has ? '' : 'none'
     if (activeTab !== 'spells') return
+    const grid = has ? opts.spellTab!.render() : null
     if (grid) { contentEl.innerHTML = ''; contentEl.appendChild(grid) }
     else renderTab('micro')
   }
