@@ -23,6 +23,16 @@
   --map-font-size: 17px;
   --map-line-height: 1.0;
   --crt-line-height: 1.2;
+
+  /* Server-menu/overlay font scale. Most server menus (i, a, shops,
+     descriptions) read through the .overlay-* classes; the skills menu reads
+     through #crt-display. Both paths share these tokens, so they're the single
+     knob for menu text. --fs-overlay is reading text (rows, descriptions,
+     titles, CRT body); --fs-overlay-chrome is secondary labels (headers,
+     footers). Control buttons stay literal — different role. */
+  --fs-overlay:        0.9rem;
+  --fs-overlay-chrome: 0.8rem;
+
   --app-bottom-pad: 25px;
   touch-action: manipulation;
 }
@@ -1525,7 +1535,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-overlay);
   flex-shrink: 0;
 }
 
@@ -1588,7 +1598,7 @@ html, body {
   border: none;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 1.00rem;
+  font-size: var(--fs-overlay);
   padding: 0.35rem 0.25rem;
   text-align: left;
   cursor: pointer;
@@ -1619,12 +1629,12 @@ html, body {
 .overlay-item.item-hang .overlay-label { padding-left: 4ch; text-indent: -4ch; }
 
 .overlay-header {
-  font-size: 0.8rem;
+  font-size: var(--fs-overlay-chrome);
   padding: 0.5rem 0.25rem 0.15rem;
 }
 
 .overlay-body {
-  font-size: 0.9rem;
+  font-size: var(--fs-overlay);
   line-height: 1.5;
   overflow-x: auto;
   overflow-y: auto;
@@ -1742,7 +1752,7 @@ html, body {
 
 .overlay-footer {
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: var(--fs-overlay-chrome);
   padding-top: 0.4rem;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
@@ -2271,17 +2281,26 @@ html, body {
 .bg12{background-color:#ef2929}.bg13{background-color:#fd59fa}.bg14{background-color:#fce94f}
 .bg15{background-color:#eeeeec}
 
-/* CRT full-screen display */
+/* CRT full-screen display (skills menu `m`, plus the unreachable-in-mobile
+   startup/arena popups). Shares --fs-overlay with .overlay-body so the skills
+   screen reads like every other overlay rather than at map-glyph size. */
 #crt-display {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: var(--map-font-size);
+  font-size: var(--fs-overlay);
   line-height: var(--crt-line-height);
   overflow-x: auto;
   white-space: pre;
 }
 
 .crt-line { min-height: 1em; }
+/* DCSS assumes a black terminal, so it tags ordinary CRT text with bg0
+   (#000000) as the "no background" colour. On our warm near-black overlay
+   that paints a visible black rectangle behind each text run; make bg0
+   transparent here so the panel background shows through uniformly. Coloured
+   backgrounds (bg1–bg15, e.g. selection highlights) are intentional, so leave
+   them. */
+#crt-display .bg0 { background-color: transparent; }
 .crt-highlight { background: rgba(255,255,100,0.15); display: block; }
 
 /* ── Landscape layout ────────────────────────────────────────
