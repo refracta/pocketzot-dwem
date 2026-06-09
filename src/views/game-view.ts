@@ -17,6 +17,7 @@ import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
+import { reflowSkillCrt } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { getPref, setPref } from '../prefs'
@@ -1745,6 +1746,9 @@ export function buildGameView(
     menuControls.style.display = 'none'
     const el = document.createElement('div')
     el.id = 'crt-display'
+    // Skills CRT is reflowed to one column, so it no longer needs to pan; let
+    // it wrap instead (the help text below the grid is full-width).
+    if (crtTag === 'skills') el.classList.add('crt-skills')
     uiOverlay.appendChild(el)
     view.focus({ preventScroll: true })
   }
@@ -1754,10 +1758,15 @@ export function buildGameView(
     if (!el) return
     el.innerHTML = ''
     const maxKey = crtLines.size > 0 ? Math.max(...crtLines.keys()) : 0
-    for (let i = 0; i <= maxKey; i++) {
+    let rows: string[] = []
+    for (let i = 0; i <= maxKey; i++) rows.push(crtLines.get(i) ?? '')
+    // The skills menu (`m`) ships a fixed two-column terminal grid; reflow it
+    // into a single column so it fits a phone without horizontal panning.
+    if (crtTag === 'skills') rows = reflowSkillCrt(rows)
+    for (const html of rows) {
       const line = document.createElement('div')
       line.className = 'crt-line'
-      line.innerHTML = crtLines.get(i) ?? ''
+      line.innerHTML = html
       el.appendChild(line)
     }
     if (crtTag === 'skills') updateSkillLetterButtons()

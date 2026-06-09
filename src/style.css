@@ -2293,6 +2293,14 @@ html, body {
   white-space: pre;
 }
 
+/* Skills menu (`m`) is reflowed to a single column (skill-reflow.ts), so the
+   grid fits without horizontal panning; pre-wrap lets the full-width help text
+   below the grid wrap instead of overflowing. */
+#crt-display.crt-skills {
+  white-space: pre-wrap;
+  overflow-x: hidden;
+}
+
 .crt-line { min-height: 1em; }
 /* DCSS assumes a black terminal, so it tags ordinary CRT text with bg0
    (#000000) as the "no background" colour. On our warm near-black overlay

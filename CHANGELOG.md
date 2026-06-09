@@ -11,6 +11,7 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-06-08
 
+- The skills menu (`m`) now displays in a single column.
 - Polished the appearance of in-game menus.
 
 ## 2026-06-04
