@@ -275,16 +275,27 @@ export function buildGameView(
   //   extra → capture that `update_menu_items`, merge the extra columns, Escape
   // We don't display the extra columns yet; this just makes them available.
   let spellCache: SpellEntry[] = []
-  let harvestPhase: 'idle' | 'base' | 'extra' = 'idle'
+  // 'late-base' is the base phase after its input-suppression budget ran out:
+  // the `I` reply is slower than HARVEST_SUPPRESS_MS, so the user gets the
+  // input channel back, but we keep listening (up to HARVEST_LATE_MS) so the
+  // late menu is still captured silently instead of rendering as a surprise
+  // full-screen spell list with the rail abandoned empty for the whole game.
+  let harvestPhase: 'idle' | 'base' | 'late-base' | 'extra' = 'idle'
   let harvestTimer = 0
+  // Input-suppression budget per harvest round-trip, and how much longer a
+  // slow base reply is still accepted after suppression ends.
+  const HARVEST_SUPPRESS_MS = 1500
+  const HARVEST_LATE_MS = 8500
   // Set when we send the harvest-closing Escape so the matching server
   // close_menu — for a menu we deliberately never pushed onto menuStack — is
   // swallowed instead of popping/clearing our real overlay state.
   let pendingHarvestClose = false
 
-  // Spell rail: a persistent column of quick-cast buttons pinned to the map's
-  // right edge (inside #map-wrap, so #ui-overlay covers it and overflow clips
-  // it to the map). Always visible during play once spells are harvested.
+  // Spell rail: a persistent row of quick-cast buttons in its own grid row
+  // below the message log (grid-area: msg). While it's visible, the `spell-row`
+  // class on #game-view floats the log over the map's bottom edge on a
+  // translucent scrim — so the rail's row comes out of the log's old slot, not
+  // the map's. Always visible during play once spells are harvested.
   const spellRail = document.createElement('div')
   spellRail.id = 'spell-rail'
   spellRail.style.display = 'none'
@@ -359,7 +370,6 @@ export function buildGameView(
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
   mapWrap.appendChild(monsterListView.element)
-  mapWrap.appendChild(spellRail)
 
   // Double-tap the map to toggle zoom. Bypassed while X-mode is active
   // (font scale is overridden there) — single-tap behavior is undefined on
@@ -515,6 +525,7 @@ export function buildGameView(
   view.appendChild(uiOverlay)
   view.appendChild(mapWrap)
   view.appendChild(msgLog)
+  view.appendChild(spellRail)
   view.appendChild(moreBtn)
   view.appendChild(hud)
   view.appendChild(numpadInput)
@@ -923,7 +934,15 @@ export function buildGameView(
         const m = msg as unknown as MenuMsg
         // Silent spell harvest, base phase: capture the default columns, then
         // toggle for the extra ones (don't escape yet). See harvestSpells().
-        if (harvestPhase === 'base' && m.tag === 'spell') {
+        // In `late-base` (slow link; suppression already lifted) the user has
+        // had the channel back, so a tag:'spell' menu could also be one THEY
+        // opened (memorise, amnesia, `=` adjust all share the tag) — only
+        // capture when the title is the probe's own "Your spells (describe)"
+        // (`I` → list_spells(viewing=true) → real_action "describe").
+        if (m.tag === 'spell'
+            && (harvestPhase === 'base'
+                || (harvestPhase === 'late-base'
+                    && /^Your spells \(describe\)/.test(stripDcss(m.title?.text ?? ''))))) {
           spellCache = (m.items ?? [])
             .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
             .map(parseSpellItem)
@@ -939,8 +958,10 @@ export function buildGameView(
         // `update_menu_items`, never a fresh `menu`. Abort the harvest so this
         // renders now — otherwise harvestPhase stays non-idle, isHarvesting()
         // stays true, and every input handler keeps early-returning until the
-        // 1.5s fallback, leaving a real menu the user can see but can't touch.
-        if (isHarvesting()) resetHarvest()
+        // suppression fallback, leaving a real menu the user can see but can't
+        // touch. (Covers `late-base` too: a foreign menu opening means the
+        // server isn't sitting in our probe's menu, so stop waiting for it.)
+        if (harvestPhase !== 'idle') resetHarvest()
         // A real menu is opening, so any pending harvest-close expectation is
         // stale (its close_menu already came or never will). Drop the latch —
         // otherwise THIS menu's eventual close_menu would be wrongly swallowed.
@@ -1118,7 +1139,9 @@ export function buildGameView(
           // fires, a lockout every spell-less character hits at game start.
           // Clearing the cache + resetHarvest lifts the suppression this frame;
           // `continue` swallows the line so the player never sees our probe.
-          if (isHarvesting() && /^You don't know any spells\b/.test(plain)) {
+          // Checks harvestPhase (not isHarvesting()) so a reply slow enough to
+          // land in `late-base` still terminates the harvest silently.
+          if (harvestPhase !== 'idle' && /^You don't know any spells\b/.test(plain)) {
             spellCache = []
             resetHarvest()
             exposeSpellCache()
@@ -1236,7 +1259,7 @@ export function buildGameView(
     inXMode = true
     msgLog.style.display = 'none'
     hud.style.display = 'none'
-    renderSpellRail()  // hide the quick-cast rail so it doesn't cover the examine map
+    renderSpellRail()  // drop the rail row (and the log's map overlay) for the examine map
     touchControls.enterXMode()
     mapView.setFontScale(X_MODE_SCALE)
     // Zoom mode is left untouched: tiles already had zoom-on (forced at
@@ -2299,22 +2322,28 @@ export function buildGameView(
 
   // Parse one row of the list_spells menu into a SpellEntry. Letter and icon
   // come straight off the wire (hotkeys[0], tiles[0]); only the name/columns
-  // need teasing out of the text. After the preface the row is
-  // "<name padded to 32><schools>…<failure> <level>" wrapped in a utility-
-  // highlight colour tag (see _spell_base_description in the 0.34 source).
-  // Split on the padding runs into [name, schools, failure, level].
+  // need teasing out of the text. After the preface the row is fixed-position
+  // (_spell_base_description in the 0.34 source): name chopped to 32, schools
+  // padded out to column 58, then failure in a 9-wide field (13 for revenants'
+  // enkindle column) and the level digit. Slice by position, NOT by whitespace
+  // runs: a 25-char schools string ("Conjuration/Translocation" — Momentum
+  // Strike, Iskenderun's Mystic Blast) leaves only ONE pad space before the
+  // failure column, so a \s{2,} split merges schools+fail and shifts every
+  // later column. The fail/level tail isn't position-stable across the two
+  // field widths, so split that small piece on whitespace instead: level is
+  // the last token, fail is everything before it.
   function parseSpellItem(it: MenuItem): SpellEntry {
     const letter = String.fromCharCode(it.hotkeys![0])
     const plain = stripSpellPreface(it.text)
-    const cols = plain.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean)
-    const level = Number(cols[3])
+    const tail = plain.slice(58).trim().split(/\s+/).filter(Boolean)
+    const level = Number(tail[tail.length - 1])
     return {
       letter,
       tile: it.tiles![0].t,
       colour: it.colour,
-      title: cols[0] ?? plain.trim(),
-      schools: cols[1],
-      fail: cols[2],
+      title: plain.slice(0, 32).trim() || plain.trim(),
+      schools: plain.slice(32, 58).trim() || undefined,
+      fail: tail.slice(0, -1).join(' ') || undefined,
       level: Number.isFinite(level) ? level : undefined,
     }
   }
@@ -2340,7 +2369,7 @@ export function buildGameView(
   }
 
   // Keep the dev inspection hook pointing at the current cache array, and
-  // refresh both spell surfaces (the quick-cast rail and the ✦ tab grid) so an
+  // refresh both spell surfaces (the quick-cast rail and the z tab grid) so an
   // auto/re-harvest fills them in as the base then extra columns land.
   function exposeSpellCache(): void {
     if (import.meta.env.DEV)
@@ -2349,29 +2378,34 @@ export function buildGameView(
     touchControls.refreshSpellTab()
   }
 
-  // Build the spell grid for the touch-panel ✦ tab from spellCache, or null when
+  // Build the spell grid for the touch-panel z tab from spellCache, or null when
   // there's nothing to show (no spells / spectating) → the tab shows its empty
   // state. Mirrors the rail's per-spell button (tile + letter badge) but in the
   // panel's content area: costs no map space and scrolls past the visible rows.
+  // One quick-cast button (tile + "za"-style corner letter, tap to cast),
+  // shared by the rail and the z-tab grid so the two surfaces can't drift —
+  // only the container-specific button class differs.
+  function makeSpellButton(s: SpellEntry, btnClass: string): HTMLElement {
+    const btn = document.createElement('button')
+    btn.className = btnClass
+    btn.title = `${s.title}${s.fail ? ` (${s.fail})` : ''}`
+    if (typeof s.colour === 'number') btn.style.color = uiColor(s.colour)
+    btn.appendChild(renderTiles(loader, [{ t: s.tile, tex: TEX.GUI }], 1))
+    const lbl = document.createElement('span')
+    lbl.className = 'spell-letter'
+    // "za"/"zb" — the literal cast keystroke (z then the spell's letter), so
+    // the button doubles as a reminder of what tapping sends.
+    lbl.textContent = `z${s.letter}`
+    btn.appendChild(lbl)
+    btn.addEventListener('click', () => castSpellLetter(s.letter))
+    return btn
+  }
+
   function renderSpellGrid(): HTMLElement | null {
     if (spectating || spellCache.length === 0) return null
     const grid = document.createElement('div')
     grid.className = 'tc-spell-grid'
-    for (const s of spellCache) {
-      const btn = document.createElement('button')
-      btn.className = 'tc-spell-btn'
-      btn.title = `${s.title}${s.fail ? ` (${s.fail})` : ''}`
-      if (typeof s.colour === 'number') btn.style.color = uiColor(s.colour)
-      btn.appendChild(renderTiles(loader, [{ t: s.tile, tex: TEX.GUI }], 1))
-      const lbl = document.createElement('span')
-      lbl.className = 'tc-spell-letter'
-      // "za"/"zb" — the literal cast keystroke (z then the spell's letter), so
-      // the grid doubles as a reminder of what tapping sends.
-      lbl.textContent = `z${s.letter}`
-      btn.appendChild(lbl)
-      btn.addEventListener('click', () => castSpellLetter(s.letter))
-      grid.appendChild(btn)
-    }
+    for (const s of spellCache) grid.appendChild(makeSpellButton(s, 'tc-spell-btn'))
     return grid
   }
 
@@ -2391,26 +2425,19 @@ export function buildGameView(
 
   // Render the persistent quick-cast rail from spellCache. Hidden when there are
   // no spells. Each button casts on tap via castSpellLetter (its own guard keeps
-  // a tap during a menu/overlay/X-mode inert).
+  // a tap during a menu/overlay/X-mode inert). The `spell-row` class on the view
+  // tracks rail visibility: while set, CSS floats the message log over the map's
+  // bottom edge so the rail's grid row reuses the log's old slot and the map
+  // keeps its full height.
   function renderSpellRail(): void {
-    // Hidden while examining (X-mode): the rail sits inside #map-wrap (z-index:3)
-    // and would otherwise float over the zoomed-out examine map, occluding the
-    // top-right cells the player entered X-mode to read.
-    if (spectating || inXMode || spellCache.length === 0) { spellRail.style.display = 'none'; return }
+    // Hidden while examining (X-mode): the zoomed-out examine map claims the
+    // log/HUD rows, and the rail's row (plus the log overlay) would shrink and
+    // occlude the very cells the player entered X-mode to read.
+    const visible = !spectating && !inXMode && spellCache.length > 0
+    view.classList.toggle('spell-row', visible)
+    if (!visible) { spellRail.style.display = 'none'; return }
     spellRail.innerHTML = ''
-    for (const s of spellCache) {
-      const btn = document.createElement('button')
-      btn.className = 'spell-rail-btn'
-      btn.title = `${s.title}${s.fail ? ` (${s.fail})` : ''}`
-      if (typeof s.colour === 'number') btn.style.color = uiColor(s.colour)
-      btn.appendChild(renderTiles(loader, [{ t: s.tile, tex: TEX.GUI }], 1))
-      const lbl = document.createElement('span')
-      lbl.className = 'spell-rail-letter'
-      lbl.textContent = s.letter
-      btn.appendChild(lbl)
-      btn.addEventListener('click', () => castSpellLetter(s.letter))
-      spellRail.appendChild(btn)
-    }
+    for (const s of spellCache) spellRail.appendChild(makeSpellButton(s, 'spell-rail-btn'))
     spellRail.style.display = ''
   }
 
@@ -2419,11 +2446,15 @@ export function buildGameView(
   // while the client still looks like normal play (activeMenu stays null), so
   // user input must be suppressed — otherwise a stray keystroke lands in that
   // menu (describing a spell, scrolling, or Escaping it) and desyncs the
-  // harvest. Suppression can't get stuck: harvestPhase is always reset within
-  // 1.5s by armHarvestTimeout even if a message is dropped. (Crawl is turn-
-  // based, so a suppressed keystroke just means the player re-presses it.)
+  // harvest. Suppression can't get stuck: harvestPhase always leaves the
+  // suppressing states within HARVEST_SUPPRESS_MS via armHarvestTimeout, even
+  // if a message is dropped. (Crawl is turn-based, so a suppressed keystroke
+  // just means the player re-presses it.) 'late-base' is deliberately NOT a
+  // suppressing state: the reply is overdue and the player gets the channel
+  // back — a keystroke they fire may be eaten by the still-open server menu,
+  // which is the price of not locking input on a slow link.
   function isHarvesting(): boolean {
-    return harvestPhase !== 'idle'
+    return harvestPhase === 'base' || harvestPhase === 'extra'
   }
 
   // The command channel is idle: the server is sitting at the command prompt
@@ -2436,8 +2467,11 @@ export function buildGameView(
   // stray keystroke into it (eating the pager/answering the prompt, or — for a
   // harvest — getting the `I` swallowed so the probe times out and clears the
   // rail). `moreBtn`/`activePromptEl` are exactly that missing state.
+  // Checks harvestPhase directly (not isHarvesting()) because 'late-base'
+  // must also block injection: the probe's menu may still be open server-side
+  // even though user input suppression has been lifted.
   function commandChannelIdle(): boolean {
-    return !isHarvesting()
+    return harvestPhase === 'idle'
       && uiStack.length === 0 && !crtActive && !dialogActive && !activeMenu
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
   }
@@ -2483,24 +2517,39 @@ export function buildGameView(
     if (harvestSpells()) spellsDirty = false
   }
 
-  // Fallback if an expected harvest message never arrives. In `base` the `I`
-  // opened no menu — normally a non-caster is caught faster by the
-  // MSG_NO_SPELLS line in the msgs handler, so this is the backstop for a
-  // dropped/late frame; clear the cache either way. In `extra` the base columns
-  // are captured but the toggle re-send was lost; keep them, but the menu is
+  // Fallback if an expected harvest message never arrives within the
+  // input-suppression budget. In `base` the `I` reply is missing — either the
+  // character has no spells and the MSG_NO_SPELLS fast path was lost, or the
+  // link is just slower than the budget (RTT > 1.5s is real on mobile). Don't
+  // give up: drop to `late-base`, which lifts input suppression but keeps
+  // listening for the menu so a slow reply is still captured silently — the
+  // old reset-to-idle here let that late menu render as an unrequested
+  // full-screen spell list AND left the rail empty for the rest of the game
+  // (autoHarvestedThisGame stays true; nothing retries). Only after the
+  // extended `late-base` window also passes do we conclude the frame was
+  // truly dropped and clear the cache. In `extra` the base columns are
+  // captured but the toggle re-send was lost; keep them, but the menu is
   // still open server-side, so Escape it (else the next keystroke is eaten).
   function armHarvestTimeout(): void {
     clearTimeout(harvestTimer)
     harvestTimer = window.setTimeout(() => {
       if (harvestPhase === 'base') {
-        spellCache = []
-      } else if (harvestPhase === 'extra') {
+        harvestPhase = 'late-base'
+        harvestTimer = window.setTimeout(() => {
+          if (harvestPhase !== 'late-base') return
+          spellCache = []
+          harvestPhase = 'idle'
+          exposeSpellCache()
+        }, HARVEST_LATE_MS)
+        return
+      }
+      if (harvestPhase === 'extra') {
         pendingHarvestClose = true
         conn.send({ msg: 'key', keycode: 27 })
       }
       harvestPhase = 'idle'
       exposeSpellCache()
-    }, 1500)
+    }, HARVEST_SUPPRESS_MS)
   }
 
   function showMenu(msg: MenuMsg): void {

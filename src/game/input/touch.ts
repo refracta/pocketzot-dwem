@@ -13,6 +13,13 @@ import { createShiftToggle } from './shift-state'
 type SendFn = (msg: ClientMsg) => void
 type TabKey = 'micro' | 'macro' | 'info' | 'spells'
 
+// Toggled off for testing (2026-06): evaluating whether the horizontal spell
+// rail row is sufficient on its own. The z quick-cast tab stays fully wired
+// (SpellTabConfig, the grid render, refreshSpellTab — and its tests) so a
+// flip back to true is all it takes to surface it again. Exported so the
+// tab-visibility test asserts whichever mode is current.
+export const ENABLE_SPELL_TAB = false
+
 interface TabButtonDef {
   label: string
   title?: string
@@ -25,7 +32,7 @@ type DpadDef =
   | { label: string; text: string }
 
 // game-view owns the spell data (and the tile loader / cast logic), so it
-// supplies the grid DOM for the ✦ tab; touch.ts just hosts it in the panel's
+// supplies the grid DOM for the z tab; touch.ts just hosts it in the panel's
 // content area and manages tab switching.
 export interface SpellTabConfig {
   render: () => HTMLElement | null  // grid for the current spells, or null if none
@@ -37,7 +44,7 @@ export interface TouchControls {
   exitXMode(): void
   openKbd(): void
   closeKbd(): void
-  refreshSpellTab(): void  // re-render the ✦ tab if it is the active tab
+  refreshSpellTab(): void  // re-render the z tab if it is the active tab
 }
 
 // Arrow + numpad keycodes; shift = run-variant; ctrl = open-door / attack-stationary.
@@ -508,22 +515,19 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
 
   tabsEl = document.createElement('div')
   tabsEl.className = 'tc-tabs'
-  const tabDefs: { key: TabKey; label: string }[] = [
-    { key: 'micro', label: '@' },
-    { key: 'macro', label: '>' },
-  ]
+  const tabDefs: { key: TabKey; label: string }[] = [{ key: 'micro', label: '@' }]
   // Quick-cast spells get their own tab (playing client only — spectators have
-  // no spells to cast), grouped with the other action tabs and ahead of the
-  // info/help tab. Swaps the content grid like any other tab.
-  if (opts.spellTab) tabDefs.push({ key: 'spells', label: '✦' })
-  tabDefs.push({ key: 'info', label: '?' })
+  // no spells to cast), sitting immediately right of the @ tab. Swaps the
+  // content grid like any other tab.
+  if (opts.spellTab) tabDefs.push({ key: 'spells', label: 'z' })
+  tabDefs.push({ key: 'macro', label: '>' }, { key: 'info', label: '?' })
   for (const td of tabDefs) {
     const btn = document.createElement('button')
     btn.className = 'tc-tab' + (td.key === 'micro' ? ' active' : '')
     btn.textContent = td.label
     btn.title = td.key
     btn.dataset.tab = td.key
-    // The ✦ tab starts hidden; refreshSpellTab() reveals it once a harvest
+    // The z tab starts hidden; refreshSpellTab() reveals it once a harvest
     // finds spells (and hides it again if the player ends up with none).
     if (td.key === 'spells') btn.style.display = 'none'
     btn.addEventListener('touchstart', e => { e.preventDefault(); renderTab(td.key) }, { passive: false })
@@ -609,7 +613,7 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
     tabsEl.querySelectorAll<HTMLElement>('.tc-tab').forEach(el => {
       el.classList.toggle('active', el.dataset.tab === tab)
     })
-    // The ✦ tab hosts the spell grid game-view builds (it owns the spell data,
+    // The z tab hosts the spell grid game-view builds (it owns the spell data,
     // tile loader, and cast logic); refreshSpellTab fills it. Sticky like any
     // tab — stays until the player switches away, so repeat-casting is one tap
     // each. Other tabs render their static button layout.
@@ -617,15 +621,15 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
     else renderContent(TAB_BUTTONS[tab])
   }
 
-  // Reveal the ✦ tab only when a harvest found spells; hide it otherwise (a
+  // Reveal the z tab only when a harvest found spells; hide it otherwise (a
   // non-caster, or after forgetting the last spell). Called by game-view after
-  // every (re)harvest. Keeps an open ✦ tab's grid current, and if it just
+  // every (re)harvest. Keeps an open z tab's grid current, and if it just
   // emptied while showing, falls back to the @ tab.
   function refreshSpellTab(): void {
     const tab = tabsEl.querySelector<HTMLElement>('.tc-tab[data-tab="spells"]')
-    if (!tab) return  // spectator — there is no ✦ tab
+    if (!tab) return  // spectator — there is no z tab
     const grid = opts.spellTab?.render() ?? null
-    tab.style.display = grid ? '' : 'none'
+    tab.style.display = ENABLE_SPELL_TAB && grid ? '' : 'none'
     if (activeTab !== 'spells') return
     if (grid) { contentEl.innerHTML = ''; contentEl.appendChild(grid) }
     else renderTab('micro')

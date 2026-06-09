@@ -2,6 +2,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { buildGameView, type SpectateTarget } from './game-view'
+import { ENABLE_SPELL_TAB } from '../game/input/touch'
 import type { WsConnection } from '../ws/connection'
 import type { ServerMsg, ClientMsg, GameExit } from '../ws/types'
 import type { MapStore } from '../game/map/map-store'
@@ -379,6 +380,23 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
     feedExtra(h) // finish the harvest so the fallback timer is cleared
   })
 
+  it('parses a 25-char schools string (single pad space before the failure column)', () => {
+    const h = setup()
+    startHarvest()
+    // "Conjuration/Translocation" is 25 chars — the longest player-spell
+    // schools string in 0.34 (Momentum Strike, Iskenderun's Mystic Blast).
+    // The engine pads name+schools to column 58, leaving exactly ONE space
+    // before the failure column; a whitespace-run split merges schools+fail
+    // and shifts level into fail. Fixed-position slicing must not.
+    h.dispatch({ msg: 'menu', tag: 'spell', items: [
+      baseRow('-', 'd', 100, 'Momentum Strike', 'Conjuration/Translocation', '5%', 2),
+    ] })
+    expect(byLetter('d')).toMatchObject({
+      title: 'Momentum Strike', schools: 'Conjuration/Translocation', fail: '5%', level: 2,
+    })
+    feedExtra(h) // finish the harvest so the fallback timer is cleared
+  })
+
   it('merges the toggled extra columns by fixed-width slice for the "+" preselected row too', () => {
     const h = setup()
     fullHarvest(h)
@@ -461,7 +479,7 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       expect(msgTextsIn(h)).not.toContain(NO_SPELLS)
     })
 
-    it('leaves the spell rail/✦ tab empty (no spells harvested)', () => {
+    it('leaves the spell rail/z tab empty (no spells harvested)', () => {
       const h = setup()
       startHarvest()
       h.dispatch({ msg: 'msgs', messages: [{ text: NO_SPELLS }] })
@@ -476,6 +494,113 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       // message (e.g. the player pressed `z` with none) and must show.
       h.dispatch({ msg: 'msgs', messages: [{ text: NO_SPELLS }] })
       expect(msgTextsIn(h)).toContain(NO_SPELLS)
+    })
+  })
+
+  // A base reply slower than the 1.5s input-suppression budget must not be
+  // abandoned: the old behavior reset to idle, so the late tag:'spell' menu
+  // rendered as an unrequested full-screen spell list AND the rail stayed
+  // empty for the whole game (autoHarvestedThisGame already true — no retry).
+  // Instead the harvest drops to 'late-base': suppression ends on schedule,
+  // but the late menu is still captured silently for another 8.5s — gated on
+  // the probe's own title ("Your spells (describe)"), since the user has the
+  // channel back and could open a spell-tagged menu themselves.
+  describe('slow-link harvest (late-base window)', () => {
+    const PROBE_TITLE = { text: 'Your spells (describe)   Type                      Failure  Level' }
+    afterEach(() => { vi.useRealTimers() })
+
+    it('captures a base reply that lands after the suppression timeout, still silently', () => {
+      vi.useFakeTimers()
+      const h = setup()
+      startHarvest()
+      vi.advanceTimersByTime(1500) // suppression budget passes → late-base
+      h.dispatch({ msg: 'menu', tag: 'spell', title: PROBE_TITLE, items: BASE })
+      expect(isHidden(overlay(h))).toBe(true) // swallowed, not rendered
+      expect(cache()).toHaveLength(2)
+      feedExtra(h) // the harvest continues normally from there
+      expect(byLetter('a')).toMatchObject({ power: '88%' })
+    })
+
+    it('blocks new probe injection during the late window (server menu may be open)', () => {
+      vi.useFakeTimers()
+      const h = setup()
+      startHarvest()
+      vi.advanceTimersByTime(1500)
+      startHarvest() // commandChannelIdle is false in late-base → must not fire
+      expect(sentInputI(h)).toHaveLength(1)
+    })
+
+    it('renders a user-opened spell-tagged menu in the late window instead of eating it', () => {
+      vi.useFakeTimers()
+      const h = setup()
+      startHarvest()
+      vi.advanceTimersByTime(1500)
+      // Suppression is lifted, so the user could have opened this themselves
+      // (memorise / amnesia / adjust share tag:'spell'). Title is not the
+      // probe's → it must render, and the stale harvest must abort.
+      h.dispatch({ msg: 'menu', tag: 'spell', title: { text: 'Memorise which spell?' }, items: [] })
+      expect(isHidden(overlay(h))).toBe(false)
+      h.dispatch({ msg: 'close_menu' })
+      startHarvest() // aborted harvest left phase idle → a fresh probe fires
+      expect(sentInputI(h)).toHaveLength(2)
+    })
+
+    it('gives up (cache cleared, idle) only after the late window also expires', () => {
+      vi.useFakeTimers()
+      const h = setup()
+      fullHarvest(h) // populate, then dirty re-harvest whose reply never comes
+      startHarvest()
+      vi.advanceTimersByTime(1500)
+      expect(cache()).toHaveLength(2) // late window: cache kept, still waiting
+      vi.advanceTimersByTime(8500)
+      expect(cache()).toHaveLength(0) // truly dropped → cleared
+      startHarvest() // and the phase is idle again → a fresh probe fires
+      expect(sentInputI(h)).toHaveLength(3)
+    })
+
+    it('still terminates on the no-spells line during the late window', () => {
+      vi.useFakeTimers()
+      const h = setup()
+      startHarvest()
+      vi.advanceTimersByTime(1500)
+      h.dispatch({ msg: 'msgs', messages: [{ text: "You don't know any spells." }] })
+      startHarvest() // terminator reset the phase → a fresh probe fires
+      expect(sentInputI(h)).toHaveLength(2)
+    })
+  })
+
+  // The rail is a grid row below the message log; while it's visible the
+  // `spell-row` class on #game-view floats the log over the map's bottom edge
+  // (style.css) so the rail's row reuses the log's old slot instead of
+  // shrinking the map. The class must track rail visibility exactly.
+  describe('spell-row layout mode (rail row + log-over-map)', () => {
+    const rail = (h: Harness) => h.view.querySelector<HTMLElement>('#spell-rail')!
+    const inSpellRow = (h: Harness) => h.view.classList.contains('spell-row')
+
+    it('engages when a harvest finds spells, not before', () => {
+      const h = setup()
+      expect(inSpellRow(h)).toBe(false)
+      fullHarvest(h)
+      expect(isHidden(rail(h))).toBe(false)
+      expect(inSpellRow(h)).toBe(true)
+    })
+
+    it('disengages (rail + log overlay) for X-mode and restores on exit', () => {
+      const h = setup()
+      fullHarvest(h)
+      h.dispatch({ msg: 'cursor', id: 2, loc: { x: 5, y: 5 } })
+      expect(isHidden(rail(h))).toBe(true)
+      expect(inSpellRow(h)).toBe(false)
+      h.dispatch({ msg: 'cursor', id: 2 }) // loc absent → leave X-mode
+      expect(isHidden(rail(h))).toBe(false)
+      expect(inSpellRow(h)).toBe(true)
+    })
+
+    it('never engages for a non-caster (no-spells harvest)', () => {
+      const h = setup()
+      startHarvest()
+      h.dispatch({ msg: 'msgs', messages: [{ text: "You don't know any spells." }] })
+      expect(inSpellRow(h)).toBe(false)
     })
   })
 
@@ -612,17 +737,17 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
     })
   })
 
-  // The ✦ tab hosts a quick-cast grid in the touch panel (no map coverage).
+  // The z tab hosts a quick-cast grid in the touch panel (no map coverage).
   // game-view supplies the grid DOM via the spellTab.render callback; touch.ts
   // hosts it and re-renders on refreshSpellTab() after each (re)harvest.
-  describe('✦ spell tab (touch-panel quick-cast grid)', () => {
+  describe('z spell tab (touch-panel quick-cast grid)', () => {
     const spellTab = (h: Harness) => h.view.querySelector<HTMLElement>('.tc-tab[data-tab="spells"]')
     const gridBtns = (h: Harness) => [...h.view.querySelectorAll<HTMLElement>('.tc-spell-grid .tc-spell-btn')]
     // Grid labels read "za"/"zb" (the literal cast keystroke), so match on that.
     const gridBtn = (h: Harness, letter: string) =>
-      gridBtns(h).find(b => b.querySelector('.tc-spell-letter')?.textContent === `z${letter}`)!
+      gridBtns(h).find(b => b.querySelector('.spell-letter')?.textContent === `z${letter}`)!
 
-    it('renders one grid button (tile + letter) per harvested spell when the ✦ tab is tapped', () => {
+    it('renders one grid button (tile + letter) per harvested spell when the z tab is tapped', () => {
       const h = setup()
       fullHarvest(h)
       spellTab(h)!.click()
@@ -653,19 +778,22 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       feedExtra(h) // settle the harvest's fallback timer
     })
 
-    it('omits the ✦ tab while spectating (no spells to cast)', () => {
+    it('omits the z tab while spectating (no spells to cast)', () => {
       const h = setup({ username: 'bob' })
       expect(spellTab(h)).toBeNull()
     })
 
-    it('keeps the ✦ tab hidden until a harvest finds spells, then reveals it', () => {
+    it('keeps the z tab hidden until a harvest finds spells, then reveals it (if enabled)', () => {
       const h = setup()
       expect(spellTab(h)!.style.display).toBe('none') // no spells yet → hidden
       fullHarvest(h)
-      expect(spellTab(h)!.style.display).not.toBe('none') // harvest found spells → shown
+      // Reveal is additionally gated on the ENABLE_SPELL_TAB experiment flag:
+      // with the tab toggled off it stays hidden even once spells exist.
+      if (ENABLE_SPELL_TAB) expect(spellTab(h)!.style.display).not.toBe('none')
+      else expect(spellTab(h)!.style.display).toBe('none')
     })
 
-    it('hides the ✦ tab again (and falls back to @) when a re-harvest finds no spells', () => {
+    it('hides the z tab again (and falls back to @) when a re-harvest finds no spells', () => {
       const h = setup()
       fullHarvest(h)
       spellTab(h)!.click()
