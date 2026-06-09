@@ -302,20 +302,18 @@ describe('lobby transitions', () => {
   })
 })
 
-// Silent spell harvest: fire `I`, capture the default columns, toggle with `!`
-// to capture power/damage/range/noise, then Escape — all without rendering the
-// menu. Driven via the dev hooks (window.__dcssHarvestSpells / __dcssSpellCache,
-// present because vitest runs with import.meta.env.DEV — cf. __dcssStore above).
-// These lock in the three regressions from review:
+// Silent spell harvest: fire `I`, capture the default columns, then Escape —
+// all without rendering the menu. Driven via the dev hooks
+// (window.__dcssHarvestSpells / __dcssSpellCache, present because vitest runs
+// with import.meta.env.DEV — cf. __dcssStore above).
+// These lock in the regressions from review:
 //   1. the preselected (last-cast) row's " a + " preface must be stripped, or
 //      its title and every column shift (parseSpellItem);
-//   2. same for the toggled extra columns' fixed-width slices (mergeSpellExtra);
-//   3. the close-swallow latch must not leak past the harvest and eat a later
+//   2. the close-swallow latch must not leak past the harvest and eat a later
 //      real menu's close_menu, and a teardown mid-harvest must reset cleanly.
-describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
+describe('spell harvest (silent I → Esc) + preface parsing', () => {
   type CachedSpell = {
     letter: string; title: string; schools?: string; fail?: string; level?: number
-    power?: string; damage?: string; range_string?: string; noise?: string
   }
   const hooks = () => window as unknown as { __dcssHarvestSpells: () => void; __dcssSpellCache: CachedSpell[] }
   const cache = () => hooks().__dcssSpellCache
@@ -327,39 +325,22 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
   const baseRow = (sign: '-' | '+', letter: string, hot: number, name: string, schools: string, fail: string, level: number) =>
     ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
        text: ` ${letter} ${sign} <lightgrey>${name.padEnd(32)}${schools.padEnd(26)}${fail}       ${level}      </lightgrey>` })
-  // Toggled extra row — fixed-width chop_string columns (no 2-space guarantee):
-  // name(32) power(10) damage(10) range(8) noise(14), after the preface.
-  const extraRow = (sign: '-' | '+', letter: string, hot: number, name: string, power: string, damage: string, range: string, noise: string) =>
-    ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
-       text: ` ${letter} ${sign} <lightgrey>${name.padEnd(32)}${power.padEnd(10)}${damage.padEnd(10)}${range.padEnd(8)}${noise.padEnd(14)}</lightgrey>` })
-
   // 'a' Freeze is the preselected '+' row — the case that regressed; 'c'
-  // Ozocubu's Armour is a normal '-' row (a buff: N/A damage/range). The
-  // preselected row carries a long, space-containing noise ("Almost silent",
-  // 13 chars): a left-in ' a + ' preface shifts the fixed-width slices by 5, so
-  // a near-full field gets truncated/garbled — which a short value would hide
-  // (the trailing column padding + .trim() absorb a small shift). That makes
-  // the extra-column slice genuinely sensitive to the preface bug.
+  // Ozocubu's Armour is a normal '-' row (control).
   const BASE = [
     baseRow('+', 'a', 97, 'Freeze', 'Ice', '1%', 1),
     baseRow('-', 'c', 99, "Ozocubu's Armour", 'Ice', '4%', 3),
   ]
-  const EXTRA = [
-    extraRow('+', 'a', 97, 'Freeze', '88%', '1d9', '1', 'Almost silent'),
-    extraRow('-', 'c', 99, "Ozocubu's Armour", '22%', 'N/A', 'N/A', 'Quiet'),
-  ]
   const startHarvest = () => hooks().__dcssHarvestSpells()
   const feedBase = (h: Harness) => h.dispatch({ msg: 'menu', tag: 'spell', items: BASE })
-  const feedExtra = (h: Harness) => h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: EXTRA })
-  const fullHarvest = (h: Harness) => { startHarvest(); feedBase(h); feedExtra(h) }
+  const fullHarvest = (h: Harness) => { startHarvest(); feedBase(h) }
   const sentInputI = (h: Harness) => sent(h).filter(m => m.msg === 'input' && (m as { text?: string }).text === 'I')
 
-  it('drives exactly the silent I → ! → Esc sequence and never shows an overlay', () => {
+  it('drives exactly the silent I → Esc sequence and never shows an overlay', () => {
     const h = setup()
     fullHarvest(h)
     expect(sent(h)).toEqual([
       { msg: 'input', text: 'I' },
-      { msg: 'input', text: '!' },
       { msg: 'key', keycode: 27 },
     ])
     expect(isHidden(overlay(h))).toBe(true)
@@ -376,7 +357,6 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
     expect(a).toMatchObject({ schools: 'Ice', fail: '1%', level: 1 })
     // The normal '-' row parses fine (control).
     expect(byLetter('c')).toMatchObject({ title: "Ozocubu's Armour", schools: 'Ice', fail: '4%', level: 3 })
-    feedExtra(h) // finish the harvest so the fallback timer is cleared
   })
 
   it('parses a 25-char schools string (single pad space before the failure column)', () => {
@@ -393,22 +373,6 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
     expect(byLetter('d')).toMatchObject({
       title: 'Momentum Strike', schools: 'Conjuration/Translocation', fail: '5%', level: 2,
     })
-    feedExtra(h) // finish the harvest so the fallback timer is cleared
-  })
-
-  it('merges the toggled extra columns by fixed-width slice for the "+" preselected row too', () => {
-    const h = setup()
-    fullHarvest(h)
-    // Regression: unstripped ' a + ' shifts every slice by 5; the 13-char noise
-    // is truncated ("Almost si…") unless the preface is stripped first.
-    expect(byLetter('a')).toMatchObject({ power: '88%', damage: '1d9', range_string: '1', noise: 'Almost silent' })
-    expect(byLetter('c')).toMatchObject({ power: '22%', damage: 'N/A', range_string: 'N/A', noise: 'Quiet' })
-  })
-
-  it('keeps a space-containing noise value intact (fixed-width slice, not a whitespace split)', () => {
-    const h = setup()
-    fullHarvest(h)
-    expect(byLetter('a').noise).toBe('Almost silent')
   })
 
   it('does NOT leak the close-swallow latch: a real menu opened after a harvest closes normally', () => {
@@ -514,8 +478,8 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       h.dispatch({ msg: 'menu', tag: 'spell', title: PROBE_TITLE, items: BASE })
       expect(isHidden(overlay(h))).toBe(true) // swallowed, not rendered
       expect(cache()).toHaveLength(2)
-      feedExtra(h) // the harvest continues normally from there
-      expect(byLetter('a')).toMatchObject({ power: '88%' })
+      // The harvest closed its menu normally (Escape sent, never rendered).
+      expect(sent(h)).toContainEqual({ msg: 'key', keycode: 27 })
     })
 
     it('blocks new probe injection during the late window (server menu may be open)', () => {
@@ -604,12 +568,8 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
   // A message can race into the brief harvest window that isn't part of our own
   // `I` round-trip. The harvest looks like normal play (activeMenu stays null),
   // so it must hand the channel back rather than mistake a foreign message for
-  // its own data — which would freeze input (phase stuck) or fire a stray
-  // Escape into a real menu (extra-phase hijack).
+  // its own data — which would freeze input (phase stuck).
   describe('foreign messages racing in mid-harvest', () => {
-    const escapes = (h: Harness) =>
-      sent(h).filter(m => m.msg === 'key' && (m as { keycode?: number }).keycode === 27)
-
     it('aborts the harvest when a non-spell menu races in, instead of freezing input', () => {
       const h = setup()
       startHarvest()  // I #1; phase 'base'
@@ -624,29 +584,7 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       // (harvestSpells bails while non-idle). With the bug it's still 'base'.
       startHarvest()
       expect(sentInputI(h)).toHaveLength(2)
-      feedBase(h); feedExtra(h)  // settle the new harvest's fallback timer
-    })
-
-    it('does not hijack a real menu opened during the extra phase, nor Escape it', () => {
-      const h = setup()
-      startHarvest()  // I; phase 'base'
-      feedBase(h)     // capture base, send `!`; phase 'extra', activeMenu still null
-      // A real menu opens mid-`!`-round-trip. It can't be ours — the extra
-      // re-send arrives as update_menu_items, never a fresh `menu` — so the
-      // harvest aborts and the menu renders (activeMenu set).
-      h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inv' },
-                   items: [{ level: 1, text: 'old', hotkeys: [97] }] })
-      expect(isHidden(overlay(h))).toBe(false)
-      expect(overlay(h).textContent).toContain('old')
-      // Its own item refresh must PATCH the menu, not be consumed as the
-      // harvest's extra columns and answered with an Escape. The extra-phase
-      // `!activeMenu` guard is the backstop: with both guards gone, this update
-      // fires keycode 27 into the open menu and never patches it.
-      h.dispatch({ msg: 'update_menu_items', chunk_start: 0,
-                   items: [{ level: 1, text: 'new', hotkeys: [97] }] })
-      expect(escapes(h)).toHaveLength(0)            // no stray Escape to the server
-      expect(isHidden(overlay(h))).toBe(false)      // menu still open
-      expect(overlay(h).textContent).toContain('new')  // patched, not hijacked
+      feedBase(h)  // settle the new harvest
     })
   })
 
@@ -657,8 +595,8 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
   // any LOSS ("Your memory of X unravels."), or a `=` reassign. The triggers are
   // precise — routine play (casting, plain viewing, combat log) must NOT poll.
   describe('re-harvest on a letter-map change', () => {
-    // Settle a re-harvest's own I → ! → Esc so its 1.5s fallback timer is cleared.
-    const settle = (h: Harness) => { feedBase(h); feedExtra(h) }
+    // Settle a re-harvest's own I → Esc so its 1.5s fallback timer is cleared.
+    const settle = (h: Harness) => { feedBase(h) }
 
     it('re-harvests when a spell is memorised (joined "finish memorising. Spell assigned to" line)', () => {
       const h = setup()
@@ -755,7 +693,7 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
     it('casts the tapped spell (z + letter) from the grid', () => {
       const h = setup()
       h.dispatch({ msg: 'input_mode', mode: 1 }) // command mode (+ the once-per-game auto-harvest)
-      feedBase(h); feedExtra(h)                   // complete that harvest → cache populated, idle
+      feedBase(h)                                 // complete that harvest → cache populated, idle
       spellTab(h)!.click()
       gridBtn(h, 'a').click()
       expect(sent(h)).toContainEqual({ msg: 'input', text: 'z' })
@@ -772,7 +710,6 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       startHarvest()
       h.dispatch({ msg: 'menu', tag: 'spell', items: [...BASE, baseRow('-', 'd', 100, 'Magic Dart', 'Conj', '3%', 1)] })
       expect(gridBtns(h)).toHaveLength(3)
-      feedExtra(h) // settle the harvest's fallback timer
     })
 
     it('omits the z tab while spectating (no spells to cast)', () => {
@@ -800,7 +737,6 @@ describe('spell harvest (silent I → ! → Esc) + preface parsing', () => {
       h.dispatch({ msg: 'menu', tag: 'spell', items: [] })
       expect(spellTab(h)!.style.display).toBe('none')
       expect(h.view.querySelector<HTMLElement>('.tc-tab[data-tab="micro"]')!.classList.contains('active')).toBe(true)
-      feedExtra(h) // settle the harvest's fallback timer
     })
   })
 })

@@ -60,16 +60,12 @@ interface SpellEntry {
   // `effect` / `range_string` are the server's spellset wire fields, present
   // only on describe-monster/item spell lists (the spell's damage effect and
   // range). The player's own memorised-spell list has neither — its harvest
-  // parser fills `fail`/`level` from the default columns and
-  // `power`/`damage`/`range_string`/`noise` from the toggled "extra" columns.
+  // parser fills `fail`/`schools`/`level` from the menu's default columns.
   effect?: string
   range_string?: string
   fail?: string
   schools?: string
   level?: number
-  power?: string
-  damage?: string
-  noise?: string
 }
 
 interface SpellBook {
@@ -266,21 +262,21 @@ export function buildGameView(
   // render it. The cache will feed a tap-to-cast spell panel (later steps).
   //
   // The spell menu is a ToggleableMenu with two column sets: the default
-  // (schools / failure% / level) arrives in the `menu` message, but the
-  // alternate (power / damage / range / noise) is only the items' `alt_text`
-  // and is NOT transmitted until a toggle. So we harvest in two phases:
-  //   base  → send `I`, capture the `menu` columns, then send `!`
-  //           (CMD_MENU_CYCLE_MODE — swaps text↔alt_text and re-emits all rows
-  //           as `update_menu_items`)
-  //   extra → capture that `update_menu_items`, merge the extra columns, Escape
-  // We don't display the extra columns yet; this just makes them available.
+  // (schools / failure% / level) arrives in the `menu` message; the alternate
+  // (power / damage / range / noise) is only the items' `alt_text` and is NOT
+  // transmitted until a `!` (CMD_MENU_CYCLE_MODE) toggle. We deliberately
+  // capture only the default set — nothing rendered uses the alternate
+  // columns, and skipping the toggle halves the harvest's round-trips (and
+  // with them the input-suppression window). If a UI ever surfaces
+  // power/damage/noise, re-add the second phase in the same change (it lives
+  // in git history: `mergeSpellExtra` + the 'extra' harvestPhase).
   let spellCache: SpellEntry[] = []
   // 'late-base' is the base phase after its input-suppression budget ran out:
   // the `I` reply is slower than HARVEST_SUPPRESS_MS, so the user gets the
   // input channel back, but we keep listening (up to HARVEST_LATE_MS) so the
   // late menu is still captured silently instead of rendering as a surprise
   // full-screen spell list with the rail abandoned empty for the whole game.
-  let harvestPhase: 'idle' | 'base' | 'late-base' | 'extra' = 'idle'
+  let harvestPhase: 'idle' | 'base' | 'late-base' = 'idle'
   let harvestTimer = 0
   // Input-suppression budget per harvest round-trip, and how much longer a
   // slow base reply is still accepted after suppression ends.
@@ -933,8 +929,8 @@ export function buildGameView(
       case 'menu': {
         const m = msg as unknown as MenuMsg
         const titlePlain = stripDcss(m.title?.text ?? '')
-        // Silent spell harvest, base phase: capture the default columns, then
-        // toggle for the extra ones (don't escape yet). See harvestSpells().
+        // Silent spell harvest: capture the menu's default columns, then
+        // Escape it closed. See harvestSpells().
         // In `late-base` (slow link; suppression already lifted) the user has
         // had the channel back, so a tag:'spell' menu could also be one THEY
         // opened (memorise, amnesia, `=` adjust all share the tag) — only
@@ -944,19 +940,19 @@ export function buildGameView(
             && (harvestPhase === 'base'
                 || (harvestPhase === 'late-base'
                     && /^Your spells \(describe\)/.test(titlePlain)))) {
+          clearTimeout(harvestTimer)
+          harvestPhase = 'idle'
           spellCache = (m.items ?? [])
             .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
             .map(parseSpellItem)
           exposeSpellCache()
-          harvestPhase = 'extra'
-          conn.send({ msg: 'input', text: '!' })  // CMD_MENU_CYCLE_MODE
-          armHarvestTimeout()
+          pendingHarvestClose = true
+          conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
           break  // swallow: never render the menu
         }
         // A `menu` arrived mid-harvest that isn't our spell menu (some other
-        // menu raced in after the silent `I`). It can't be ours: the base menu
-        // is captured + swallowed above, and the extra phase's re-send comes as
-        // `update_menu_items`, never a fresh `menu`. Abort the harvest so this
+        // menu raced in after the silent `I`). It can't be ours: our spell
+        // menu is captured + swallowed above. Abort the harvest so this
         // renders now — otherwise harvestPhase stays non-idle, isHarvesting()
         // stays true, and every input handler keeps early-returning until the
         // suppression fallback, leaving a real menu the user can see but can't
@@ -1034,24 +1030,6 @@ export function buildGameView(
         // unhighlighted entries when the server sent a single-item update to
         // mark the current selection.
         const m = msg as unknown as { chunk_start?: number; items?: MenuItem[] }
-        // Spell harvest, extra phase: this is the `!` toggle re-send carrying
-        // the power/damage/range/noise columns. Merge them, then Escape.
-        // `!activeMenu` confirms it's the harvest's own re-send, not an update
-        // for a real menu: the harvest never renders, so activeMenu stays null
-        // for its whole duration (it only starts from commandChannelIdle, which
-        // requires !activeMenu). A real menu's update has activeMenu set and
-        // must fall through to the patch path below — never hijacked + Escaped.
-        if (harvestPhase === 'extra' && m.items && !activeMenu) {
-          clearTimeout(harvestTimer)
-          harvestPhase = 'idle'
-          // No exposeSpellCache() here: the merge mutates the already-exposed
-          // entries in place, and nothing rendered (tile/letter/title/fail)
-          // comes from the extra columns — the base-phase render is current.
-          mergeSpellExtra(m.items)
-          pendingHarvestClose = true
-          conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
-          break
-        }
         if (activeMenu && m.items) {
           const start = m.chunk_start ?? 0
           const items = activeMenu.items ?? []
@@ -2356,26 +2334,6 @@ export function buildGameView(
     }
   }
 
-  // Merge the toggled "extra" columns from the `!` re-send into spellCache.
-  // Unlike the default row, _spell_extra_description is all fixed-width
-  // chop_string fields, so slice by position (a self-target's empty range
-  // would shift a whitespace split): after the preface the layout is
-  // name(32) power(10) damage(10) range(8) noise(14). Match rows by letter,
-  // not index, to stay robust against any non-spell entries.
-  function mergeSpellExtra(items: MenuItem[]): void {
-    const byLetter = new Map(spellCache.map((s) => [s.letter, s]))
-    for (const it of items) {
-      if (!it.hotkeys?.length) continue
-      const entry = byLetter.get(String.fromCharCode(it.hotkeys[0]))
-      if (!entry) continue
-      const s = stripSpellPreface(it.text)
-      entry.power = s.slice(32, 42).trim() || undefined
-      entry.damage = s.slice(42, 52).trim() || undefined
-      entry.range_string = s.slice(52, 60).trim() || undefined
-      entry.noise = s.slice(60, 74).trim() || undefined
-    }
-  }
-
   // Keep the dev inspection hook pointing at the current cache array, and
   // refresh both spell surfaces (the quick-cast rail and the z tab grid) so an
   // auto/re-harvest fills them in as the base then extra columns land.
@@ -2459,7 +2417,7 @@ export function buildGameView(
   }
 
   // True while a silent harvest owns the input channel. During this brief
-  // window (a couple of round-trips) the server is sitting in the spell menu
+  // window (one round-trip) the server is sitting in the spell menu
   // while the client still looks like normal play (activeMenu stays null), so
   // user input must be suppressed — otherwise a stray keystroke lands in that
   // menu (describing a spell, scrolling, or Escaping it) and desyncs the
@@ -2471,14 +2429,14 @@ export function buildGameView(
   // back — a keystroke they fire may be eaten by the still-open server menu,
   // which is the price of not locking input on a slow link.
   function isHarvesting(): boolean {
-    return harvestPhase === 'base' || harvestPhase === 'extra'
+    return harvestPhase === 'base'
   }
 
   // The command channel is idle: the server is sitting at the command prompt
   // with nothing transient in front of it — no menu/overlay/CRT/dialog, no
   // examine cursor (X-mode), no `--more--` pager, no in-log y/n prompt, and no
   // silent harvest already in flight. Only then is it safe to inject a
-  // command-level keystroke (a harvest's `I`/`!` or a rail `z<letter>`).
+  // command-level keystroke (a harvest's `I` or a rail `z<letter>`).
   // The earlier guards listed only the menu/overlay subset, so a rail tap or an
   // auto/re-harvest fired during a `--more--` or a channel-2 prompt leaked a
   // stray keystroke into it (eating the pager/answering the prompt, or — for a
@@ -2534,38 +2492,28 @@ export function buildGameView(
     if (harvestSpells()) spellsDirty = false
   }
 
-  // Fallback if an expected harvest message never arrives within the
-  // input-suppression budget. In `base` the `I` reply is missing — either the
-  // character has no spells and the MSG_NO_SPELLS fast path was lost, or the
-  // link is just slower than the budget (RTT > 1.5s is real on mobile). Don't
-  // give up: drop to `late-base`, which lifts input suppression but keeps
-  // listening for the menu so a slow reply is still captured silently — the
-  // old reset-to-idle here let that late menu render as an unrequested
-  // full-screen spell list AND left the rail empty for the rest of the game
-  // (autoHarvestedThisGame stays true; nothing retries). Only after the
-  // extended `late-base` window also passes do we conclude the frame was
-  // truly dropped and clear the cache. In `extra` the base columns are
-  // captured but the toggle re-send was lost; keep them, but the menu is
-  // still open server-side, so Escape it (else the next keystroke is eaten).
+  // Fallback if the harvest's `I` reply never arrives within the
+  // input-suppression budget — either the character has no spells and the
+  // MSG_NO_SPELLS fast path was lost, or the link is just slower than the
+  // budget (RTT > 1.5s is real on mobile). Don't give up: drop to
+  // `late-base`, which lifts input suppression but keeps listening for the
+  // menu so a slow reply is still captured silently — the old reset-to-idle
+  // here let that late menu render as an unrequested full-screen spell list
+  // AND left the rail empty for the rest of the game (autoHarvestedThisGame
+  // stays true; nothing retries). Only after the extended `late-base` window
+  // also passes do we conclude the frame was truly dropped and clear the
+  // cache.
   function armHarvestTimeout(): void {
     clearTimeout(harvestTimer)
     harvestTimer = window.setTimeout(() => {
-      if (harvestPhase === 'base') {
-        harvestPhase = 'late-base'
-        harvestTimer = window.setTimeout(() => {
-          if (harvestPhase !== 'late-base') return
-          spellCache = []
-          harvestPhase = 'idle'
-          exposeSpellCache()
-        }, HARVEST_LATE_MS)
-        return
-      }
-      if (harvestPhase === 'extra') {
-        pendingHarvestClose = true
-        conn.send({ msg: 'key', keycode: 27 })
-      }
-      harvestPhase = 'idle'
-      exposeSpellCache()
+      if (harvestPhase !== 'base') return
+      harvestPhase = 'late-base'
+      harvestTimer = window.setTimeout(() => {
+        if (harvestPhase !== 'late-base') return
+        spellCache = []
+        harvestPhase = 'idle'
+        exposeSpellCache()
+      }, HARVEST_LATE_MS)
     }, HARVEST_SUPPRESS_MS)
   }
 
