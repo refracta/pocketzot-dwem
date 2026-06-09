@@ -277,7 +277,6 @@ export function buildGameView(
   let spellCache: SpellEntry[] = []
   let harvestPhase: 'idle' | 'base' | 'extra' = 'idle'
   let harvestTimer = 0
-  let harvestStartTs = 0  // dev: stamp at fire, for elapsed in the debug trace
   // Set when we send the harvest-closing Escape so the matching server
   // close_menu — for a menu we deliberately never pushed onto menuStack — is
   // swallowed instead of popping/clearing our real overlay state.
@@ -619,15 +618,14 @@ export function buildGameView(
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
       (on) => setRenderMode(on === undefined ? (renderMode === 'tiles' ? 'ascii' : 'tiles') : (on ? 'tiles' : 'ascii'))
     // Spell harvest: __dcssHarvestSpells() fires a silent `I` and fills
-    // __dcssSpellCache with the parsed memorised spells; the harvest traces its
-    // phases to the console (dbgSpell).
+    // __dcssSpellCache with the parsed memorised spells.
     ;(window as unknown as { __dcssHarvestSpells: () => void }).__dcssHarvestSpells = harvestSpells
     // __dcssFakeSpells(n) — layout aid: pad the cache to n fake spells (cloning
     // the real harvested tiles so the icons still render, with distinct letters)
     // to eyeball rail/grid overflow + scrolling. Tapping a fake casts a bogus
     // letter (harmless — the server just rejects it). Re-harvest to reset.
     ;(window as unknown as { __dcssFakeSpells: (n?: number) => void }).__dcssFakeSpells = (n = 24) => {
-      if (spellCache.length === 0) { dbgSpell('no harvested spells to clone — enter the game first'); return }
+      if (spellCache.length === 0) return
       const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
       const real = spellCache.slice()
       spellCache = Array.from({ length: Math.min(n, letters.length) }, (_, i) => ({
@@ -636,7 +634,6 @@ export function buildGameView(
         title: `${real[i % real.length].title} ${i + 1}`,
       }))
       exposeSpellCache()
-      dbgSpell(`populated ${spellCache.length} fake spells`)
     }
     exposeSpellCache()
   }
@@ -931,7 +928,6 @@ export function buildGameView(
             .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
             .map(parseSpellItem)
           exposeSpellCache()
-          dbgSpell(`base columns: ${spellCache.length} spell(s); toggling for extra…`)
           harvestPhase = 'extra'
           conn.send({ msg: 'input', text: '!' })  // CMD_MENU_CYCLE_MODE
           armHarvestTimeout()
@@ -1028,7 +1024,6 @@ export function buildGameView(
           harvestPhase = 'idle'
           mergeSpellExtra(m.items)
           exposeSpellCache()
-          dbgSpell(`complete in ${Date.now() - harvestStartTs}ms`)
           pendingHarvestClose = true
           conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
           break
@@ -2419,12 +2414,6 @@ export function buildGameView(
     spellRail.style.display = ''
   }
 
-  // Dev-only harvest trace. Prefixed + styled so it's easy to filter in the
-  // console. No-op in production builds (tree-shaken via the env guard).
-  function dbgSpell(...args: unknown[]): void {
-    if (import.meta.env.DEV) console.log('%c[spell-harvest]', 'color:#5ec8ff;font-weight:bold', ...args)
-  }
-
   // True while a silent harvest owns the input channel. During this brief
   // window (a couple of round-trips) the server is sitting in the spell menu
   // while the client still looks like normal play (activeMenu stays null), so
@@ -2471,8 +2460,6 @@ export function buildGameView(
   // marks itself done when it really fired, not when the guard bailed).
   function harvestSpells(): boolean {
     if (!commandChannelIdle()) return false
-    harvestStartTs = Date.now()
-    dbgSpell('fired (silent I)…')
     harvestPhase = 'base'
     conn.send({ msg: 'input', text: 'I' })
     armHarvestTimeout()
@@ -2507,11 +2494,9 @@ export function buildGameView(
     harvestTimer = window.setTimeout(() => {
       if (harvestPhase === 'base') {
         spellCache = []
-        dbgSpell('timed out in base phase — no spell menu opened (no spells?)')
       } else if (harvestPhase === 'extra') {
         pendingHarvestClose = true
         conn.send({ msg: 'key', keycode: 27 })
-        dbgSpell('timed out in extra phase — toggle re-send lost; keeping base columns only')
       }
       harvestPhase = 'idle'
       exposeSpellCache()
