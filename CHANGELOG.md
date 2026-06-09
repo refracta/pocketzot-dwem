@@ -9,6 +9,10 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-08
+
+- Polished the appearance of in-game menus.
+
 ## 2026-06-04
 
 - Prompts and messages no longer drop a literal `<` character.
