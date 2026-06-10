@@ -365,7 +365,6 @@ export function buildGameView(
   const mapWrap = document.createElement('div')
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
-  mapWrap.appendChild(monsterListView.element)
 
   // Double-tap the map to toggle zoom. Bypassed while X-mode is active
   // (font scale is overridden there) — single-tap behavior is undefined on
@@ -520,6 +519,11 @@ export function buildGameView(
 
   view.appendChild(uiOverlay)
   view.appendChild(mapWrap)
+  // Direct grid child (not inside #map-wrap) so each orientation can place
+  // it: portrait floats it over the map cell (grid-area:map + abspos, same
+  // containing-block trick as #more-btn), landscape slots it into the
+  // sidebar between HUD and spell rail.
+  view.appendChild(monsterListView.element)
   view.appendChild(msgLog)
   view.appendChild(spellRail)
   view.appendChild(moreBtn)

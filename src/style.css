@@ -714,7 +714,7 @@ html, body {
   outline: none;
 }
 
-/* Map wrapper (positions floating monster list over map) */
+/* Map wrapper */
 #map-wrap {
   grid-area: map;
   position: relative;
@@ -807,7 +807,7 @@ html, body {
      hidden row's descenders no longer bleed in at the top. It also makes the
      content box no longer an exact 5×line-box multiple, removing the
      boundary-aligned cut that made the artifact possible. */
-  padding: 0.2rem 0.0rem;
+  padding: 0.2rem 0.2rem;
   cursor: pointer;
   /* Bottom-pinned chat-log pattern: column-reverse lays children from the
      visual bottom upward, which lets the browser keep scroll naturally at
@@ -1120,7 +1120,7 @@ html, body {
 #game-hud {
   grid-area: hud;
   background: var(--bg);
-  padding: 0.2rem 0.0rem;
+  padding: 0.2rem 0.2rem;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -1150,13 +1150,16 @@ html, body {
 }
 
 #monster-list {
-  position: absolute;
-  top: 0.25rem;
-  left: 0.25rem;
+  /* Shared card styling. Placement is orientation-specific and lives in the
+     media blocks: portrait floats it over the map's top-left, landscape slots
+     it into the sidebar. position:relative is the in-flow default and the
+     containing block for the abspos chevron / "+N" chip in both modes;
+     portrait promotes it to absolute so the float overlays the map without
+     consuming layout space. */
+  position: relative;
   z-index: 2;
   font-size: 0.82rem;
   font-family: var(--font-mono);
-  max-width: calc(100% - 0.5rem);
   /* No max-height / overflow: the JS caps content at MAX_ROWS rows, with
      a small .ml-corner-more chip in the bottom-right corner when more
      groups exist. The panel auto-sizes and never scrolls. Tapping opens
@@ -1173,6 +1176,22 @@ html, body {
 }
 
 #monster-list:empty { display: none; }
+
+/* Portrait: float over the map's top-left. An abspos grid item's containing
+   block is its grid area (same trick as #more-btn), so this overlays the map
+   cell without consuming layout space; max-width keeps a 0.25rem gutter each
+   side. Scoped to portrait — like the spell-row log float above — so the
+   landscape block can place the in-flow card without neutralizing each float
+   property individually. */
+@media (orientation: portrait) {
+  #monster-list {
+    grid-area: map;
+    position: absolute;
+    top: 0.25rem;
+    left: 0.25rem;
+    max-width: calc(100% - 0.5rem);
+  }
+}
 
 /* Red outline when any hostile is visible — ambient danger cue. Differs
    from the baseline grey outline by both hue AND thickness (1px → 2px),
@@ -2455,45 +2474,76 @@ html, body {
 .crt-highlight { background: rgba(255,255,100,0.15); display: block; }
 
 /* ── Landscape layout ────────────────────────────────────────
-   3 columns. Left: msg log on top, d-pad on bottom.
-   Center: map (with floating monster list).
-   Right: HUD on top, touch panel (Esc/tabs/buttons/footer) on bottom.
+   2 columns: the map takes everything left of a 15rem sidebar.
+   The sidebar groups info at the top (HUD, then monster list) and
+   controls at the bottom (quick-cast rail, then touch panel), with
+   a flexible spacer row holding the slack between them — so the
+   monster list sits directly under the HUD rather than drifting to
+   the controls on a tall sidebar (e.g. iPad). The message log
+   floats over the map's top edge on a translucent scrim (the
+   portrait spell-row trick, anchored top instead of bottom), and
+   the d-pad floats over the bottom-left corner.
    ──────────────────────────────────────────────────────────── */
 @media (orientation: landscape) {
   #app { padding-bottom: 0; }
 
   #game-view {
-    grid-template-columns: calc(12rem + 4px) minmax(0, 1fr) 15rem;
-    grid-template-rows: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) 15rem;
+    /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
+       HUD+monster list to the top and spell rail+panel to the bottom. The HUD
+       row is minmax(0, auto): content-sized when there's room, but able to
+       shrink so it scrolls (overflow-y:auto below) when a short landscape
+       viewport can't fit everything — keeping the bottom controls visible. */
+    grid-template-rows: minmax(0, auto) auto 1fr auto auto;
     grid-template-areas:
-      "msg  map  hud"
-      "dpad map  panel";
+      "map hud"
+      "map mons"
+      "map ."
+      "map spells"
+      "map panel";
     column-gap: 0;
   }
 
   /* Inventory / menus / ui-push overlays render only over the map area
-     (not over the side columns), and stack above the floating monster
-     list via z-index. */
+     (not over the sidebar), and stack above the floating log, d-pad and
+     monster list via z-index. */
   #ui-overlay {
     grid-area: map;
     position: relative;
     z-index: 5;
   }
 
+  /* The log floats over the map's top edge — the portrait spell-row
+     pattern (an abspos grid item's containing block is its grid area),
+     anchored top instead of bottom. height: var(--msglog-h) and the
+     column-reverse bottom-pin come from the base rule. */
   #game-messages {
-    grid-area: msg;
-    height: auto;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    grid-area: map;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    z-index: 3;
+    background: color-mix(in srgb, var(--bg) 30%, transparent);
   }
 
-  /* --more-- prompt: anchor to the bottom of the msg column with a
-     stacking context so it sits on top of #game-messages content. */
+  /* Monster list: in-flow sidebar card directly under the HUD (the spacer row
+     separates it from the bottom controls). The float (abspos/top/left/
+     max-width) is portrait-scoped, so this only sets its sidebar placement —
+     the base rule's position:relative already keeps the abspos chevron and
+     "+N" chip anchored to the card. The :empty rule still collapses the row
+     when no monsters are visible; margins align the card with the HUD's
+     padding (0.3rem 0.4rem). */
+  #monster-list {
+    grid-area: mons;
+    margin: 0.3rem 0.4rem;
+  }
+
+  /* --more-- re-anchors directly below the floating log (the base rule
+     already provides grid-area:map, absolute, left/right, z-index 4). */
   #more-btn {
-    grid-area: msg;
-    align-self: end;
-    position: relative;
-    z-index: 4;
+    top: var(--msglog-h);
+    bottom: auto;
   }
 
   #map-wrap { grid-area: map; }
@@ -2501,8 +2551,6 @@ html, body {
   #game-hud {
     grid-area: hud;
     border-top: none;
-    border-left: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
     overflow-y: auto;
     padding: 0.3rem 0.4rem;
   }
@@ -2517,16 +2565,30 @@ html, body {
     display: contents;
   }
 
+  /* D-pad floats over the map's bottom-left corner (the same float trick
+     as the message log above), with translucent buttons so the map reads
+     through. */
   .tc-dpad {
-    grid-area: dpad;
-    justify-self: start;
+    grid-area: map;
     align-self: end;
-    margin: 0.35rem 0 0 0;
+    justify-self: start;
+    position: relative;
+    z-index: 3;
+    margin: 0.3rem;
+  }
+  .tc-dpad-btn {
+    background: color-mix(in srgb, var(--surface2) 20%, transparent);
+    color: color-mix(in srgb, var(--text) 55%, transparent);
+  }
+  /* The center "·" (.wait) has its own dimmer color at higher specificity than
+     .tc-dpad-btn, so fade it explicitly too. :active stays fully opaque (the
+     base var(--accent) rule wins) for press feedback. */
+  .tc-dpad-btn.wait {
+    color: color-mix(in srgb, var(--text-dim) 55%, transparent);
   }
 
   .tc-panel {
     grid-area: panel;
-    border-top: 1px solid var(--border);
     padding: 0;
     margin: 0.35rem 0 0 0;
   }
@@ -2535,13 +2597,13 @@ html, body {
      while a CRT/menu is active. */
   #menu-controls { grid-area: panel; }
 
-  /* Spectator mode: bar sits under the message log (bottom-left, where the
-     d-pad would be). The chip is hidden — the column is too narrow to fit
-     it without clipping, and the watched player's name already shows in
-     the HUD stats line. No border-right: matches the d-pad area when
-     playing — column borders end at the row boundary. */
+  /* Spectator mode appends no touch/menu controls, so the panel slot is
+     free — the bar takes it (bottom of the sidebar; its base grid-area
+     `touch` is unmapped here and would create implicit tracks). The chip
+     is hidden — the sidebar is too narrow to fit it without clipping, and
+     the watched player's name already shows in the HUD stats line. */
   #spectator-bar {
-    grid-area: dpad;
+    grid-area: panel;
     border-top: 0;
   }
   #spectator-bar .lobby-account-chip { display: none; }
@@ -2550,26 +2612,34 @@ html, body {
      elements to maximize overlay space (a portrait-mode assumption).
      In landscape the overlay is confined to the map cell, so these
      panels stay visible alongside it. !important is needed to win
-     against the inline style. */
-  #game-messages { display: block !important; }
+     against the inline style. The log forces flex (not block) so the
+     base column-reverse bottom-pin survives — block would render the
+     newest message at the top. #spell-rail is deliberately absent:
+     renderSpellRail hides it via inline display (X-mode / spectating /
+     no spells) and that must keep winning. */
+  #game-messages { display: flex  !important; }
   #game-hud      { display: flex  !important; }
   #touch-controls { display: contents !important; }
 
-  /* Spell-row mode doesn't apply in landscape — the log is a sidebar column,
-     so there's no log slot to trade for a rail row (the portrait spell-row
-     rules are scoped to their own orientation query). Float the rail across
-     the map's bottom-right corner instead (the buttons keep their own
-     translucent scrims, like the old vertical rail). */
+  /* Spell rail: in-flow sidebar row directly above the touch panel. Base
+     styling applies — including the fixed one-row height, so the rail
+     shows the first six 36px buttons that fit the 15rem column (zero
+     horizontal padding) and the wrapped line beyond is clipped (same
+     clip behavior as portrait). */
   #spell-rail {
-    grid-area: map;
-    align-self: end;
-    justify-self: end;
-    position: relative;
-    z-index: 3;
-    margin: 0.3rem;
-    padding: 0;
-    background: none;
-    height: 36px;
+    grid-area: spells;
+    padding: 0.25rem 0.0rem;
+  }
+
+  /* QWERTY overlay: the base key height scales with viewport WIDTH
+     (11vw, clamped) — sensible in portrait where width is the narrow
+     dimension, but in landscape it pins every key at the clamp ceiling
+     and the keyboard swallows ~80% of a phone screen. Scale against
+     height here instead, keeping the whole keyboard to roughly 40-45%
+     of the viewport. */
+  #kbd-overlay {
+    --kbd-key-h: clamp(1.8rem, 9vh, 2.8rem);
+    --kbd-row-gap: clamp(0.25rem, 1.2vh, 0.5rem);
   }
 }
 
