@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-10
+
+- Spellcasters now get a quick-cast row below the message log, with tappable
+  icons that send `z` plus the spell's letter.
+
 ## 2026-06-08
 
 - The skills menu (`m`) now displays in a single column.
