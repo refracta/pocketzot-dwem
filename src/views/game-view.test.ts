@@ -211,6 +211,22 @@ describe('menu handler', () => {
     h.dispatch({ msg: 'close_menu' })
     expect(isHidden(overlay(h))).toBe(true)
   })
+
+  it('update_menu_items patches the chunk in place, leaving items outside it intact', () => {
+    const h = setup()
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler', hotkeys: [98] },
+    ] })
+    // Server refresh of item index 1 only (e.g. a selection mark / quantity
+    // change) — the splice must replace exactly that chunk and re-render.
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 1, items: [
+      { level: 2, text: 'b - a buckler (worn)', hotkeys: [98] },
+    ] })
+    expect(isHidden(overlay(h))).toBe(false)
+    expect(overlay(h).textContent).toContain('a +0 short sword')   // untouched
+    expect(overlay(h).textContent).toContain('a buckler (worn)')   // patched
+  })
 })
 
 describe('show_dialog / hide_dialog', () => {
@@ -319,8 +335,11 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
   const cache = () => hooks().__dcssSpellCache
   const byLetter = (l: string) => cache().find(s => s.letter === l)!
 
-  // Default-column row. Columns are separated by 2+ spaces (the parser splits on
-  // padding runs). `sign` is '-' for a normal row but '+' for the preselected
+  // Default-column row, fixed-width like the engine's _spell_base_description:
+  // name padded to 32 chars, schools padded out to column 58, then the
+  // fail/level tail. The parser slices by position and whitespace-splits only
+  // that tail (see parseSpellItem) — keep the padEnd widths, not the spacing.
+  // `sign` is '-' for a normal row but '+' for the preselected
   // you.last_cast_spell row (SpellMenuEntry::_get_text_preface in the engine).
   const baseRow = (sign: '-' | '+', letter: string, hot: number, name: string, schools: string, fail: string, level: number) =>
     ({ level: 2, hotkeys: [hot], tiles: [{ t: 1, tex: 0 }],
@@ -595,8 +614,8 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
   // any LOSS ("Your memory of X unravels."), or a `=` reassign. The triggers are
   // precise — routine play (casting, plain viewing, combat log) must NOT poll.
   describe('re-harvest on a letter-map change', () => {
-    // Settle a re-harvest's own I → Esc so its 1.5s fallback timer is cleared.
-    const settle = (h: Harness) => { feedBase(h) }
+    // The trailing feedBase(h) in each test settles the re-harvest it
+    // triggered (the menu capture clears the 1.5s fallback timer).
 
     it('re-harvests when a spell is memorised (joined "finish memorising. Spell assigned to" line)', () => {
       const h = setup()
@@ -609,7 +628,7 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       // so the msgs handler itself must fire the refresh.
       h.dispatch({ msg: 'msgs', messages: [{ text: "You finish memorising. Spell assigned to 'b'." }] })
       expect(sentInputI(h)).toHaveLength(2)
-      settle(h)
+      feedBase(h)
     })
 
     it('re-harvests on a level-up / Djinni spell gift (no "memorising" — only "Spell assigned to")', () => {
@@ -622,7 +641,7 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       // "You finish memorising" trigger missed this, stranding the rail stale.
       h.dispatch({ msg: 'msgs', messages: [{ text: "The power to cast Call Canine Familiar wells up from within. Spell assigned to 'g'." }] })
       expect(sentInputI(h)).toHaveLength(2)
-      settle(h)
+      feedBase(h)
     })
 
     it('re-harvests when a spell is lost ("Your memory of X unravels.")', () => {
@@ -630,7 +649,7 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       fullHarvest(h)
       h.dispatch({ msg: 'msgs', messages: [{ text: 'Your memory of Freeze unravels.' }] })
       expect(sentInputI(h)).toHaveLength(2)
-      settle(h)
+      feedBase(h)
     })
 
     it('does NOT re-harvest on unrelated messages (no needless polling)', () => {
@@ -645,7 +664,7 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       // Spend the once-per-game auto-harvest first, so the resolving input_mode→1
       // can't be mistaken for it.
       h.dispatch({ msg: 'input_mode', mode: 1 })
-      settle(h)
+      feedBase(h)
       expect(sentInputI(h)).toHaveLength(1)
       // `=` opens the spell list titled "(adjust)" — all spell lists share
       // tag:"spell", so the title is the discriminator. Flags dirty but does not
@@ -656,13 +675,13 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       h.dispatch({ msg: 'close_menu' })
       h.dispatch({ msg: 'input_mode', mode: 1 })
       expect(sentInputI(h)).toHaveLength(2)
-      settle(h)
+      feedBase(h)
     })
 
     it('does NOT re-harvest when the player merely views the spell list (I/describe)', () => {
       const h = setup()
       h.dispatch({ msg: 'input_mode', mode: 1 })
-      settle(h)
+      feedBase(h)
       expect(sentInputI(h)).toHaveLength(1)
       // Same tag, but a "(describe)" title — viewing changes no letters.
       h.dispatch({ msg: 'menu', tag: 'spell', title: { text: 'Your spells (describe)' }, items: BASE })

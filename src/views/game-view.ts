@@ -278,8 +278,8 @@ export function buildGameView(
   // full-screen spell list with the rail abandoned empty for the whole game.
   let harvestPhase: 'idle' | 'base' | 'late-base' = 'idle'
   let harvestTimer = 0
-  // Input-suppression budget per harvest round-trip, and how much longer a
-  // slow base reply is still accepted after suppression ends.
+  // Input-suppression budget for the harvest's single `I` round-trip, and how
+  // much longer a slow reply is still accepted after suppression ends.
   const HARVEST_SUPPRESS_MS = 1500
   const HARVEST_LATE_MS = 8500
   // Set when we send the harvest-closing Escape so the matching server
@@ -940,8 +940,7 @@ export function buildGameView(
             && (harvestPhase === 'base'
                 || (harvestPhase === 'late-base'
                     && /^Your spells \(describe\)/.test(titlePlain)))) {
-          clearTimeout(harvestTimer)
-          harvestPhase = 'idle'
+          resetHarvest()  // timer + phase; the latch is re-set just below
           spellCache = (m.items ?? [])
             .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
             .map(parseSpellItem)
@@ -2336,7 +2335,7 @@ export function buildGameView(
 
   // Keep the dev inspection hook pointing at the current cache array, and
   // refresh both spell surfaces (the quick-cast rail and the z tab grid) so an
-  // auto/re-harvest fills them in as the base then extra columns land.
+  // auto/re-harvest fills them in when its menu capture lands.
   function exposeSpellCache(): void {
     if (import.meta.env.DEV)
       (window as unknown as { __dcssSpellCache: SpellEntry[] }).__dcssSpellCache = spellCache
@@ -2451,11 +2450,15 @@ export function buildGameView(
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
   }
 
-  // Abort any in-flight harvest and clear its latches. Called from the
-  // full-state teardowns (layer:"game", close_all_menus, go_lobby) so a bulk
-  // menu close or a game transition mid-harvest can't leave input suppressed
-  // (harvestPhase stuck) or pendingHarvestClose latched — the latter would
-  // otherwise swallow the NEXT genuine close_menu and strand a real overlay.
+  // End any in-flight harvest and clear its latches — every harvest-exit
+  // path routes through here so the timer/phase/latch lifecycle lives in one
+  // place: the successful menu capture (which re-latches pendingHarvestClose
+  // right after), the foreign-menu abort, the no-spells terminator, and the
+  // full-state teardowns (layer:"game", close_all_menus, go_lobby). The
+  // teardown calls are what keep a bulk menu close or game transition
+  // mid-harvest from leaving input suppressed (harvestPhase stuck) or
+  // pendingHarvestClose latched — the latter would otherwise swallow the
+  // NEXT genuine close_menu and strand a real overlay.
   function resetHarvest(): void {
     clearTimeout(harvestTimer)
     harvestPhase = 'idle'
@@ -2510,8 +2513,8 @@ export function buildGameView(
       harvestPhase = 'late-base'
       harvestTimer = window.setTimeout(() => {
         if (harvestPhase !== 'late-base') return
+        resetHarvest()
         spellCache = []
-        harvestPhase = 'idle'
         exposeSpellCache()
       }, HARVEST_LATE_MS)
     }, HARVEST_SUPPRESS_MS)
