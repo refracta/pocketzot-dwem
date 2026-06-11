@@ -1558,6 +1558,47 @@ html, body {
 }
 .hg-warn:empty { display: none; }
 
+/* Square HUD (the landscape template — StatsView.squareTemplate). Mirrors
+   the reference stats panel (game.html #stats): Health/Magic caption lines
+   with right-anchored bars, then a 45/55 two-column block pairing AC|Str,
+   EV|Int, SH|Dex, XL+Next|Place, Noise|Time. Doom and Contam ride the Str
+   and Int rows (reference #stats_doom_ui / #stats_contam_ui), so the danger
+   meters get a real slot instead of the compact row's clipped right end. */
+.hs-species {
+  font-size: 0.75rem;
+  line-height: 1.2;
+  display: flex;
+  align-items: baseline;
+}
+.hs-species #hud-species { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-sq-gold { margin-left: 0.5em; white-space: nowrap; flex-shrink: 0; }
+/* Caption + value at the reference's stat size; the bar anchors right at the
+   reference's 55% width so the Health and Magic bars start aligned. It may
+   shrink (never grow) when a drained "(real max)" lengthens the value. */
+.hud-sq-barline { font-size: 0.7rem; }
+.hud-sq-barline .hg-bar-cell {
+  flex: 1 1 55%;
+  max-width: 55%;
+  margin-left: auto;
+}
+.hud-grid {
+  display: grid;
+  /* The reference splits 45%/55%, but its panel is wider — at 15rem that
+     wastes width the right column needs ("Str: 5(10) Doom: 40%"). Size the
+     left column to its widest cell (XL+Next or Noise+bar) instead; minmax(0)
+     keeps a long right cell overflow-painting rather than pushing the grid
+     wide. */
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+.hud-grid > span { white-space: nowrap; }
+/* Doom/Contam offset from the Str/Int values (reference uses fixed margins;
+   ours is smaller — the worst case "Str: 5(10) Doom: 40%" runs within a few
+   px of the sidebar edge) */
+.hud-sq-warn { margin-left: 0.5em; }
+
 /* Status row is locked to a single fixed-height line. flex-wrap:nowrap +
    overflow:hidden prevents 10+ active lights from wrapping to a second
    row, which would shrink the map (grid `1fr`) and risk a row drop. */
@@ -2486,7 +2527,9 @@ html, body {
 .crt-highlight { background: rgba(255,255,100,0.15); display: block; }
 
 /* ── Landscape layout ────────────────────────────────────────
-   2 columns: the map takes everything left of a 15rem sidebar.
+   2 columns: the map takes everything left of a 16rem sidebar.
+   (The map binds on viewport height, so sidebar width only trims
+   the map's outermost expansion columns, never its cell size.)
    The sidebar groups info at the top (HUD, then monster list) and
    controls at the bottom (quick-cast rail, then touch panel), with
    a flexible spacer row holding the slack between them — so the
@@ -2500,7 +2543,7 @@ html, body {
   #app { padding-bottom: 0; }
 
   #game-view {
-    grid-template-columns: minmax(0, 1fr) 15rem;
+    grid-template-columns: minmax(0, 1fr) 16rem;
     /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
        row is minmax(0, auto): content-sized when there's room, but able to
@@ -2539,17 +2582,18 @@ html, body {
     background: color-mix(in srgb, var(--bg) 30%, transparent);
   }
 
-  /* Monster list: in-flow sidebar card directly under the HUD (the spacer row
-     separates it from the bottom controls). The float (abspos/top/left/
-     max-width) is portrait-scoped, so this only sets its sidebar placement —
-     the base rule's position:relative already keeps the abspos chevron and
-     "+N" chip anchored to the card. The :empty rule still collapses the row
-     when no monsters are visible; margins align the card with the HUD's
-     padding (0.3rem 0.4rem). */
-  #monster-list {
-    grid-area: mons;
-    margin: 0.3rem 0.4rem;
-  }
+  /* Monster list: removed in landscape for now. As an in-flow sidebar card
+     (its previous home, the `mons` grid row) it was the sidebar's only
+     unbounded-height element — five tile rows crowded out the HUD above and
+     collapsed the touch panel below. The map is wide enough here that every
+     listed monster is visible on it anyway. Known costs: no hostile-alarm
+     outline, and the full monster panel is unreachable in landscape (the
+     list tap is its only entry point). The intended future home is a float
+     over the map below the message log, like the portrait float — until
+     then the `mons` grid row stays in the template (it collapses to zero
+     height) so this is a one-rule revert. JS keeps updating the hidden
+     element; display:none subtree mutations are effectively free. */
+  #monster-list { display: none; }
 
   /* --more-- re-anchors directly below the floating log (the base rule
      already provides grid-area:map, absolute, left/right, z-index 4). */
@@ -2586,7 +2630,9 @@ html, body {
     justify-self: start;
     position: relative;
     z-index: 3;
-    margin: 0.3rem;
+    /* Bottom margin matches the sidebar panel's home-indicator lift (see
+       the .tc-panel comment below) so ↓/↘ taps don't ride the home swipe. */
+    margin: 0.3rem 0.3rem 1.25rem;
   }
   .tc-dpad-btn {
     background: color-mix(in srgb, var(--surface2) 20%, transparent);
@@ -2604,15 +2650,30 @@ html, body {
     color: color-mix(in srgb, var(--text-dim) 55%, transparent);
   }
 
+  /* The 1.25rem bottom margins here (panel, menu controls, spectator bar,
+     d-pad) lift the bottom-row buttons clear of the iOS home-indicator
+     gesture zone (~20px), where taps get swallowed by the swipe-up-home
+     gesture. Portrait gets this from #app's --app-bottom-pad, which this
+     block zeroes to keep the map full height — padding #app here instead
+     would shrink the height-bound map cells. (No viewport-fit=cover, so
+     env(safe-area-inset-bottom) is 0 and the gap must be a fixed value.) */
   .tc-panel {
     grid-area: panel;
     padding: 0;
-    margin: 0.35rem 0 0 0;
+    margin: 0.35rem 0 1.25rem 0;
   }
+  /* Footer keys are 1.4rem in portrait, where dead padding sits below
+     them; flush against a screen edge they need real height to hit. */
+  .tc-shift,
+  .tc-ctrl,
+  .tc-kbd { height: 1.8rem; }
 
   /* Menu-specific touch buttons replace the regular touch panel
      while a CRT/menu is active. */
-  #menu-controls { grid-area: panel; }
+  #menu-controls {
+    grid-area: panel;
+    margin-bottom: 1.25rem;
+  }
 
   /* Spectator mode appends no touch/menu controls, so the panel slot is
      free — the bar takes it (bottom of the sidebar; its base grid-area
@@ -2622,6 +2683,7 @@ html, body {
   #spectator-bar {
     grid-area: panel;
     border-top: 0;
+    margin-bottom: 1.25rem;
   }
   #spectator-bar .lobby-account-chip { display: none; }
 
@@ -2640,7 +2702,7 @@ html, body {
 
   /* Spell rail: in-flow sidebar row directly above the touch panel. Base
      styling applies — including the fixed one-row height, so the rail
-     shows the first six 36px buttons that fit the 15rem column (zero
+     shows the first seven 36px buttons that fit the 16rem column (zero
      horizontal padding) and the wrapped line beyond is clipped (same
      clip behavior as portrait). */
   #spell-rail {
