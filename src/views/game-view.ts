@@ -690,18 +690,23 @@ export function buildGameView(
   }
   document.addEventListener('keydown', docKeyHandler)
 
-  // Landscape slots the monster list into the narrow sidebar, where only the
-  // single-line compact chip fits; portrait floats the full list over the map.
-  // Re-sync on rotation, self-removing once the view is gone (mirrors
-  // docKeyHandler). Set the initial state before the first map message so the
-  // first render is already in the right mode.
-  const landscapeMql = window.matchMedia('(orientation: landscape)')
+  // The monster list lives in the landscape sidebar, but only a tablet has the
+  // vertical room for the full multi-row list there: a phone in landscape
+  // (~390px tall) spends ~360px on HUD + spells + touch panel, leaving room
+  // for barely one monster row. So gate on HEIGHT — tall landscape (tablet)
+  // shows the full expanding list; short landscape (phone) collapses it to the
+  // single-line compact chip. 600px cleanly separates phones (≤~430px tall in
+  // landscape) from tablets (≥744px). Portrait floats the full list over the
+  // map and never matches this query. Re-sync on rotation/resize, self-removing
+  // once the view is gone (mirrors docKeyHandler); set the initial state before
+  // the first map message so the first render is already in the right mode.
+  const compactMql = window.matchMedia('(orientation: landscape) and (max-height: 600px)')
   const syncMonsterCompact = (): void => {
-    if (!view.isConnected) { landscapeMql.removeEventListener('change', syncMonsterCompact); return }
-    monsterListView.setCompact(landscapeMql.matches)
+    if (!view.isConnected) { compactMql.removeEventListener('change', syncMonsterCompact); return }
+    monsterListView.setCompact(compactMql.matches)
   }
-  landscapeMql.addEventListener('change', syncMonsterCompact)
-  monsterListView.setCompact(landscapeMql.matches)
+  compactMql.addEventListener('change', syncMonsterCompact)
+  monsterListView.setCompact(compactMql.matches)
 
   conn.onMessage = handleMsg
 

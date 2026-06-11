@@ -2582,15 +2582,16 @@ html, body {
     background: color-mix(in srgb, var(--bg) 30%, transparent);
   }
 
-  /* Monster list → compact danger chip. The multi-row expanded list was the
-     sidebar's only unbounded-height element — five tile rows crowded out the
-     HUD above and collapsed the touch panel below — so JS forces the
-     single-line collapsed rendition here (MonsterListView.setCompact, driven
-     by an orientation matchMedia in game-view): top-threat glyph(s) + name +
-     "+N", carrying the red .has-hostile outline and tapping through to the
-     full monster panel. Slots into the `mons` grid row directly beneath the
-     HUD, aligned to the HUD's horizontal padding. position:relative is the
-     base default (portrait promotes it to absolute); here it stays in flow. */
+  /* Monster list: in-flow sidebar card in the `mons` row, directly beneath the
+     HUD and aligned to its horizontal padding. On a tablet-height sidebar this
+     is the normal multi-row list (expanding up to MAX_ROWS, the 1fr spacer
+     below absorbing the slack). A phone in landscape can't afford those rows —
+     HUD + spells + touch panel already claim nearly the whole height — so
+     game-view's `(max-height: 600px)` matchMedia flips MonsterListView into
+     compact mode there, collapsing this to a single-line chip (top-threat
+     glyph(s) + name + "+N", red .has-hostile outline, tap-through to the full
+     panel). Either way it stays in flow (position:relative is the base default;
+     portrait promotes it to absolute to float over the map). */
   #monster-list {
     grid-area: mons;
     margin: 0.3rem 0.4rem 0;
