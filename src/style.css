@@ -2061,6 +2061,8 @@ html, body {
   order: -1;
   padding-bottom: 0.2rem;
 }
+/* No selectable skills (distributed training) → no letter buttons. */
+.skill-letter-row:empty { display: none; }
 .skill-letter-btn {
   flex: 0 0 auto;
   min-width: 2.2rem;

@@ -7,18 +7,20 @@
 // followed by every right cell reproduces the natural a→z order in one column.
 //
 // We split each grid line at the right column's position and stack the halves.
-// The split is located by the right-column hotkey's *position*, never by
+// The split is located by the right-column cell anchor's *position* (the
+// hotkey letter, or the training sign when the menu has no hotkeys), never by
 // counting spaces: a skill with a training manual appends a "+4" inside its
 // fixed-width aptitude field, which changes the inter-column spacing — the trap
 // that the `extractSkillHotkeys` space-anchored regex originally fell into.
 
 import { SKILL_HOTKEY_RE } from './skill-hotkeys'
 
-// A selectable skill row carries `X S Name` — hotkey, training sign, then a
-// capitalised skill name. Shared with the hotkey parser (SKILL_HOTKEY_RE is
-// global, for matchAll); a non-global copy is needed for the single `.test()`,
-// since a global regex carries `.lastIndex` across `.test()` calls.
-const SKILL_ROW = new RegExp(SKILL_HOTKEY_RE.source)
+// Distributed training (Gnolls) makes no skill selectable, so the server
+// assigns no hotkey letters (SkillMenuEntry::is_selectable) and a row is just
+// `S Name` — sign + name. This anchor is looser than the lettered
+// SKILL_HOTKEY_RE (a prose bullet "- Casting…" would match), so it's consulted
+// only when the whole menu has no lettered row.
+const BARE_ROW_RE = /[+\-*] [A-Z]/g
 
 // A left-column hotkey sits at the indent (col ~2); the right column starts far
 // past the 20-wide name field. Any hotkey at/after this column is the right one.
@@ -30,14 +32,26 @@ function plainText(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[a-zA-Z0-9#]+;/g, '·')
 }
 
-function hasSkillRow(plain: string): boolean {
-  return SKILL_ROW.test(plain)
+// Column indices where skill cells start on this line. In lettered mode the
+// anchor (and the cell) starts at the hotkey letter; in bare mode at the sign.
+// A cell is always preceded by a space (one, in the manual case) or the line
+// start; requiring that kills two mid-text traps — prose like "extra - Cool",
+// and a gnoll manual's "+8 +4 + Spellcasting", whose digit would otherwise
+// pass for a lettered anchor (`4 + S`) and flip the mode.
+function rowAnchors(plain: string, lettered: boolean): number[] {
+  const out: number[] = []
+  for (const m of plain.matchAll(lettered ? SKILL_HOTKEY_RE : BARE_ROW_RE)) {
+    const i = m.index ?? 0
+    if (i > 0 && plain[i - 1] !== ' ') continue
+    out.push(i)
+  }
+  return out
 }
 
-// Column index of the right-column hotkey, or -1 if the line has none.
-function rightHotkeyCol(plain: string): number {
-  for (const m of plain.matchAll(SKILL_HOTKEY_RE)) {
-    if (m.index !== undefined && m.index >= RIGHT_COL_MIN) return m.index
+// Column index of the right-column cell start, or -1 if the line has none.
+function rightAnchorCol(plain: string, lettered: boolean): number {
+  for (const i of rowAnchors(plain, lettered)) {
+    if (i >= RIGHT_COL_MIN) return i
   }
   return -1
 }
@@ -165,32 +179,56 @@ function reflowHelpLine(html: string): string[] {
 // new ordered array. If the lines don't look like a skill grid (no skill rows),
 // they're returned unchanged.
 export function reflowSkillCrt(lines: string[]): string[] {
+  const plains = lines.map(plainText)
+  // Prefer the lettered anchor; the bare one is consulted only when no line in
+  // the whole menu has a hotkey (distributed training hides them all at once).
+  const lettered = plains.some(p => rowAnchors(p, true).length > 0)
   const gridIdx: number[] = []
   for (let i = 0; i < lines.length; i++) {
-    if (hasSkillRow(plainText(lines[i]))) gridIdx.push(i)
+    if (rowAnchors(plains[i], lettered).length > 0) gridIdx.push(i)
   }
   if (gridIdx.length === 0) return lines
 
-  const first = gridIdx[0]
-  const last = gridIdx[gridIdx.length - 1]
+  let first = gridIdx[0]
+  let last = gridIdx[gridIdx.length - 1]
 
-  // Representative right-column position, used to split the (hotkey-less)
-  // column-header line: the most common right-hotkey column across grid rows.
+  // Representative right-column position, used to split the (anchor-less)
+  // column-header line: the most common right-anchor column across grid rows.
   const counts = new Map<number, number>()
   for (const i of gridIdx) {
-    const c = rightHotkeyCol(plainText(lines[i]))
+    const c = rightAnchorCol(plains[i], lettered)
     if (c >= 0) counts.set(c, (counts.get(c) ?? 0) + 1)
   }
   let repRight = 41 // matches MIN_COLS/2 + indent; only a fallback
   let bestN = 0
   for (const [c, n] of counts) if (n > bestN) ((bestN = n), (repRight = c))
 
+  // A row whose cells are all mastered or currently-untrainable has no anchor
+  // anywhere (those cells lose both hotkey and sign — get_prefix renders two
+  // spaces), so a grid edge made of such rows sits outside [first, last] and
+  // would be misfiled as header or help text. Extend the range over adjacent
+  // two-celled lines; the column-header line and the blank separator above the
+  // help text both stop the walk.
+  const HEADER_RE = /^\s*Skill\s+Level/
+  const twoCells = (i: number): boolean =>
+    bestN > 0 && i >= 0 && i < lines.length
+    && !HEADER_RE.test(plains[i])
+    && plains[i].slice(0, repRight).trim() !== ''
+    && plains[i].slice(repRight).trim() !== ''
+  while (twoCells(first - 1)) first--
+  while (twoCells(last + 1)) last++
+
   const leftCells: string[] = []
   const rightCells: string[] = []
   for (let i = first; i <= last; i++) {
     const html = lines[i]
-    const plain = plainText(html)
-    const col = rightHotkeyCol(plain)
+    const plain = plains[i]
+    let col = rightAnchorCol(plain, lettered)
+    // A mastered skill (level 27) loses both its hotkey and its training sign,
+    // so its cell can't anchor. If the line still has content in the right
+    // column's territory, split at the representative column instead of
+    // misfiling the whole line as left-only.
+    if (col < 0 && bestN > 0 && plain.slice(repRight).trim()) col = repRight
     if (col < 0) {
       // Left-only skill row, or a blank/spacer line within the grid.
       if (plain.trim()) leftCells.push(html)
@@ -202,14 +240,17 @@ export function reflowSkillCrt(lines: string[]): string[] {
   }
 
   // Left cells keep the grid's leading indent (the left column sits at col ~2);
-  // right cells were sliced at their hotkey, so they start flush. Re-indent the
-  // right cells to match so every row's Level/Cost/Apt columns line up.
+  // right cells were sliced at their anchor, so they start flush. Re-indent the
+  // right cells to match so every row's Level/Cost/Apt columns line up. Use the
+  // minimum indent: a mastered cell starts two columns deeper (its hotkey and
+  // sign render as spaces), so the shallowest cell marks the true column edge.
   let indent = 2
+  let found = false
   for (const c of leftCells) {
     const m = /^( *)\S/.exec(plainText(c))
-    if (m) {
+    if (m && (!found || m[1].length < indent)) {
       indent = m[1].length
-      break
+      found = true
     }
   }
   const pad = ' '.repeat(indent)

@@ -48,10 +48,10 @@ describe('reflowSkillCrt', () => {
   // positions mirror the real layout (right column begins at index 20).
   const L = (s: string): string => `<span class="fg7 bg0">${s}</span>`
   const lines = [
-    '  Skill        Apt    Skill        Apt', // header (dup right copy)
-    `  ${'a - Fighting    +0'.padEnd(18)}${L('c - Spellcasting +11')}`,
-    `  ${'b - Dodging     +1'.padEnd(18)}${L('d - Conjurations +11')}`,
-    `  ${''.padEnd(18)}${L('e - Hexes        +11')}`,
+    '  Skill      Level    Skill      Level', // header (dup right copy)
+    `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+    `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
+    `  ${''.padEnd(19)}${L('e - Hexes        +11')}`,
     '',
     ' The species aptitude is in white.',
   ]
@@ -67,7 +67,7 @@ describe('reflowSkillCrt', () => {
 
   it('keeps a single column header (drops the duplicated right copy)', () => {
     const out = reflowSkillCrt(lines).map(text)
-    expect(out[0]).toBe('  Skill        Apt')
+    expect(out[0]).toBe('  Skill      Level')
   })
 
   it('re-indents right-column cells to match the left column', () => {
@@ -85,7 +85,7 @@ describe('reflowSkillCrt', () => {
     expect(firstRight).toBeGreaterThan(lastLeft)
     const between = out.slice(lastLeft + 1, firstRight)
     expect(between).toContain('') // blank separator
-    expect(between.some(t => /Skill.*Apt/.test(t))).toBe(true) // repeated header
+    expect(between.some(t => /Skill.*Level/.test(t))).toBe(true) // repeated header
   })
 
   it('passes single-spaced help text through unchanged', () => {
@@ -143,5 +143,79 @@ describe('reflowSkillCrt', () => {
   it('leaves non-skill content untouched', () => {
     const plain = ['Welcome to the dungeon.', '', 'Press any key.']
     expect(reflowSkillCrt(plain)).toEqual(plain)
+  })
+
+  describe('distributed training (no hotkeys)', () => {
+    // Gnoll-style menu: no skill is selectable, so rows carry only the
+    // training sign — `    + Fighting   0.2   0.2   +8`. Mirrors the wire
+    // (right column starts at index 20 in this compact stand-in).
+    const bare = [
+      '  Skill      Level    Skill      Level',
+      `  ${'+ Fighting     +8'.padEnd(18)}${L('+ Spellcasting  +8')}`,
+      `  ${'+ Dodging      +8'.padEnd(18)}${L('+ Conjurations  +6')}`,
+      `  ${''.padEnd(18)}${L('+ Hexes         +6')}`,
+      '',
+      ' The species aptitude is in white.',
+    ]
+
+    it('stacks left then right columns by the sign anchor', () => {
+      const out = reflowSkillCrt(bare).map(text)
+      const skills = out
+        .map(t => (/^\s*\+ (\w+)/.exec(t)))
+        .filter(Boolean)
+        .map(m => m![1])
+      expect(skills).toEqual(['Fighting', 'Dodging', 'Spellcasting', 'Conjurations', 'Hexes'])
+    })
+
+    it('keeps a single column header', () => {
+      const out = reflowSkillCrt(bare).map(text)
+      expect(out[0]).toBe('  Skill      Level')
+    })
+
+    it('does not anchor on a sign glyph mid-word', () => {
+      // "extra- Cool" style: sign not preceded by a space must not split.
+      const linesWithProse = [...bare, ' costs extra- Cool down first.']
+      const out = reflowSkillCrt(linesWithProse).map(text)
+      expect(out).toContain(' costs extra- Cool down first.')
+    })
+
+    it('ignores bare signs when the menu has lettered rows', () => {
+      // A prose bullet below a lettered grid must not extend the grid range.
+      const withBullet = [
+        '  a - Fighting    +0  c - Spellcasting +11',
+        '',
+        ' - Casting spells of this school.',
+      ]
+      const out = reflowSkillCrt(withBullet).map(text)
+      expect(out).toContain(' - Casting spells of this school.')
+    })
+  })
+
+  it('keeps an all-unanchorable grid edge row (mastered + untrainable cells)', () => {
+    // First grid line: left cell mastered (27, no hotkey/sign), right cell
+    // currently untrainable (no sign) — nothing on the line anchors, but it
+    // must stay a grid row, not get truncated as a second header line.
+    const lines = [
+      '  Skill        Level    Skill        Level',
+      `  ${'  Fighting     27'.padEnd(19)}${L('  Spellcasting  0.0')}`,
+      `  ${'b - Dodging   4.2'.padEnd(19)}${L('d - Conjurations 1.0')}`,
+      '',
+      ' The species aptitude is in white.',
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    expect(out.some(t => /Fighting\s+27/.test(t))).toBe(true)
+    expect(out.some(t => /Spellcasting\s+0\.0/.test(t))).toBe(true) // right cell not dropped
+    expect(out[0]).toBe('  Skill        Level') // header still deduped to one copy
+  })
+
+  it('splits a mastered right cell (no hotkey, no sign) at the grid column', () => {
+    const lines = [
+      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+      `  ${'b - Dodging     +1'.padEnd(19)}${L('    Invocations 27.0')}`,
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    const dodging = out.find(t => /Dodging/.test(t))!
+    expect(dodging).not.toMatch(/Invocations/) // not misfiled as one wide left row
+    expect(out.some(t => /Invocations 27\.0/.test(t))).toBe(true)
   })
 })
