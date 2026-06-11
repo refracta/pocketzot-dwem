@@ -680,6 +680,19 @@ export function buildGameView(
   }
   document.addEventListener('keydown', docKeyHandler)
 
+  // Landscape slots the monster list into the narrow sidebar, where only the
+  // single-line compact chip fits; portrait floats the full list over the map.
+  // Re-sync on rotation, self-removing once the view is gone (mirrors
+  // docKeyHandler). Set the initial state before the first map message so the
+  // first render is already in the right mode.
+  const landscapeMql = window.matchMedia('(orientation: landscape)')
+  const syncMonsterCompact = (): void => {
+    if (!view.isConnected) { landscapeMql.removeEventListener('change', syncMonsterCompact); return }
+    monsterListView.setCompact(landscapeMql.matches)
+  }
+  landscapeMql.addEventListener('change', syncMonsterCompact)
+  monsterListView.setCompact(landscapeMql.matches)
+
   conn.onMessage = handleMsg
 
   function handleMsg(msg: ServerMsg): void {

@@ -77,6 +77,11 @@ export class MonsterListView {
   // convention to match the virtual-keyboard button: ▴ when expanded
   // (tap collapses upward), ▾ when collapsed (tap expands downward).
   private collapsed = getPref('monsterListCollapsed')
+  // Landscape forces the single-line collapsed rendition (see setCompact):
+  // the narrow sidebar can't host the multi-row expanded list. Independent
+  // of `collapsed` so flipping orientation doesn't disturb the user's
+  // portrait expand/collapse pref.
+  private compact = false
   private readonly toggleEl: HTMLElement
   // Per-version tile loader for the sprite path; null until game-view hands it
   // over (once this game's gamedata version is known). The tile path gates on
@@ -126,6 +131,22 @@ export class MonsterListView {
     if (this.mode === 'tiles' && this.lastMonsters) this.update(this.lastMonsters)
   }
 
+  // Called by game-view from an orientation matchMedia. Landscape (true)
+  // forces the single-line collapsed chip — top-threat glyph(s) + name +
+  // "+N", with the hostile outline — because the narrow sidebar can't host
+  // the multi-row expanded list without crowding the HUD and touch panel.
+  // The chip still taps through to the full monster panel. Reverting to
+  // false restores the user's portrait collapse pref. Replays the last
+  // snapshot so the chip appears immediately on rotation, not next turn.
+  setCompact(compact: boolean): void {
+    if (this.compact === compact) return
+    this.compact = compact
+    this.rows.length = 0
+    this.cornerMoreEl = null
+    this.element.innerHTML = ''
+    if (this.lastMonsters) this.update(this.lastMonsters)
+  }
+
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
     this.lastMonsters = monsterCells
     const groups = groupMonsters(filterAndSortMonsters(monsterCells))
@@ -152,7 +173,7 @@ export class MonsterListView {
     this.element.classList.toggle('has-hostile', hasHostile)
 
     let overflow = 0
-    if (this.collapsed) {
+    if (this.collapsed || this.compact) {
       // Wipe the expanded-mode caches: a re-expand needs to rebuild from
       // scratch since the DOM no longer holds the cached tile rows.
       this.rows.length = 0
@@ -186,10 +207,12 @@ export class MonsterListView {
     // toggle when there's only one group: collapsed and expanded would
     // render the same single row (extras=0 suppresses the "+N more"
     // suffix), so the chevron would be a no-op tap target.
-    if (groups.length > 1) {
+    if (groups.length > 1 && !this.compact) {
       this.toggleEl.textContent = this.collapsed ? '▾' : '▴'
       this.element.appendChild(this.toggleEl)
     } else {
+      // Compact mode has no expand affordance — the whole chip taps through
+      // to the full panel, so the chevron would be a redundant target.
       this.toggleEl.remove()
     }
     this.updateCornerMore(overflow)

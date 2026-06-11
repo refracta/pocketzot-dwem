@@ -2582,18 +2582,20 @@ html, body {
     background: color-mix(in srgb, var(--bg) 30%, transparent);
   }
 
-  /* Monster list: removed in landscape for now. As an in-flow sidebar card
-     (its previous home, the `mons` grid row) it was the sidebar's only
-     unbounded-height element — five tile rows crowded out the HUD above and
-     collapsed the touch panel below. The map is wide enough here that every
-     listed monster is visible on it anyway. Known costs: no hostile-alarm
-     outline, and the full monster panel is unreachable in landscape (the
-     list tap is its only entry point). The intended future home is a float
-     over the map below the message log, like the portrait float — until
-     then the `mons` grid row stays in the template (it collapses to zero
-     height) so this is a one-rule revert. JS keeps updating the hidden
-     element; display:none subtree mutations are effectively free. */
-  #monster-list { display: none; }
+  /* Monster list → compact danger chip. The multi-row expanded list was the
+     sidebar's only unbounded-height element — five tile rows crowded out the
+     HUD above and collapsed the touch panel below — so JS forces the
+     single-line collapsed rendition here (MonsterListView.setCompact, driven
+     by an orientation matchMedia in game-view): top-threat glyph(s) + name +
+     "+N", carrying the red .has-hostile outline and tapping through to the
+     full monster panel. Slots into the `mons` grid row directly beneath the
+     HUD, aligned to the HUD's horizontal padding. position:relative is the
+     base default (portrait promotes it to absolute); here it stays in flow. */
+  #monster-list {
+    grid-area: mons;
+    margin: 0.3rem 0.4rem 0;
+    max-width: calc(16rem - 0.8rem);
+  }
 
   /* --more-- re-anchors directly below the floating log (the base rule
      already provides grid-area:map, absolute, left/right, z-index 4). */

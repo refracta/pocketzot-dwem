@@ -126,6 +126,46 @@ describe('MonsterListView.renderTiles', () => {
     expect(rows[2].classList.contains('ml-bar')).toBe(false)  // ally
   })
 
+  it('collapses to one chevron-less row in compact (landscape) mode', () => {
+    // Landscape forces setCompact(true): the narrow sidebar can't host the
+    // multi-row expanded list, so it must render the single collapsed row
+    // (top group + "+N") and drop the expand/collapse chevron, regardless of
+    // how many groups are present. Uses ASCII (no loader) since the collapse
+    // is mode-independent.
+    const store = new MapStore()
+    store.merge([
+      { x: 1, y: 1, g: 'C', mon: {
+        id: 1, name: 'Lodul', att: 0, type: 5,
+        typedata: { avghp: 100 }, clientid: 42,
+      } },
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+      { x: 3, y: 3, g: 'O', mon: {
+        id: 3, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 50 },
+      } },
+    ])
+
+    const view = new MonsterListView(store)
+    view.setCompact(true)
+    view.update(store.getMonsters())
+
+    // One collapsed row for the top group, no expand chevron.
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(1)
+    expect(view.element.querySelector('.ml-toggle')).toBeNull()
+    expect(view.element.querySelector('.ml-name')?.textContent).toBe('Lodul')
+    // "+N" counts the monsters not in the top group (the two ogres).
+    expect(view.element.querySelector('.ml-collapsed-more')?.textContent).toBe('+2')
+
+    // Reverting to portrait restores the expanded multi-row list.
+    view.setCompact(false)
+    view.update(store.getMonsters())
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(3)
+    expect(view.element.querySelector('.ml-toggle')).not.toBeNull()
+  })
+
   it('trims rows when groups shrink between renders', () => {
     // Renders with three groups, then with one, asserts the DOM is trimmed
     // to one row. Catches a regression where the position-indexed array
