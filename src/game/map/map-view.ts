@@ -17,6 +17,12 @@ export class MapView {
   private store: MapStore
   private viewportW = NORMAL_W
   private viewportH = NORMAL_H
+  // Row that viewCenter (the player, in normal play) renders on. Usually the
+  // grid's middle row, but when the container has asymmetric vertical padding
+  // (portrait's floating-log reserve) fitToContainer biases it up so the
+  // player centers in the clear area while the extra rows hang below, behind
+  // the log. See the reserve > 0 branch in fitToContainer.
+  private centerRow = Math.floor(NORMAL_H / 2)
   private fontScale = 1.0
   private zoomMode = false
   // Absolute viewport center (matches vgrdc from server). In normal play equals playerPos.
@@ -106,11 +112,21 @@ export class MapView {
     const lineHPerFs = parseFloat(cs.getPropertyValue('--map-line-height')) || 0.9
 
     // Subtract padding read from computed style — hardcoding desyncs from CSS.
+    const padTop = parseFloat(cs.paddingTop)
+    const padBottom = parseFloat(cs.paddingBottom)
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
-    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
     const availW = rect.width - padX
-    const availH = rect.height - padY
+    const availH = rect.height - padTop - padBottom
     if (availW <= 0 || availH <= 0) return
+
+    // Asymmetric vertical padding reserves the strip the floating message log
+    // (and spell rail) overlays — bottom in portrait. `availH` (clear area) is
+    // what we center the player in and size the font to, so the player and the
+    // tiles around it stay above the log instead of drifting under it; the
+    // row fit below then adds the reserve back so whole rows fill on down
+    // behind the translucent log. Symmetric padding ⇒ reserve 0 ⇒ the classic
+    // centered whole-row fit (e.g. X-mode, where the log is hidden).
+    const reserve = Math.abs(padBottom - padTop)
 
     // Font size that fits the minimum viewport (binding dimension wins).
     // In zoom mode (and only when no X-mode scale override is in effect),
@@ -139,33 +155,58 @@ export class MapView {
     // edge — far less disruptive than losing a whole row.
     const charW = fontSize * charWPerFs
     const lineH = fontSize * lineHPerFs
-    const fitH = Math.floor(availH / lineH)
     const fitW = Math.floor(availW / charW)
-    const keepH = this.viewportH > fitH && this.viewportH * lineH - availH < lineH / 2
     const keepW = this.viewportW > fitW && this.viewportW * charW - availW < charW / 2
-    const h = Math.max(minH, keepH ? this.viewportH : fitH)
     const w = Math.max(minW, keepW ? this.viewportW : fitW)
 
-    this.setViewportSize(w, h)
+    // Whole rows only — never partial: a clipped half-glyph reads as a
+    // rendering bug in ASCII. (The tile view full-bleeds with partial cells
+    // instead; sprites cut by the viewport edge look natural there. See
+    // TileMapView.fitToContainer.) With a reserve, availHFit lets whole rows
+    // fill on down behind the translucent log, top-anchored by the CSS.
+    const availHFit = availH + reserve
+    const fitH = Math.floor(availHFit / lineH)
+    const keepH = this.viewportH > fitH && this.viewportH * lineH - availHFit < lineH / 2
+    const h = Math.max(minH, keepH ? this.viewportH : fitH)
+
+    // With a reserve the grid is top-anchored and overruns the content box
+    // downward, so "visually centered in the clear area" is the row whose
+    // middle lands nearest availH/2 from the grid top — NOT the grid's middle
+    // row. Without one the grid is flex-centered and the middle-row rule holds.
+    const prevCenterRow = this.centerRow
+    this.centerRow = reserve > 0
+      ? Math.min(Math.floor(availH / (2 * lineH)), h - 1)
+      : Math.floor(h / 2)
+
+    // A centerRow shift remaps every cell (offY changes); if setViewportSize
+    // early-exited (same dimensions), repaint explicitly.
+    const resized = this.setViewportSize(w, h)
+    if (!resized && this.centerRow !== prevCenterRow) this.fullRender()
   }
 
-  setViewportSize(w: number, h: number): void {
-    if (w === this.viewportW && h === this.viewportH) return
+  // Returns true if the grid was rebuilt (and therefore fully re-rendered);
+  // false on the unchanged early-exit, so callers know whether a
+  // centerRow-only change still needs an explicit fullRender.
+  setViewportSize(w: number, h: number): boolean {
+    if (w === this.viewportW && h === this.viewportH) return false
     this.viewportW = w
     this.viewportH = h
     this.buildGrid()
     this.fullRender()
+    return true
   }
 
   resetViewportSize(): void {
+    this.centerRow = Math.floor(NORMAL_H / 2)
     this.setViewportSize(NORMAL_W, NORMAL_H)
   }
 
   // Screen↔dungeon origin: the top-left dungeon coord of the viewport. Screen
   // cell (col,row) ↔ dungeon (offX+col, offY+row). One definition each so the
   // centering rule lives in a single place (see CLAUDE.md coordinate system).
+  // Vertically the center is `centerRow`, not the middle row — see the field.
   private get offX(): number { return this.viewCenter.x - Math.floor(this.viewportW / 2) }
-  private get offY(): number { return this.viewCenter.y - Math.floor(this.viewportH / 2) }
+  private get offY(): number { return this.viewCenter.y - this.centerRow }
   private inView(col: number, row: number): boolean {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }

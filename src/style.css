@@ -699,14 +699,21 @@ html, body {
      line-height). A var so the spell-row rules below can offset #more-btn
      by exactly the log's height. */
   --msglog-h: calc(5 * var(--msglog-font) * var(--msglog-line));
+  /* Spell-rail button band: 32px tile + 2×2px button padding + own 0.25rem
+     padding. Shared so the rail's height, the log float that sits just above it,
+     and the --more-- offset that clears both stay locked together. */
+  --spell-rail-h: calc(36px + 0.5rem);
   position: relative;
   flex: 1;
   display: grid;
-  grid-template-rows: 1fr auto auto auto auto;
+  /* No `msg` row: the message log and spell rail both float over the map
+     (position:absolute, see their rules) so the map's 1fr claims the full
+     height. Keeping them out of flow is what makes the rail's post-harvest
+     arrival a non-event for the map's size — no re-fit, no jump. */
+  grid-template-rows: 1fr auto auto auto;
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "map"
-    "msg"
     "hud"
     "touch"
     "menu";
@@ -743,7 +750,7 @@ html, body {
   display: flex;
   flex-direction: column;
   /* Center the rendered grid vertically. The player glyph sits at the
-     viewport's center, so centering keeps it at the container's center
+     viewport's center, so centering keeps it at the center of the content box
      regardless of viewport row count — the map stays a fixed reticle the
      world scrolls under, instead of sliding whenever a refit adds/removes
      rows (e.g. the HUD revealing on load, or status lights growing it
@@ -754,7 +761,12 @@ html, body {
      floating monster-list overlay is position:absolute (top-left), so it
      doesn't depend on slack landing above the map. The row-drop hazard a
      1-2px container shrink could introduce (crossing floor(availH/lineH))
-     is handled by the hysteresis in MapView.fitToContainer(). */
+     is handled by the hysteresis in MapView.fitToContainer().
+     EXCEPTION: portrait ASCII mode overrides this to flex-start (see the
+     portrait rules) — there the rows deliberately overrun the content box
+     downward, behind the floating log, and centered overflow would spill
+     out BOTH edges, clipping the top rows. MapView.centerRow keeps the
+     player reticle at the clear-area middle in that anchoring. */
   justify-content: center;
 }
 
@@ -773,15 +785,36 @@ html, body {
 }
 
 /* Tile-render variant of #map-grid: drops the font-based <pre> layout for a
-   single <canvas> centered in the flex column. Padding/justification match
-   the ASCII variant so swapping doesn't shift the surrounding HUD. */
+   single full-bleed <canvas>. Padding matches the ASCII variant so swapping
+   doesn't shift the surrounding HUD. */
 #map-grid.map-tile {
   font-family: var(--font-mono);
   position: relative;
-  align-items: center;
+}
+/* Anchor the full-bleed canvas to the content box's top-left corner in ALL
+   modes: its position must be exactly the --map-col/row-shift sub-cell
+   margins below, so no flex centering may redistribute the overflow. The
+   `#game-view` prefix keeps this ahead of the portrait/x-mode ASCII
+   anchoring rules (equal specificity would let the later x-mode `center`
+   win; those rules are scoped :not(.map-tile) for the same reason). */
+#game-view #map-grid.map-tile {
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 #map-grid.map-tile .map-tile-canvas {
   display: block;
+  /* The canvas deliberately overruns the content box (full-bleed, clipped at
+     the element edges). As a flex item it would otherwise flex-shrink to fit
+     the container, squishing the CSS scale. */
+  flex: none;
+  /* Sub-cell shifts set inline by TileMapView.fitToContainer: pull the
+     canvas up/left so the player cell's center sits exactly on the element's
+     horizontal center and the clear area's vertical center, with partial
+     cells clipping at the edges instead of leaving slack bands. ASCII never
+     sets these — a clipped half-glyph reads as a bug, so MapView fits whole
+     rows only. */
+  margin-top: var(--map-row-shift, 0px);
+  margin-left: var(--map-col-shift, 0px);
   /* image-rendering: pixelated downsamples cleanly when the rendered cell is
      smaller than the 32px atlas tile. Without it WebKit applies bilinear by
      default and 12-14 px cells become a blurry mush. */
@@ -790,13 +823,21 @@ html, body {
 
 /* Messages */
 #game-messages {
-  grid-area: msg;
-  background: var(--bg);
+  /* Floats translucently over the map's edge in BOTH orientations (bottom in
+     portrait, top in landscape — the per-orientation rules set the anchor) so
+     the map keeps its full height: the log never occupies an in-flow row that
+     would shrink it. Out of flow also means the log's content/width can't feed
+     back into the map's size, so the map fits once and never re-jumps. */
+  grid-area: map;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
   font-size: var(--msglog-font);
   line-height: var(--msglog-line);
-  /* Reserve the full 5 lines from the start so the map only sizes itself
-     once. Otherwise the log grows 0 → 5 lines as the first messages arrive
-     and the map re-fits (and may drop a row) on each step. */
+  /* A fixed 5-line floating box; newest message pinned to the anchored edge
+     via column-reverse below. */
   height: var(--msglog-h);
   overflow-y: auto;
   /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
@@ -820,34 +861,64 @@ html, body {
   flex-direction: column-reverse;
 }
 
-/* Spell-row mode (class set by renderSpellRail while quick-cast spells exist):
-   #spell-rail becomes an in-flow row in the log's old grid slot, and the log
-   floats over the map's bottom edge on a translucent scrim — the map keeps its
-   full height (it actually gains the log/rail height difference). An abspos
-   grid item's containing block is its grid area (same trick as #more-btn), so
-   bottom:0 here = the map cell's bottom edge, directly above the rail.
-   Portrait-only by construction (the trade only makes sense where the log has
-   a full-width row to give up), and scoped so the landscape block doesn't
-   have to neutralize each rule individually — there the log is a sidebar
-   column and the rail floats over the map instead. */
+/* Portrait: the log (base rule) floats over the map's BOTTOM edge; these rules
+   set its anchor and float the quick-cast rail. Both are out of flow, so the
+   map keeps its full height and — crucially — the rail's late arrival (a
+   round-trip after load, when the silent harvest populates it) only fades in
+   over the map; it never resizes the map, which would re-fit and jump. Casters
+   and non-casters share the float; the only caster delta is the rail itself
+   and the log/--more-- offsets that clear it. An abspos grid item's containing
+   block is its grid area, so bottom:0 = the map cell's bottom edge. */
 @media (orientation: portrait) {
-  #game-view.spell-row #game-messages {
+  #game-messages { bottom: 0; }
+  /* Rail present: float the log just above it. */
+  #game-view.spell-row #game-messages { bottom: var(--spell-rail-h); }
+
+  /* Quick-cast rail floats over the map's very bottom edge (casters only —
+     hidden via inline display otherwise). */
+  #spell-rail {
     grid-area: map;
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
     z-index: 3;
-    background: color-mix(in srgb, var(--bg) 30%, transparent);
   }
-  /* --more-- is bottom-anchored in the map cell (z-index 4); lift it above the
-     overlaid log so it never covers the newest message lines. */
-  #game-view.spell-row #more-btn { bottom: var(--msglog-h); }
-  /* Overlays normally reclaim the log's grid row (the log hides via inline
-     display:none and the row collapses); in spell-row mode the rail holds that
-     row, so span the overlay across both rows to keep its height unchanged —
-     it simply covers the (tap-inert) rail. */
-  #game-view.spell-row #ui-overlay { grid-row: map / msg; }
+
+  /* --more-- (z-index 4) sits above the floating log — and the rail, for
+     casters — so it never covers the newest message lines. (`#game-view` prefix
+     to outrank the base `#more-btn { bottom: 0 }`, which is later in source.) */
+  #game-view #more-btn { bottom: var(--msglog-h); }
+  #game-view.spell-row #more-btn { bottom: calc(var(--msglog-h) + var(--spell-rail-h)); }
+  /* X-mode hides the log (and drops the rail), so there's nothing to clear —
+     --more-- hugs the bottom edge. Equal specificity to the two rules above;
+     later in source wins. */
+  #game-view.x-mode #more-btn { bottom: 0; }
+
+  /* Reserve the log's strip as extra BOTTOM padding so the map centers the
+     player in the clear area above the floating log/rail, not in the geometric
+     middle of the full element (which would drop the player — and the tiles
+     around it — under the log). fitToContainer reads this asymmetry and still
+     fills rows on down behind the translucent log. Constant (log height only,
+     not + rail) so the rail's arrival doesn't re-center the map. `#game-view`
+     prefix outranks the base `#map-grid` padding regardless of source order. */
+  #game-view #map-grid { padding-bottom: calc(2px + var(--msglog-h)); }
+  /* Top-anchor the ASCII row stack: it deliberately overruns the content box
+     DOWNWARD (whole rows filling behind the log — availHFit in
+     MapView.fitToContainer), and the base justify-content:center would split
+     that overflow across BOTH edges, clipping the top rows at the 2px top
+     padding while backing only half the log strip. Anchored, the overflow
+     all hangs below and MapView.centerRow biases the player up to the
+     clear-area middle. (Tiles are anchored globally by the .map-tile rules —
+     they full-bleed both axes — so this only matters for the ASCII <pre>.) */
+  #game-view #map-grid { justify-content: flex-start; }
+  /* X-mode hides the log and zooms the examine map to fill everything — drop
+     the reserve so the map isn't pinned above an empty strip, and restore
+     ASCII centering to match (reserve 0 ⇒ no overrun). :not(.map-tile) keeps
+     the equal-specificity, later-in-source `center` from beating the tile
+     anchoring rule — the full-bleed canvas must stay top-left anchored. */
+  #game-view.x-mode #map-grid { padding-bottom: 2px; }
+  #game-view.x-mode #map-grid:not(.map-tile) { justify-content: center; }
 }
 
 .game-msg { color: var(--text); line-height: var(--msglog-line); }
@@ -1124,9 +1195,10 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  /* Non-casters have the log sitting directly on the HUD — text above text at
-     near-identical size, and a yellow log warning can scan as part of the
-     yellow name line. Keep the hairline for that boundary. */
+  /* Non-casters have no rail, so the floating log's bottom edge lands right at
+     the HUD boundary — text above text at near-identical size, and a yellow log
+     warning can scan as part of the yellow name line. Keep the hairline for
+     that boundary. */
   border-top: 1px solid var(--border);
 }
 /* In spell-row mode the rail's icon band already separates log from HUD, so
@@ -1860,13 +1932,15 @@ html, body {
 }
 .overlay-spell-effect, .overlay-spell-range { flex: 0 0 auto; }
 
-/* Spell rail: persistent quick-cast button row below the message log. */
+/* Spell rail: persistent quick-cast button row pinned to the map's bottom edge
+   (portrait floats it there; landscape places it in the sidebar `spells` row). */
 #spell-rail {
-  /* In-flow row in the message log's old grid slot (the log floats over the
-     map while this is visible — see the spell-row rules above). Fixed at one
-     button-row tall: overflow spells wrap onto a clipped second line, so the
-     row shows the first N that fit and the z tab carries the full list. */
-  grid-area: msg;
+  /* grid-area is overridden per orientation (portrait floats it over the map,
+     landscape uses the sidebar row); this default just keeps it in the map
+     area. Fixed at one button-row tall: overflow spells wrap onto a clipped
+     second line, so the row shows the first N that fit and the z tab carries
+     the full list. */
+  grid-area: map;
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
@@ -1876,8 +1950,7 @@ html, body {
      hard line under it reads as stray chrome — the opaque icon band is its
      own separator (and the HUD's hairline is non-caster-only, so the whole
      caster stack below the map is borderless). */
-  /* 32px tile + 2×2px button padding + own padding */
-  height: calc(36px + 0.5rem);
+  height: var(--spell-rail-h);
   overflow: hidden;
 }
 .spell-rail-btn {
@@ -2570,19 +2643,11 @@ html, body {
     z-index: 5;
   }
 
-  /* The log floats over the map's top edge — the portrait spell-row
-     pattern (an abspos grid item's containing block is its grid area),
-     anchored top instead of bottom. height: var(--msglog-h) and the
-     column-reverse bottom-pin come from the base rule. */
-  #game-messages {
-    grid-area: map;
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    z-index: 3;
-    background: color-mix(in srgb, var(--bg) 30%, transparent);
-  }
+  /* The log floats over the map's TOP edge in landscape. Everything else —
+     grid-area, abspos, translucent scrim, z-index, height, column-reverse —
+     comes from the base #game-messages rule; only the anchor differs (the
+     portrait block sets bottom instead). */
+  #game-messages { top: 0; }
 
   /* Monster list: in-flow sidebar card in the `mons` row, directly beneath the
      HUD and aligned to its horizontal padding. On a tablet-height sidebar this

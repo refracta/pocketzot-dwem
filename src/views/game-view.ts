@@ -159,7 +159,7 @@ const MF_ARROWS_SELECT = 0x40000
 
 // Cell/glyph multiplier applied while X-mode (eXamine level map) is active.
 // Honored by both renderers via setFontScale (ASCII shrinks glyphs, tiles
-// shrink cellPx); the symmetric slack-fill turns the freed HUD/log area
+// shrink cellPx); each renderer's fill logic turns the freed HUD/log area
 // into extra cells. Upstream's tile_map_scale defaults to 0.6 — we ship
 // 0.7 for now; tune in one place.
 const X_MODE_SCALE = 0.7
@@ -287,11 +287,12 @@ export function buildGameView(
   // swallowed instead of popping/clearing our real overlay state.
   let pendingHarvestClose = false
 
-  // Spell rail: a persistent row of quick-cast buttons in its own grid row
-  // below the message log (grid-area: msg). While it's visible, the `spell-row`
-  // class on #game-view floats the log over the map's bottom edge on a
-  // translucent scrim — so the rail's row comes out of the log's old slot, not
-  // the map's. Always visible during play once spells are harvested.
+  // Spell rail: a persistent row of quick-cast buttons floated over the map's
+  // bottom edge in portrait (landscape slots it into the sidebar `spells`
+  // row). The message log floats over the map too — always, casters or not —
+  // so the rail is out of flow and its appearance never resizes the map; the
+  // `spell-row` class on #game-view only lifts the log (and --more--) by the
+  // rail's height. Always visible during play once spells are harvested.
   const spellRail = document.createElement('div')
   spellRail.id = 'spell-rail'
   spellRail.style.display = 'none'
@@ -1277,6 +1278,7 @@ export function buildGameView(
 
   function enterXMode(): void {
     inXMode = true
+    view.classList.add('x-mode')  // drops the map's log-strip padding (style.css)
     msgLog.style.display = 'none'
     hud.style.display = 'none'
     renderSpellRail()  // drop the rail row (and the log's map overlay) for the examine map
@@ -1301,6 +1303,7 @@ export function buildGameView(
 
   function exitXMode(): void {
     inXMode = false
+    view.classList.remove('x-mode')
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
     requestAnimationFrame(() => mapView.fitToContainer())
@@ -2430,9 +2433,9 @@ export function buildGameView(
   // Render the persistent quick-cast rail from spellCache. Hidden when there are
   // no spells. Each button casts on tap via castSpellLetter (its own guard keeps
   // a tap during a menu/overlay/X-mode inert). The `spell-row` class on the view
-  // tracks rail visibility: while set, CSS floats the message log over the map's
-  // bottom edge so the rail's grid row reuses the log's old slot and the map
-  // keeps its full height.
+  // tracks rail visibility: while set, CSS lifts the floating message log (and
+  // --more--) by the rail's height so the rail fits beneath them — the rail
+  // itself floats over the map, so showing it never resizes the map.
   // The cache array the rail's buttons were last built from. Every harvest
   // (and the dev fake-spells hook) assigns a NEW array to spellCache, so
   // reference identity distinguishes "content changed, rebuild" from
