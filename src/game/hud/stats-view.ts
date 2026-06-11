@@ -121,14 +121,16 @@ export class StatsView {
       : `${hp}/${hpMax}`
     this.setText('hud-hp', hpText)
 
-    // Square-template bar lines, mirroring the reference: the HP caption
-    // reads "Health:" until a drained "(real max)" needs the room, then
-    // shortens to "HP:"; Djinni (whose HP is their casting pool) hide the
-    // Magic line entirely (player.js hides #stats_mpline).
-    const hpCap = this.el.querySelector<HTMLElement>('#hud-hp-caption')
-    if (hpCap) hpCap.textContent = hpDrained ? 'HP:' : 'Health:'
+    // Djinni (whose HP is their casting pool) hide the Magic line entirely,
+    // mirroring player.js hiding #stats_mpline. Both templates tag their MP
+    // row #hud-mp-line, so this applies in portrait and landscape alike.
     const mpLine = this.el.querySelector<HTMLElement>('#hud-mp-line')
     if (mpLine) mpLine.style.display = species === 'Djinni' ? 'none' : ''
+    // Square-only: the HP caption reads "Health:" until a drained "(real max)"
+    // needs the room, then shortens to "HP:". Compact has no caption element,
+    // so this no-ops there.
+    const hpCap = this.el.querySelector<HTMLElement>('#hud-hp-caption')
+    if (hpCap) hpCap.textContent = hpDrained ? 'HP:' : 'Health:'
 
     // dd_real_mp_max is sent as 0 for non-Deep-Dwarves; only show parens for DD with reduced max.
     const ddRealMpMax = s.dd_real_mp_max ?? 0
@@ -437,7 +439,7 @@ export class StatsView {
           <div class="hg-bar-cell"><span class="hud-bar-seg hp-full"></span><span class="hud-bar-seg hp-poison"></span><span class="hud-bar-seg hp-decrease"></span><span class="hud-bar-seg hp-increase"></span></div>
           <span class="hg-bar-val" id="hud-hp"></span>
         </div>
-        <div class="hg-bar-row hg-mp">
+        <div class="hg-bar-row hg-mp" id="hud-mp-line">
           <div class="hg-bar-cell"><span class="hud-bar-seg mp-full"></span><span class="hud-bar-seg mp-decrease"></span><span class="hud-bar-seg mp-increase"></span></div>
           <span class="hg-bar-val" id="hud-mp"></span>
         </div>
