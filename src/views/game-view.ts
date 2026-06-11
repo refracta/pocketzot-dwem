@@ -1122,7 +1122,7 @@ export function buildGameView(
         if (titlePromptInput) break
         if (msg.type === 'messages') {
           if (inXMode) { exitedXModeForInput = true; exitXMode() }
-          showTextInput(msg.prefill ?? '', msg.maxlen ?? 99)
+          showTextInput(msg.prefill ?? '', msg.maxlen ?? 99, msg.tag)
         } else if (msg.type === 'generic' && msg.tag === 'skill_target') {
           // `type:"generic"` fires only for prompts inside a CRT menu, and
           // the only such prompt in DCSS 0.34 is the skill target editor.
@@ -3089,7 +3089,7 @@ export function buildGameView(
     numpadInput.appendChild(grid)
   }
 
-  function showTextInput(prefill: string, maxlen: number): void {
+  function showTextInput(prefill: string, maxlen: number, tag?: string): void {
     removeTextInput()
     const row = document.createElement('p')
     row.className = 'game-msg game-text-input-row'
@@ -3108,6 +3108,16 @@ export function buildGameView(
         e.preventDefault()
         const text = input.value + '\r'
         removeTextInput()
+        // The server's resumable_line_reader still holds the prefill (e.g. the
+        // old ally name) with the cursor at its end, so a bare text_input gets
+        // appended to it ("OldnameNewname"). Wipe the buffer first with Ctrl-U
+        // (kill-to-start, 21) + Ctrl-K (kill-to-end, 11), matching the
+        // reference client (textinput.js send_input_line). The "repeat" count
+        // prompt is excluded there and here — it doesn't carry a prefill.
+        if (tag !== 'repeat') {
+          conn.send({ msg: 'key', keycode: 21 })
+          conn.send({ msg: 'key', keycode: 11 })
+        }
         conn.send({ msg: 'text_input', text })
         view.focus({ preventScroll: true })
       } else if (e.key === 'Escape') {
