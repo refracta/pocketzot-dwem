@@ -349,6 +349,17 @@ export function buildGameView(
   const view = document.createElement('div')
   view.id = 'game-view'
 
+  // Timestamp of the last touch contact anywhere in the view. The spell
+  // buttons' click handlers consult this to reject iOS's compatibility
+  // mouse events: WebKit fires them at the LIFT point of a touch that
+  // nothing scrolled, so a drag from the log onto the rail lands a `click`
+  // on a button the finger never started on. Tracked on the view (not
+  // document) so the listeners die with it on rebuild.
+  let lastViewTouchTs = -Infinity
+  const noteViewTouch = () => { lastViewTouchTs = performance.now() }
+  view.addEventListener('touchstart', noteViewTouch, { capture: true, passive: true })
+  view.addEventListener('touchend', noteViewTouch, { capture: true, passive: true })
+
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
   uiOverlay.style.display = 'none'
@@ -2412,13 +2423,49 @@ export function buildGameView(
     // the button doubles as a reminder of what tapping sends.
     lbl.textContent = `z${s.letter}`
     btn.appendChild(lbl)
-    // Same touchstart+click pair as every button in touch.ts: fire on
-    // finger-down (click waits for finger-up, and iOS skips synthesizing a
-    // click entirely when a fast tap drifts a few px — a real dropped-cast
-    // mode on the rail). preventDefault suppresses the synthetic click so
-    // touch taps don't fire twice; click remains for mouse/desktop.
-    btn.addEventListener('touchstart', e => { e.preventDefault(); castSpellLetter(s.letter) }, { passive: false })
-    btn.addEventListener('click', () => castSpellLetter(s.letter))
+    // Touch taps are detected manually (touchstart records the contact,
+    // touchend casts if the finger didn't drift) rather than firing on raw
+    // touchstart like touch.ts buttons or trusting iOS click synthesis:
+    //  - raw touchstart casts the instant a drag CONTACTS the button — and a
+    //    drag aimed at the log above lands fat-finger contacts on the rail;
+    //  - iOS click synthesis both drops fast second taps (the original
+    //    dropped-cast bug) and conjures clicks at the LIFT point of a drag
+    //    that nothing scrolled (see the click gate below).
+    // Firing on our own touchend keeps double-taps reliable (no browser
+    // heuristics) at the cost of finger-up rather than finger-down timing.
+    // preventDefault on touchstart suppresses the tap's own synthetic click.
+    let tapX = 0, tapY = 0, tapMoved = false
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault()
+      const t = e.touches?.[0]
+      tapX = t?.clientX ?? 0
+      tapY = t?.clientY ?? 0
+      tapMoved = false
+    }, { passive: false })
+    btn.addEventListener('touchmove', e => {
+      const t = e.touches?.[0]
+      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > TAP_SLOP_PX) tapMoved = true
+    })
+    btn.addEventListener('touchend', () => { if (!tapMoved) castSpellLetter(s.letter) })
+    // Mouse/desktop path. Gated on recent touch activity in the view: iOS
+    // dispatches its compatibility mouse events (incl. click) at the lift
+    // point of an unconsumed drag, so a finger that lands on the floating
+    // log and lifts over the rail "clicks" a button it never touched. Real
+    // touch taps cast via their own touchend above, so any click inside a
+    // touch session is synthetic or stray; mouse clicks have no preceding
+    // touch and pass.
+    btn.addEventListener('click', e => {
+      // Modern engines deliver click as a PointerEvent: a click that
+      // self-identifies as a genuine mouse (hybrid devices — iPad +
+      // trackpad, touchscreen laptops) bypasses the touch-recency gate,
+      // which would otherwise eat a real mouse click landing within 700ms
+      // of unrelated touch activity. Only 'mouse' bypasses: a pen tap also
+      // fires touch events (and casts via touchend above), and where
+      // pointerType is absent the timestamp heuristic decides.
+      if ((e as PointerEvent).pointerType !== 'mouse'
+        && performance.now() - lastViewTouchTs < SYNTH_CLICK_SUPPRESS_MS) return
+      castSpellLetter(s.letter)
+    })
     return btn
   }
 
@@ -2448,6 +2495,11 @@ export function buildGameView(
   // long after (e.g. the first cast was targeted and the player sat in the
   // targeter).
   const PENDING_CAST_TTL_MS = 1000
+  // Finger drift beyond this is a drag, not a tap — the touchend won't cast.
+  const TAP_SLOP_PX = 12
+  // A click this soon after touch activity is iOS's synthesized
+  // compatibility click (or a stray), never a real mouse press.
+  const SYNTH_CLICK_SUPPRESS_MS = 700
   let lastCastSentAt = -Infinity
   let pendingCastLetter: string | null = null
   let pendingCastUntil = 0

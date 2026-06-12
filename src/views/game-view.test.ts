@@ -782,10 +782,56 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       h.dispatch({ msg: 'msgs', messages: [{ text: 'Cast which spell? (? or * to list) ', channel: 2 }] })
     }
 
-    it('casts on touchstart (finger-down), like every other touch control', () => {
+    // Synthetic touch event with a contact point (happy-dom has no TouchEvent
+    // constructor; the handlers only read touches[0].clientX/Y).
+    const touch = (el: HTMLElement, type: string, x = 0, y = 0) => {
+      const e = new Event(type, { bubbles: true, cancelable: true })
+      Object.assign(e, { touches: [{ clientX: x, clientY: y }] })
+      el.dispatchEvent(e)
+    }
+
+    it('casts on a completed touch tap (touchend without drift)', () => {
       const h = setup()
       ready(h)
-      railBtn(h, 'a').dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }))
+      touch(railBtn(h, 'a'), 'touchstart')
+      expect(castsSent(h)).toBe(0) // not on contact — a drag may be starting
+      touch(railBtn(h, 'a'), 'touchend')
+      expect(castsSent(h)).toBe(1)
+    })
+
+    it('does NOT cast when the finger drags off the button (drift past slop)', () => {
+      const h = setup()
+      ready(h)
+      const b = railBtn(h, 'a')
+      touch(b, 'touchstart', 0, 0)
+      touch(b, 'touchmove', 0, 40) // scroll-sized drift
+      touch(b, 'touchend')
+      expect(castsSent(h)).toBe(0)
+    })
+
+    it('ignores the synthetic click iOS fires at the lift point of a drag from the log', () => {
+      const h = setup()
+      ready(h)
+      // Drag starts on the message log (touch events keep targeting it), but
+      // WebKit hit-tests its compatibility click at the lift point — the rail
+      // button. The click gate must reject it; a later real mouse click (no
+      // recent touch) still casts, which the .click()-based tests above cover.
+      touch(msgLog(h), 'touchstart')
+      touch(msgLog(h), 'touchend')
+      railBtn(h, 'a').click()
+      expect(castsSent(h)).toBe(0)
+    })
+
+    it('lets a self-identified mouse click through the gate despite recent touch activity', () => {
+      const h = setup()
+      ready(h)
+      // Hybrid device: finger scrolls the log, then a real trackpad/mouse
+      // click lands on the rail within the suppression window. Modern
+      // engines mark the click's pointerType, which bypasses the gate.
+      touch(msgLog(h), 'touchstart')
+      touch(msgLog(h), 'touchend')
+      const click = Object.assign(new Event('click', { bubbles: true }), { pointerType: 'mouse' })
+      railBtn(h, 'a').dispatchEvent(click)
       expect(castsSent(h)).toBe(1)
     })
 
