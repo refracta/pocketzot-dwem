@@ -20,9 +20,10 @@ import type { TileLoader } from '../tiles/tile-loader'
 import { bgLo } from '../map/cell-flags'
 import { getPref, setPref } from '../../prefs'
 
-// Up to MAX_ROWS top-sorted groups are listed. When more groups exist, a
-// small ".ml-corner-more" chip is anchored at the panel's bottom-right
-// corner sharing the last row's line — see updateCornerMore().
+// Up to MAX_ROWS top-sorted groups are listed. When more groups exist, the
+// last visible row carries an inline right-aligned "+N" suffix (same
+// .ml-collapsed-more span the collapsed view uses) counting the hidden
+// monsters.
 const MAX_ROWS = 5
 const MAX_GLYPHS = 6  // matches reference monster_list.js displayed_monsters
 // 32px native tile cell × 0.625 = 20px slot — fits the row's ~18px text
@@ -69,7 +70,6 @@ export class MonsterListView {
   // Why positional and not keyed by monster identity: two groups can sort
   // apart on a field outside the prior `att|type|name|clientid` cache key.
   private rows: RowCache[] = []
-  private cornerMoreEl: HTMLElement | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
   // Sticky across map updates, encounter cycles, empty-view intervals,
   // and page reloads (persisted via prefs.ts → localStorage). Only the
@@ -112,7 +112,6 @@ export class MonsterListView {
     if (mode === this.mode) return
     this.mode = mode
     this.rows.length = 0
-    this.cornerMoreEl = null
     this.element.innerHTML = ''
     // Clear defensively — `update()` re-asserts this from groups when it
     // runs, but if lastMonsters is null (mode swap before any monsters
@@ -145,7 +144,6 @@ export class MonsterListView {
     if (this.compact === compact) return
     this.compact = compact
     this.rows.length = 0
-    this.cornerMoreEl = null
     this.element.innerHTML = ''
     if (this.lastMonsters) this.update(this.lastMonsters)
   }
@@ -160,7 +158,6 @@ export class MonsterListView {
     // returns to whichever mode the user last selected.
     if (groups.length === 0) {
       this.rows.length = 0
-      this.cornerMoreEl = null
       this.element.innerHTML = ''
       this.element.classList.remove('has-hostile')
       return
@@ -175,50 +172,51 @@ export class MonsterListView {
     }
     this.element.classList.toggle('has-hostile', hasHostile)
 
-    let overflow = 0
     if (this.collapsed || this.compact) {
       // Wipe the expanded-mode caches: a re-expand needs to rebuild from
       // scratch since the DOM no longer holds the cached tile rows.
       this.rows.length = 0
-      this.cornerMoreEl = null
       this.renderCollapsed(groups)
     } else {
       const rowCount = Math.min(groups.length, MAX_ROWS)
-      // Count hidden *monsters*, not hidden groups, so the chip is a
+      // Count hidden *monsters*, not hidden groups, so the suffix is a
       // threat-density signal consistent with the collapsed view's
-      // "+N" suffix. A single hidden 12-monster group reads as
-      // "…+12" rather than "…+1".
+      // "+N". A single hidden 12-monster group reads as "…+12"
+      // rather than "…+1".
+      let overflow = 0
       for (let i = rowCount; i < groups.length; i++) overflow += groups[i].length
+      const suffix = overflow > 0 ? `+${overflow}` : undefined
       // Tile path requires the loader to be configured (atlases known). If
       // we haven't received `game_client` yet, fall back to ASCII rather
       // than paint empty squares; game-view re-runs update() once the
       // loader is ready, swapping the rows to sprites.
       const useTiles = this.mode === 'tiles' && !!this.loader
       if (useTiles) {
-        this.renderTiles(groups, rowCount)
+        this.renderTiles(groups, rowCount, suffix)
       } else {
         this.rows.length = 0
-        this.cornerMoreEl = null
-        this.renderAscii(groups, rowCount)
+        this.renderAscii(groups, rowCount, suffix)
       }
     }
 
-    // Toggle + corner overflow are both absolute-positioned. Re-append
-    // them every render so innerHTML-based rebuilds in the ASCII /
-    // collapsed paths don't leave them orphaned; passing overflow=0
-    // when collapsed detaches any leftover corner indicator. Skip the
+    // The chevron floats right inside the FIRST row, so re-insert it every
+    // render — innerHTML rebuilds (ASCII/collapsed paths) and cached-row
+    // replaceWith (tile path) both discard the previous parent. Skip the
     // toggle when there's only one group: collapsed and expanded would
-    // render the same single row (extras=0 suppresses the "+N more"
-    // suffix), so the chevron would be a no-op tap target.
-    if (groups.length > 1 && !this.compact) {
+    // render the same single row (extras=0 suppresses the "+N" suffix),
+    // so the chevron would be a no-op tap target.
+    const firstRow = this.element.firstElementChild
+    if (groups.length > 1 && !this.compact && firstRow) {
       this.toggleEl.textContent = this.collapsed ? '▾' : '▴'
-      this.element.appendChild(this.toggleEl)
+      // First-in-source right floats sit rightmost, so on the collapsed
+      // single line the chevron lands at the far right edge, with the
+      // "+N" suffix to its left.
+      firstRow.insertBefore(this.toggleEl, firstRow.firstChild)
     } else {
       // Compact mode has no expand affordance — the whole chip taps through
       // to the full panel, so the chevron would be a redundant target.
       this.toggleEl.remove()
     }
-    this.updateCornerMore(overflow)
   }
 
   // Compute visual inputs from a group: threat-bar gate, name color,
@@ -281,6 +279,10 @@ export class MonsterListView {
     const hpSpan = d.hpColor
       ? `<span class="ml-hp" style="background:${d.hpColor}"></span>`
       : ''
+    // The suffix floats right; emit it after the name so it lands on the
+    // row's LAST line — bottom-right of the panel when the name wraps.
+    // (The chevron is the opposite: inserted first in source so it holds
+    // the first line's top-right corner.)
     const suffixHtml = suffix
       ? `<span class="ml-collapsed-more">${suffix}</span>`
       : ''
@@ -293,9 +295,11 @@ export class MonsterListView {
       + `</div>`
   }
 
-  private renderAscii(groups: MonsterCell[][], rows: number): void {
+  private renderAscii(groups: MonsterCell[][], rows: number, suffix?: string): void {
     let html = ''
-    for (let i = 0; i < rows; i++) html += this.buildAsciiRow(groups[i])
+    for (let i = 0; i < rows; i++) {
+      html += this.buildAsciiRow(groups[i], undefined, i === rows - 1 ? suffix : undefined)
+    }
     this.element.innerHTML = html
   }
 
@@ -322,33 +326,31 @@ export class MonsterListView {
     }
   }
 
-  private renderTiles(groups: MonsterCell[][], rows: number): void {
+  private renderTiles(groups: MonsterCell[][], rows: number, suffix?: string): void {
     // Invariant: empty cache → fresh DOM. Without this wipe, transitioning
     // from collapsed (which leaves a single .ml-collapsed row) back to
     // expanded would stack the new tile rows below the stale collapsed
     // row, since the incremental insert path only manages this.rows[].
     if (this.rows.length === 0) {
       this.element.innerHTML = ''
-      this.cornerMoreEl = null
     }
     for (let i = 0; i < rows; i++) {
       const d = this.rowData(groups[i])
+      const rowSuffix = i === rows - 1 ? suffix : undefined
       // Signature covers every visual input. JSON.stringify is overkill
       // for small numeric tuples but trivially cheap for ~6 entries × 8
-      // fields, and avoids hand-rolled hashing bugs.
+      // fields, and avoids hand-rolled hashing bugs. The suffix is a
+      // visual input too: the last row carries the "+N" overflow, so a
+      // changed hidden-monster count must rebuild that row.
       const memberSig = d.memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null])
-      const sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, memberSig])
+      const sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, rowSuffix ?? null, memberSig])
 
       const cached = this.rows[i]
       if (cached && cached.sig === sig) continue
-      const el = this.buildTileRow(d)
+      const el = this.buildTileRow({ ...d, suffix: rowSuffix })
       if (cached) {
         cached.el.replaceWith(el)
       } else {
-        // DOM order is irrelevant for the overflow indicator (absolute
-        // positioned in the corner) and the toggle (top-right), so just
-        // append. update() re-appends both after rendering so they end
-        // up after the rows regardless.
         this.element.appendChild(el)
       }
       this.rows[i] = { el, sig }
@@ -358,26 +360,6 @@ export class MonsterListView {
     while (this.rows.length > rows) {
       const dropped = this.rows.pop()
       dropped?.el.remove()
-    }
-  }
-
-  // Overflow indicator anchored to the panel's bottom-right corner,
-  // sharing a line with the last row. Expanded-only — the collapsed view
-  // carries its own inline +N. Reuses one element across renders so
-  // identity is stable when the count just changes. Row-level padding
-  // on .ml-row reserves the clearance for the chip; no panel class
-  // toggling needed.
-  private updateCornerMore(overflow: number): void {
-    if (overflow > 0) {
-      if (!this.cornerMoreEl) {
-        this.cornerMoreEl = document.createElement('div')
-        this.cornerMoreEl.className = 'ml-corner-more'
-      }
-      this.cornerMoreEl.textContent = `+${overflow}`
-      this.element.appendChild(this.cornerMoreEl)
-    } else if (this.cornerMoreEl) {
-      this.cornerMoreEl.remove()
-      this.cornerMoreEl = null
     }
   }
 
@@ -426,6 +408,8 @@ export class MonsterListView {
     name.textContent = opts.label
     row.appendChild(name)
 
+    // Floats right; after the name so it lands on the row's last line —
+    // bottom-right of the panel when the name wraps (see buildAsciiRow).
     if (opts.suffix) {
       const more = document.createElement('span')
       more.className = 'ml-collapsed-more'

@@ -159,11 +159,37 @@ describe('MonsterListView.renderTiles', () => {
     // "+N" counts the monsters not in the top group (the two ogres).
     expect(view.element.querySelector('.ml-collapsed-more')?.textContent).toBe('+2')
 
-    // Reverting to portrait restores the expanded multi-row list.
+    // Reverting to portrait restores the expanded multi-row list, with the
+    // chevron floated inside the FIRST row (not a panel-level corner glyph).
     view.setCompact(false)
     view.update(store.getMonsters())
     expect(view.element.querySelectorAll('.ml-row').length).toBe(3)
-    expect(view.element.querySelector('.ml-toggle')).not.toBeNull()
+    const toggle = view.element.querySelector('.ml-toggle')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.parentElement).toBe(view.element.querySelector('.ml-row'))
+  })
+
+  it('renders overflow past MAX_ROWS as an inline +N on the last row', () => {
+    // Seven hostile monsters in seven distinct groups (different types).
+    // MAX_ROWS = 5, so two monsters are hidden → the fifth row carries an
+    // inline "+2" suffix; there is no abspos corner chip anymore.
+    const store = new MapStore()
+    store.merge(Array.from({ length: 7 }, (_, i) => ({
+      x: i + 1, y: 1, g: 'x', mon: {
+        id: i + 1, name: `mon${i}`, att: 0, type: 100 + i,
+        typedata: { avghp: 90 - i },
+      },
+    })))
+
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const rows = view.element.querySelectorAll('.ml-row')
+    expect(rows.length).toBe(5)
+    expect(view.element.querySelector('.ml-corner-more')).toBeNull()
+    const more = view.element.querySelector('.ml-collapsed-more')
+    expect(more?.textContent).toBe('+2')
+    expect(more?.parentElement).toBe(rows[4])
   })
 
   it('trims rows when groups shrink between renders', () => {

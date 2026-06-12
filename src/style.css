@@ -1255,18 +1255,17 @@ html, body {
 #monster-list {
   /* Shared card styling. Placement is orientation-specific and lives in the
      media blocks: portrait floats it over the map's top-left, landscape slots
-     it into the sidebar. position:relative is the in-flow default and the
-     containing block for the abspos chevron / "+N" chip in both modes;
-     portrait promotes it to absolute so the float overlays the map without
-     consuming layout space. */
+     it into the sidebar. position:relative is the in-flow default; portrait
+     promotes it to absolute so the float overlays the map without consuming
+     layout space. */
   position: relative;
   z-index: 2;
   font-size: 0.82rem;
   font-family: var(--font-mono);
   /* No max-height / overflow: the JS caps content at MAX_ROWS rows, with
-     a small .ml-corner-more chip in the bottom-right corner when more
-     groups exist. The panel auto-sizes and never scrolls. Tapping opens
-     the full monster panel. */
+     an inline right-aligned "+N" suffix on the last row when more groups
+     exist. The panel auto-sizes and never scrolls. Tapping opens the full
+     monster panel. */
   background: rgba(0, 0, 0, 0.7);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
@@ -1312,13 +1311,12 @@ html, body {
   position: relative;
   overflow-wrap: break-word;
 }
-/* Both the chevron (top-right) and the "+N" chip (bottom-right) straddle
-   their respective panel corners, so neither contributes to row layout —
-   no right-gutter reservation is needed in either case. */
+/* Contain both float directions: glyphs float left; the chevron and "+N"
+   suffix float right inside their rows. */
 .ml-row::after {
   content: "";
   display: block;
-  clear: left;
+  clear: both;
 }
 /* Threat bar lives in the panel's left padding so glyph alignment is identical
    between bordered and unbordered rows. left:-5px abuts the 1px panel border. */
@@ -1357,66 +1355,52 @@ html, body {
   margin-left: 0.3em;
 }
 
-/* Overflow indicator centered on the panel's bottom-right border corner —
-   same notch treatment as .ml-toggle. The bg patch masks the border running
-   directly underneath, and because the chip is absolute and translated out
-   of layout flow it doesn't widen the panel even when overflow is active.
-   pointer-events:none so taps fall through to the panel's open-full-panel
-   click handler. */
-.ml-corner-more {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  /* Less horizontal offset than the chevron's translate(50%, …): the chip's
-     multi-char width (~3ch) would extend ~12px past the border with a full
-     50% translate. 25% keeps the overhang to ~5-6px, matching the chevron. */
-  transform: translate(25%, 50%);
-  font-size: 0.7em;
-  font-style: italic;
-  line-height: 1;
-  color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.85);
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Collapse chevron centered on the panel's top-right border corner. The
-   translate(50%, -50%) plants the glyph's center on the corner point; the
-   bg patch masks the border running directly underneath so the corner reads
-   as having a tiny notch around the chevron. Spatial-motion icon: ▴ when
-   expanded (tap collapses up into the corner), ▾ when collapsed (tap expands
-   down). Matches the abc▴/abc▾ keyboard toggle. Because it's absolute and
-   positioned outside layout flow, it contributes zero width to the panel. */
+/* Collapse chevron, floated right inside the FIRST row (JS re-inserts it as
+   that row's first child each render — first-in-source right floats sit
+   rightmost, so on the collapsed single line it lands at the far right edge
+   with the "+N" suffix to its left). Spatial-motion icon: ▴ when expanded
+   (tap collapses upward), ▾ when collapsed (tap expands down). Matches the
+   abc▴/abc▾ keyboard toggle. Being a float, it only widens the panel when
+   its own row is the longest. */
 .ml-toggle {
-  position: absolute;
-  top: 0;
-  right: 0;
-  transform: translate(50%, -50%);
+  float: right;
+  position: relative; /* containing block for the ::before tap zone */
+  margin-left: 0.6em;
   font-size: 0.85em;
-  line-height: 1;
   color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.85);
   cursor: pointer;
   pointer-events: auto;
   user-select: none;
 }
-/* Hit-target expansion. The glyph now straddles the corner (half outside the
-   panel, half inside), so the zone extends ~10px in every direction giving a
-   ~30×28px tap area centered on the corner. Pointer events bubble to the
-   parent .ml-toggle so the click handler still fires. */
+/* Hit-target expansion: the bare glyph is ~10px, so grow the tap zone to
+   roughly 28px square. It overlaps adjacent row text; a tap in the halo
+   toggles collapse instead of opening the full panel, which is the right
+   bias for a control this small. Pointer events bubble to the parent
+   .ml-toggle so the click handler still fires. */
 .ml-toggle::before {
   content: "";
   position: absolute;
-  inset: -10px -10px -10px -10px;
+  inset: -8px;
 }
 
 /* The collapsed-mode row uses the same layout as an expanded top row —
    .ml-collapsed is kept on the element as a DOM marker but needs no
-   styling beyond what .ml-row already provides. The "+N more" suffix
-   appended after the name uses .ml-collapsed-more for muted, italic
-   secondary text with a clear left gap from the name. */
+   styling beyond what .ml-row already provides. The "+N" suffix (collapsed
+   line, or the last expanded row when groups overflow MAX_ROWS) is muted
+   italic secondary text floated to the row's right edge — right-aligned
+   under longer rows above, and emitted after the name so it lands on the
+   row's LAST line (bottom-right of the panel when the name wraps);
+   margin-left keeps a minimum gap from the name. */
 .ml-collapsed-more {
+  float: right;
   font-size: 0.85em;
+  /* A float top-aligns its own line box instead of sitting on the row's
+     text baseline, so without this the smaller font rides high. 1.4/0.85
+     re-inflates the box to the row's full line height (.ml-row's 1.4 in
+     this font's em units), centering the text back onto the shared line.
+     (.ml-toggle deliberately skips this — top-aligned reads as a corner
+     button.) */
+  line-height: calc(1.4 / 0.85);
   color: var(--text-dim);
   margin-left: 0.6em;
   font-style: italic;
