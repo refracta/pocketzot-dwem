@@ -11,14 +11,11 @@ import { decodeColor, DEFAULT_FG, flashColor } from './colors'
 import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
 import {
   FG_TILE_ID_MASK,
-  FG_ATTITUDE_MASK, FG_PET, FG_GD_NEUTRAL, FG_NEUTRAL,
   FG_S_UNDER, FG_FLYING,
   FG_BEHAVIOUR_MASK, FG_STAB, FG_MAY_STAB, FG_FLEEING, FG_PARALYSED,
   FG_NET, FG_WEB,
   FG_MDAM_LO_MASK, FG_MDAM_LIGHT_LO, FG_MDAM_MOD_LO, FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT,
-  FG_GHOST,
   FG_POISON_MASK_HI, FG_POISON, FG_MORE_POISON, FG_MAX_POISON,
-  FG_THREAT_MASK_HI, FG_THREAT_TRIVIAL, FG_THREAT_EASY, FG_THREAT_TOUGH, FG_THREAT_NASTY, FG_THREAT_UNUSUAL,
   BG_TILE_ID_MASK,
   BG_MM_UNSEEN, BG_UNSEEN, BG_TRAV_EXCL, BG_EXCL_CTR, BG_OOR, BG_WATER,
   BG_NEW_STAIR, BG_NEW_TRANSPORTER,
@@ -28,7 +25,7 @@ import {
   bgLo, bgHi,
 } from './cell-flags'
 import { buildStatusIconSizeMap } from './icon-sizes'
-import { buildStatusOverlays, resolveOverlayId } from '../hud/monster-style'
+import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId } from '../hud/monster-style'
 
 // Tile-mode minimum viewport. Square because tile cells are square; 21×21
 // is roughly the smallest cell count where a phone-sized container still
@@ -83,15 +80,16 @@ const HALO_UMBRA_LAST = 5
 // compare correctly — bitwise `&` in JS returns int32, which would make
 // `(lo & 0xC0000000) === 0xC0000000` test `-1073741824 === 3221225472` and
 // fail. Coerced both sides land in the same positive range.
+// Attitude (PET/…) and threat-tier (TRIVIAL/…/UNUSUAL, GHOST) bits aren't
+// decoded here: their only consumer was the halo / threat-wash tile choice,
+// which now goes through fgHaloDngnName / fgThreatDngnName (monster-style.ts)
+// — the selectors shared with the HUD monster list and touch panel.
 interface DecodedFg {
   value: number
-  PET: boolean; GD_NEUTRAL: boolean; NEUTRAL: boolean
   S_UNDER: boolean; FLYING: boolean
   STAB: boolean; MAY_STAB: boolean; FLEEING: boolean; PARALYSED: boolean
   NET: boolean; WEB: boolean
   POISON: boolean; MORE_POISON: boolean; MAX_POISON: boolean
-  TRIVIAL: boolean; EASY: boolean; TOUGH: boolean; NASTY: boolean; UNUSUAL: boolean
-  GHOST: boolean
   MDAM_LIGHT: boolean; MDAM_MOD: boolean; MDAM_HEAVY: boolean; MDAM_SEV: boolean; MDAM_ADEAD: boolean
 }
 function decodeFg(fg: number | number[] | undefined): DecodedFg {
@@ -99,17 +97,12 @@ function decodeFg(fg: number | number[] | undefined): DecodedFg {
   const hiRaw = fg === undefined ? 0 : (typeof fg === 'number' ? 0 : (fg[1] ?? 0))
   const lo = loRaw >>> 0
   const hi = hiRaw >>> 0
-  const attitude = lo & FG_ATTITUDE_MASK
   const behavior = lo & FG_BEHAVIOUR_MASK
   const poison = hi & FG_POISON_MASK_HI
-  const threat = (hi & FG_THREAT_MASK_HI) >>> 0
   const mdamLo = (lo & FG_MDAM_LO_MASK) >>> 0
   const mdamHi = hi & FG_MDAM_HI_BIT
   return {
     value: lo & FG_TILE_ID_MASK,
-    PET: attitude === FG_PET,
-    GD_NEUTRAL: attitude === FG_GD_NEUTRAL,
-    NEUTRAL: attitude === FG_NEUTRAL,
     S_UNDER: (lo & FG_S_UNDER) !== 0,
     FLYING: (lo & FG_FLYING) !== 0,
     STAB: behavior === FG_STAB,
@@ -121,12 +114,6 @@ function decodeFg(fg: number | number[] | undefined): DecodedFg {
     POISON: poison === FG_POISON,
     MORE_POISON: poison === FG_MORE_POISON,
     MAX_POISON: poison === FG_MAX_POISON,
-    GHOST: (hi & FG_GHOST) !== 0,
-    TRIVIAL: threat === FG_THREAT_TRIVIAL,
-    EASY: threat === FG_THREAT_EASY,
-    TOUGH: threat === FG_THREAT_TOUGH,
-    NASTY: threat === FG_THREAT_NASTY,
-    UNUSUAL: threat === FG_THREAT_UNUSUAL,
     MDAM_LIGHT: mdamLo === FG_MDAM_LIGHT_LO && mdamHi === 0,
     MDAM_MOD: mdamLo === FG_MDAM_MOD_LO && mdamHi === 0,
     MDAM_HEAVY: mdamLo === FG_MDAM_HEAVY_LO && mdamHi === 0,
@@ -754,25 +741,14 @@ export class TileMapView {
         }
         if (cell.awakened_forest) this.paintIcon('BERSERK', px, py)
 
-        // Attitude halos (ring under the monster).
-        if (fg.PET) this.paintDngnName('HALO_FRIENDLY', px, py)
-        else if (fg.GD_NEUTRAL) this.paintDngnName('HALO_GD_NEUTRAL', px, py)
-        else if (fg.NEUTRAL) this.paintDngnName('HALO_NEUTRAL', px, py)
-
-        // Threat-level stars (ghost variants are distinct).
-        if (fg.GHOST) {
-          if (fg.TRIVIAL) this.paintDngnName('THREAT_GHOST_TRIVIAL', px, py)
-          else if (fg.EASY) this.paintDngnName('THREAT_GHOST_EASY', px, py)
-          else if (fg.TOUGH) this.paintDngnName('THREAT_GHOST_TOUGH', px, py)
-          else if (fg.NASTY) this.paintDngnName('THREAT_GHOST_NASTY', px, py)
-          else if (fg.UNUSUAL) this.paintDngnName('THREAT_UNUSUAL', px, py)
-        } else {
-          if (fg.TRIVIAL) this.paintDngnName('THREAT_TRIVIAL', px, py)
-          else if (fg.EASY) this.paintDngnName('THREAT_EASY', px, py)
-          else if (fg.TOUGH) this.paintDngnName('THREAT_TOUGH', px, py)
-          else if (fg.NASTY) this.paintDngnName('THREAT_NASTY', px, py)
-          else if (fg.UNUSUAL) this.paintDngnName('THREAT_UNUSUAL', px, py)
-        }
+        // Attitude halo ring + threat-level wash under the monster. Tile
+        // selection is shared with the HUD monster list and touch panel
+        // (monster-style.ts); the name tables there transcribe
+        // cell_renderer.js draw_background lines 811-845.
+        const halo = fgHaloDngnName(cell.fg)
+        if (halo) this.paintDngnName(halo, px, py)
+        const threatWash = fgThreatDngnName(cell.fg)
+        if (threatWash) this.paintDngnName(threatWash, px, py)
 
         if (cell.highlighted_summoner) this.paintDngnName('HALO_SUMMONER', px, py)
       }

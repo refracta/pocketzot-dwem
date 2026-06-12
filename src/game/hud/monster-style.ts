@@ -16,6 +16,7 @@ import {
   FG_MDAM_LO_MASK, FG_MDAM_LIGHT_LO, FG_MDAM_MOD_LO, FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT,
   FG_POISON_MASK_HI, FG_POISON, FG_MORE_POISON, FG_MAX_POISON,
   FG_THREAT_MASK_HI, FG_THREAT_TRIVIAL, FG_THREAT_EASY, FG_THREAT_TOUGH, FG_THREAT_NASTY, FG_THREAT_UNUSUAL,
+  FG_GHOST,
   fgLo, fgHi,
 } from '../map/cell-flags'
 
@@ -281,6 +282,26 @@ export function decodeFgThreatTier(fg: number | number[] | undefined): FgThreatT
   if (masked === FG_THREAT_NASTY) return 'nasty'
   if (masked === FG_THREAT_UNUSUAL) return 'unusual'
   return undefined
+}
+
+// Threat tier → dngn wash tile stamped under the sprite, mirroring the
+// canvas map (tile-map-view drawCell, per cell_renderer.js draw_background):
+// translucent full-cell color washes — yellow tough, red nasty, magenta
+// unusual, grey trivial/easy. Ghosts get distinct variants except UNUSUAL,
+// which shares one tile. The server only sets these fg bits per the player's
+// tile_show_threat_levels option, so absent bits → no wash, same as the map.
+const THREAT_TIER_DNGN: Record<FgThreatTier, string> = {
+  trivial: 'THREAT_TRIVIAL', easy: 'THREAT_EASY', tough: 'THREAT_TOUGH',
+  nasty: 'THREAT_NASTY', unusual: 'THREAT_UNUSUAL',
+}
+const THREAT_TIER_GHOST_DNGN: Record<FgThreatTier, string> = {
+  trivial: 'THREAT_GHOST_TRIVIAL', easy: 'THREAT_GHOST_EASY', tough: 'THREAT_GHOST_TOUGH',
+  nasty: 'THREAT_GHOST_NASTY', unusual: 'THREAT_UNUSUAL',
+}
+export function fgThreatDngnName(fg: number | number[] | undefined): string | undefined {
+  const tier = decodeFgThreatTier(fg)
+  if (tier === undefined) return undefined
+  return (fgHi(fg) & FG_GHOST) ? THREAT_TIER_GHOST_DNGN[tier] : THREAT_TIER_DNGN[tier]
 }
 
 export function isExcluded(mon: MonsterInfo): boolean {

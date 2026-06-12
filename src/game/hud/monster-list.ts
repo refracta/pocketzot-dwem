@@ -9,7 +9,7 @@ import { escHtml } from '../dcss-colors'
 import { decodeColor } from '../map/colors'
 import {
   ATTITUDE_CLASSES, MDAM_COLORS, UNUSUAL_COLOR, decodeFgThreatTier, decodeMdam,
-  fgHaloDngnName, fgTileIndex,
+  fgHaloDngnName, fgThreatDngnName, fgTileIndex,
   filterAndSortMonsters, monsterSort, nameColor, threatColor,
 } from './monster-style'
 import {
@@ -376,14 +376,17 @@ export class MonsterListView {
       stack.className = 'ml-tile tile-stack'
 
       // Layer order matches MonsterPanelView.renderRow: monster sprite on
-      // top, halo below it, floor at the bottom. prependDngn* slots in at
-      // index 0 of the DOM (so order calls = bottom-up paint order).
+      // top, threat wash below it, halo below that, floor at the bottom.
+      // prependDngn* slots in at index 0 of the DOM, so prepend calls run in
+      // reverse of bottom-up paint order.
       const baseSpec = monsterTileSpec({
         fg_idx: fgTileIndex(cell?.fg),
         doll: cell?.doll,
         mcache: cell?.mcache,
       })
       if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE)
+      const threat = fgThreatDngnName(cell?.fg)
+      if (threat) prependDngnLayer(this.loader, stack, threat, TILE_SCALE)
       const halo = fgHaloDngnName(cell?.fg)
       if (halo) prependDngnLayer(this.loader, stack, halo, TILE_SCALE)
       if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
