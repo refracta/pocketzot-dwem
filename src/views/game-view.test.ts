@@ -709,14 +709,15 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       expect(gridBtn(h, 'a').querySelector('.tile-stack')).toBeTruthy()
     })
 
-    it('casts the tapped spell (z + letter) from the grid', () => {
+    it('casts the tapped spell (z + letter, one atomic input message) from the grid', () => {
       const h = setup()
       h.dispatch({ msg: 'input_mode', mode: 1 }) // command mode (+ the once-per-game auto-harvest)
       feedBase(h)                                 // complete that harvest → cache populated, idle
       spellTab(h)!.click()
       gridBtn(h, 'a').click()
-      expect(sent(h)).toContainEqual({ msg: 'input', text: 'z' })
-      expect(sent(h)).toContainEqual({ msg: 'input', text: 'a' })
+      // Single message: the server pty-writes a message's text in one write,
+      // so the engine gets both keys together and never blocks between them.
+      expect(sent(h)).toContainEqual({ msg: 'input', text: 'za' })
     })
 
     it('updates an open grid in place when a re-harvest changes the spell list', () => {
@@ -756,6 +757,85 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
       h.dispatch({ msg: 'menu', tag: 'spell', items: [] })
       expect(spellTab(h)!.style.display).toBe('none')
       expect(h.view.querySelector<HTMLElement>('.tc-tab[data-tab="micro"]')!.classList.contains('active')).toBe(true)
+    })
+  })
+
+  // A quick double-tap's second cast lands inside the first cast's round-trip:
+  // the engine answers the `z` by flushing input_mode:PROMPT (7) + the
+  // channel-2 "Cast which spell?" line BEFORE the buffered letter resolves the
+  // cast, and the tap guard used to drop the second tap silently in that
+  // window (keyboard `zaza` queues server-side and casts twice). The fix
+  // queues one tap and fires it on the input_mode→1 that ends the round-trip.
+  describe('double-tap quick-cast (pending cast queue)', () => {
+    afterEach(() => { vi.useRealTimers() })
+    const railBtn = (h: Harness, letter: string) =>
+      [...h.view.querySelectorAll<HTMLElement>('#spell-rail .spell-rail-btn')]
+        .find(b => b.querySelector('.spell-letter')?.textContent === `z${letter}`)!
+    const castsSent = (h: Harness) =>
+      sent(h).filter(m => m.msg === 'input' && (m as { text?: string }).text === 'za').length
+    // Enter command mode and settle the auto-harvest it kicks off, so the
+    // rail is populated and the command channel is idle.
+    const ready = (h: Harness) => { h.dispatch({ msg: 'input_mode', mode: 1 }); feedBase(h) }
+    // The server's reply to our `z`, as flushed before the cast resolves.
+    const castPromptArrives = (h: Harness) => {
+      h.dispatch({ msg: 'input_mode', mode: 7 })
+      h.dispatch({ msg: 'msgs', messages: [{ text: 'Cast which spell? (? or * to list) ', channel: 2 }] })
+    }
+
+    it('casts on touchstart (finger-down), like every other touch control', () => {
+      const h = setup()
+      ready(h)
+      railBtn(h, 'a').dispatchEvent(new Event('touchstart', { bubbles: true, cancelable: true }))
+      expect(castsSent(h)).toBe(1)
+    })
+
+    it('queues the second tap of a double-tap and casts it on input_mode→1', () => {
+      const h = setup()
+      ready(h)
+      railBtn(h, 'a').click() // tap 1 → z + a
+      expect(castsSent(h)).toBe(1)
+      castPromptArrives(h)    // mode 7 + prompt row: both tap-guard blockers
+      railBtn(h, 'a').click() // tap 2, mid round-trip → queued, not dropped
+      expect(castsSent(h)).toBe(1)
+      h.dispatch({ msg: 'input_mode', mode: 1 }) // cast resolved
+      expect(castsSent(h)).toBe(2)
+      expect(sent(h).at(-1)).toEqual({ msg: 'input', text: 'za' })
+    })
+
+    it('does NOT queue a tap when the blocking prompt is not our own cast', () => {
+      const h = setup()
+      ready(h)
+      h.dispatch({ msg: 'input_mode', mode: 7 }) // server-initiated prompt
+      railBtn(h, 'a').click() // genuine stray — no recent cast of ours
+      h.dispatch({ msg: 'input_mode', mode: 1 })
+      expect(castsSent(h)).toBe(0)
+    })
+
+    it('drops the queued tap if a menu claimed the screen before the channel reopened', () => {
+      const h = setup()
+      ready(h)
+      railBtn(h, 'a').click()
+      castPromptArrives(h)
+      railBtn(h, 'a').click() // queued
+      h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inv' }, items: [] })
+      h.dispatch({ msg: 'input_mode', mode: 1 })
+      expect(castsSent(h)).toBe(1) // flush re-check saw the menu → dropped
+      // And it stays dropped — a later clean mode-1 must not revive it.
+      h.dispatch({ msg: 'close_menu' })
+      h.dispatch({ msg: 'input_mode', mode: 1 })
+      expect(castsSent(h)).toBe(1)
+    })
+
+    it('expires a stale queued tap instead of firing a surprise late cast', () => {
+      vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
+      const h = setup()
+      ready(h)
+      railBtn(h, 'a').click()
+      castPromptArrives(h)
+      railBtn(h, 'a').click() // queued
+      vi.advanceTimersByTime(1100) // slow link: > PENDING_CAST_TTL_MS passes
+      h.dispatch({ msg: 'input_mode', mode: 1 })
+      expect(castsSent(h)).toBe(1)
     })
   })
 })

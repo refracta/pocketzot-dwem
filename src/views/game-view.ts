@@ -1095,6 +1095,10 @@ export function buildGameView(
           if (prevInputMode !== 1) markLastMsg('cmd')
           maybeAutoHarvest()  // populate the spell rail on first entry to play
           reharvestIfDirty()  // refresh after a `=` reassign (or a deferred memorise/forget)
+          // After the harvest hooks: if one just claimed the channel, the
+          // flush's guard drops the queued tap instead of injecting `z` into
+          // the probe's menu.
+          flushPendingCast()
         }
         // YESNO prompts fire inside any menu that calls yesno() while open:
         // shop purchase (shopping.cc), acquirement (acquire.cc), Nemelex
@@ -2408,6 +2412,12 @@ export function buildGameView(
     // the button doubles as a reminder of what tapping sends.
     lbl.textContent = `z${s.letter}`
     btn.appendChild(lbl)
+    // Same touchstart+click pair as every button in touch.ts: fire on
+    // finger-down (click waits for finger-up, and iOS skips synthesizing a
+    // click entirely when a fast tap drifts a few px — a real dropped-cast
+    // mode on the rail). preventDefault suppresses the synthetic click so
+    // touch taps don't fire twice; click remains for mouse/desktop.
+    btn.addEventListener('touchstart', e => { e.preventDefault(); castSpellLetter(s.letter) }, { passive: false })
     btn.addEventListener('click', () => castSpellLetter(s.letter))
     return btn
   }
@@ -2425,6 +2435,23 @@ export function buildGameView(
   // server into targeting, handled by the existing cursor/d-pad UI; self/instant
   // spells just fire. Guarded to a clean command-mode state — the rail is always
   // visible, so a stray tap during a menu/X-mode/overlay must be a no-op.
+  //
+  // A guarded-out tap is queued (1-deep) when the blocker is our own
+  // just-sent cast: the engine answers the `z` by flushing
+  // input_mode:PROMPT plus the channel-2 "Cast which spell?" line (which the
+  // log renders as a prompt row → activePromptEl) BEFORE the letter resolves
+  // the cast, so the second tap of a quick double-tap lands inside that
+  // round-trip and used to vanish silently — while typing `zaza` on a
+  // keyboard queues server-side and casts twice. The pending tap fires on
+  // the input_mode→1 that ends the round-trip; PENDING_CAST_TTL_MS bounds
+  // both queueing and firing so a tap can't resurface as a surprise cast
+  // long after (e.g. the first cast was targeted and the player sat in the
+  // targeter).
+  const PENDING_CAST_TTL_MS = 1000
+  let lastCastSentAt = -Infinity
+  let pendingCastLetter: string | null = null
+  let pendingCastUntil = 0
+
   function castSpellLetter(letter: string): void {
     // `currentInputMode === 1` additionally rejects active targeting (a prior
     // targeted spell left the server in a target loop with a map cursor but no
@@ -2433,9 +2460,46 @@ export function buildGameView(
     // mode, so it needs its own gate: in landscape the rail stays visible in
     // the sidebar beside the panel, and a tap here bypasses the touch-input
     // swallow (the rail sends via conn.send, not that callback).
+    if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) {
+      // Queue only when our own cast is plausibly still in flight and the
+      // player isn't in a real context (menu/overlay/X-mode/panel) — there a
+      // deferred cast would be the exact stray the guard exists to stop.
+      const ownCastInFlight = performance.now() - lastCastSentAt < PENDING_CAST_TTL_MS
+      const inForeignContext = monsterPanelOpen || inXMode || crtActive || dialogActive
+        || uiStack.length > 0 || activeMenu !== null
+      if (ownCastInFlight && !inForeignContext) {
+        pendingCastLetter = letter  // latest tap wins
+        pendingCastUntil = performance.now() + PENDING_CAST_TTL_MS
+      }
+      return
+    }
+    sendCast(letter)
+  }
+
+  function sendCast(letter: string): void {
+    // One message, not two: the Python server writes each input message's
+    // text to the game pty in a single write (process_handler.handle_input),
+    // so "z"+letter arrive in the engine's buffer together and it never
+    // blocks (flushing the cast prompt and waiting on the socket) between
+    // them — the way it can when two messages land as two pty writes. This
+    // shrinks the prompt round-trip the pending-cast queue exists to cover.
+    conn.send({ msg: 'input', text: `z${letter}` })
+    lastCastSentAt = performance.now()
+  }
+
+  // Fire the queued double-tap cast now that input_mode→1 says the command
+  // channel is open again. Clears the queue before re-running the full tap
+  // guard: by this point the mode-1 handler has already hidden the more
+  // button and disabled the prompt row, but anything else still blocking
+  // (a menu that raced in, a reharvestIfDirty probe that just claimed the
+  // channel) means the tap is stale — dropped, not re-queued.
+  function flushPendingCast(): void {
+    if (pendingCastLetter === null) return
+    const letter = pendingCastLetter
+    pendingCastLetter = null
+    if (performance.now() > pendingCastUntil) return
     if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) return
-    conn.send({ msg: 'input', text: 'z' })
-    conn.send({ msg: 'input', text: letter })
+    sendCast(letter)
   }
 
   // Render the persistent quick-cast rail from spellCache. Hidden when there are
