@@ -18,9 +18,9 @@ Notable changes to PocketZot, newest first.
 - Tile rendering now fills the map area edge to edge, including partial tiles.
 - Dimmed the touch controls so they don't outshine the dungeon in darker
   areas.
-- Overhauled how description text is rendered. The many kinds of text the
-  game sends (property lists, stat lines, indented notes, prose) now wrap
-  properly for a phone screen instead of breaking into ragged fragments.
+- Overhauled how description text is rendered. Many kinds of text the game
+  sends (property lists, stat lines, indented notes, prose, etc.) now wrap
+  better for a phone screen.
 - Fixed an issue with certain text input prompts.
 - Various other improvements.
 
