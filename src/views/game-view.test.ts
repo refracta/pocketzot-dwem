@@ -904,14 +904,12 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
     })
   })
 
-  // A quick double-tap's second cast lands inside the first cast's round-trip:
-  // the engine answers the `z` by flushing input_mode:PROMPT (7) + the
-  // channel-2 "Cast which spell?" line BEFORE the buffered letter resolves the
-  // cast, and the tap guard used to drop the second tap silently in that
-  // window (keyboard `zaza` queues server-side and casts twice). The fix
-  // queues one tap and fires it on the input_mode→1 that ends the round-trip.
-  describe('double-tap quick-cast (pending cast queue)', () => {
-    afterEach(() => { vi.useRealTimers() })
+  // Spell-rail tap handling: a quick-cast button fires on `click`, cancelled
+  // if the finger drifted off first (see makeSpellButton). The pending-cast
+  // queue and the synthetic-click gate were removed (see game-view.ts) — a
+  // clean tap casts, a drag-off is cancelled, and a tap that hits the
+  // command-channel guard is simply dropped.
+  describe('quick-cast rail tap handling', () => {
     const railBtn = (h: Harness, letter: string) =>
       [...h.view.querySelectorAll<HTMLElement>('#spell-rail .spell-rail-btn')]
         .find(b => b.querySelector('.spell-letter')?.textContent === `z${letter}`)!
@@ -920,112 +918,62 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
     // Enter command mode and settle the auto-harvest it kicks off, so the
     // rail is populated and the command channel is idle.
     const ready = (h: Harness) => { h.dispatch({ msg: 'input_mode', mode: 1 }); feedBase(h) }
-    // The server's reply to our `z`, as flushed before the cast resolves.
-    const castPromptArrives = (h: Harness) => {
-      h.dispatch({ msg: 'input_mode', mode: 7 })
-      h.dispatch({ msg: 'msgs', messages: [{ text: 'Cast which spell? (? or * to list) ', channel: 2 }] })
-    }
-
-    // Synthetic touch event with a contact point (happy-dom has no TouchEvent
-    // constructor; the handlers only read touches[0].clientX/Y).
+    // Synthetic touch with a contact point (happy-dom has no TouchEvent ctor;
+    // the handlers only read touches[0].clientX/Y).
     const touch = (el: HTMLElement, type: string, x = 0, y = 0) => {
       const e = new Event(type, { bubbles: true, cancelable: true })
       Object.assign(e, { touches: [{ clientX: x, clientY: y }] })
       el.dispatchEvent(e)
     }
 
-    it('casts on a completed touch tap (touchend without drift)', () => {
+    it('casts z<letter> in a single message on a click', () => {
       const h = setup()
       ready(h)
-      touch(railBtn(h, 'a'), 'touchstart')
-      expect(castsSent(h)).toBe(0) // not on contact — a drag may be starting
-      touch(railBtn(h, 'a'), 'touchend')
+      railBtn(h, 'a').click()
       expect(castsSent(h)).toBe(1)
+      expect(sent(h).at(-1)).toEqual({ msg: 'input', text: 'za' })
     })
 
-    it('does NOT cast when the finger drags off the button (drift past slop)', () => {
+    it('still casts a clean tap with sub-slop jitter', () => {
       const h = setup()
       ready(h)
       const b = railBtn(h, 'a')
       touch(b, 'touchstart', 0, 0)
-      touch(b, 'touchmove', 0, 40) // scroll-sized drift
-      touch(b, 'touchend')
+      touch(b, 'touchmove', 0, 3) // tiny jitter, within slop
+      b.click()                   // synthesized tap-click on the start button
+      expect(castsSent(h)).toBe(1)
+    })
+
+    it('cancels the cast when the finger drags off the button before lifting', () => {
+      const h = setup()
+      ready(h)
+      const b = railBtn(h, 'a')
+      touch(b, 'touchstart', 0, 0)
+      touch(b, 'touchmove', 0, 40) // drag far past slop
+      b.click()                    // touch capture: the click still targets this button
       expect(castsSent(h)).toBe(0)
     })
 
-    it('ignores the synthetic click iOS fires at the lift point of a drag from the log', () => {
+    it('does not let a drag-off poison the next mouse click (hybrid device)', () => {
       const h = setup()
       ready(h)
-      // Drag starts on the message log (touch events keep targeting it), but
-      // WebKit hit-tests its compatibility click at the lift point — the rail
-      // button. The click gate must reject it; a later real mouse click (no
-      // recent touch) still casts, which the .click()-based tests above cover.
-      touch(msgLog(h), 'touchstart')
-      touch(msgLog(h), 'touchend')
-      railBtn(h, 'a').click()
+      const b = railBtn(h, 'a')
+      touch(b, 'touchstart', 0, 0)
+      touch(b, 'touchmove', 0, 40) // drag off → flag set, this click suppressed
+      b.click()
       expect(castsSent(h)).toBe(0)
+      b.click() // later trackpad click, no preceding touchstart to reset the flag
+      expect(castsSent(h)).toBe(1) // flag is one-shot, so this casts
     })
 
-    it('lets a self-identified mouse click through the gate despite recent touch activity', () => {
+    it('drops a tap that lands while the command channel is busy (no queue)', () => {
       const h = setup()
       ready(h)
-      // Hybrid device: finger scrolls the log, then a real trackpad/mouse
-      // click lands on the rail within the suppression window. Modern
-      // engines mark the click's pointerType, which bypasses the gate.
-      touch(msgLog(h), 'touchstart')
-      touch(msgLog(h), 'touchend')
-      const click = Object.assign(new Event('click', { bubbles: true }), { pointerType: 'mouse' })
-      railBtn(h, 'a').dispatchEvent(click)
-      expect(castsSent(h)).toBe(1)
-    })
-
-    it('queues the second tap of a double-tap and casts it on input_mode→1', () => {
-      const h = setup()
-      ready(h)
-      railBtn(h, 'a').click() // tap 1 → z + a
-      expect(castsSent(h)).toBe(1)
-      castPromptArrives(h)    // mode 7 + prompt row: both tap-guard blockers
-      railBtn(h, 'a').click() // tap 2, mid round-trip → queued, not dropped
-      expect(castsSent(h)).toBe(1)
-      h.dispatch({ msg: 'input_mode', mode: 1 }) // cast resolved
-      expect(castsSent(h)).toBe(2)
-      expect(sent(h).at(-1)).toEqual({ msg: 'input', text: 'za' })
-    })
-
-    it('does NOT queue a tap when the blocking prompt is not our own cast', () => {
-      const h = setup()
-      ready(h)
-      h.dispatch({ msg: 'input_mode', mode: 7 }) // server-initiated prompt
-      railBtn(h, 'a').click() // genuine stray — no recent cast of ours
-      h.dispatch({ msg: 'input_mode', mode: 1 })
+      h.dispatch({ msg: 'input_mode', mode: 7 }) // a prompt holds the channel
+      railBtn(h, 'a').click() // tap during the busy window
+      expect(castsSent(h)).toBe(0) // guarded out…
+      h.dispatch({ msg: 'input_mode', mode: 1 }) // …and not revived when it reopens
       expect(castsSent(h)).toBe(0)
-    })
-
-    it('drops the queued tap if a menu claimed the screen before the channel reopened', () => {
-      const h = setup()
-      ready(h)
-      railBtn(h, 'a').click()
-      castPromptArrives(h)
-      railBtn(h, 'a').click() // queued
-      h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inv' }, items: [] })
-      h.dispatch({ msg: 'input_mode', mode: 1 })
-      expect(castsSent(h)).toBe(1) // flush re-check saw the menu → dropped
-      // And it stays dropped — a later clean mode-1 must not revive it.
-      h.dispatch({ msg: 'close_menu' })
-      h.dispatch({ msg: 'input_mode', mode: 1 })
-      expect(castsSent(h)).toBe(1)
-    })
-
-    it('expires a stale queued tap instead of firing a surprise late cast', () => {
-      vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
-      const h = setup()
-      ready(h)
-      railBtn(h, 'a').click()
-      castPromptArrives(h)
-      railBtn(h, 'a').click() // queued
-      vi.advanceTimersByTime(1100) // slow link: > PENDING_CAST_TTL_MS passes
-      h.dispatch({ msg: 'input_mode', mode: 1 })
-      expect(castsSent(h)).toBe(1)
     })
   })
 })

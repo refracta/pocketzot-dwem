@@ -349,17 +349,6 @@ export function buildGameView(
   const view = document.createElement('div')
   view.id = 'game-view'
 
-  // Timestamp of the last touch contact anywhere in the view. The spell
-  // buttons' click handlers consult this to reject iOS's compatibility
-  // mouse events: WebKit fires them at the LIFT point of a touch that
-  // nothing scrolled, so a drag from the log onto the rail lands a `click`
-  // on a button the finger never started on. Tracked on the view (not
-  // document) so the listeners die with it on rebuild.
-  let lastViewTouchTs = -Infinity
-  const noteViewTouch = () => { lastViewTouchTs = performance.now() }
-  view.addEventListener('touchstart', noteViewTouch, { capture: true, passive: true })
-  view.addEventListener('touchend', noteViewTouch, { capture: true, passive: true })
-
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
   uiOverlay.style.display = 'none'
@@ -1106,10 +1095,6 @@ export function buildGameView(
           if (prevInputMode !== 1) markLastMsg('cmd')
           maybeAutoHarvest()  // populate the spell rail on first entry to play
           reharvestIfDirty()  // refresh after a `=` reassign (or a deferred memorise/forget)
-          // After the harvest hooks: if one just claimed the channel, the
-          // flush's guard drops the queued tap instead of injecting `z` into
-          // the probe's menu.
-          flushPendingCast()
         }
         // YESNO prompts fire inside any menu that calls yesno() while open:
         // shop purchase (shopping.cc), acquirement (acquire.cc), Nemelex
@@ -2429,49 +2414,31 @@ export function buildGameView(
     // the button doubles as a reminder of what tapping sends.
     lbl.textContent = `z${s.letter}`
     btn.appendChild(lbl)
-    // Touch taps are detected manually (touchstart records the contact,
-    // touchend casts if the finger didn't drift) rather than firing on raw
-    // touchstart like touch.ts buttons or trusting iOS click synthesis:
-    //  - raw touchstart casts the instant a drag CONTACTS the button — and a
-    //    drag aimed at the log above lands fat-finger contacts on the rail;
-    //  - iOS click synthesis both drops fast second taps (the original
-    //    dropped-cast bug) and conjures clicks at the LIFT point of a drag
-    //    that nothing scrolled (see the click gate below).
-    // Firing on our own touchend keeps double-taps reliable (no browser
-    // heuristics) at the cost of finger-up rather than finger-down timing.
-    // preventDefault on touchstart suppresses the tap's own synthetic click.
-    let tapX = 0, tapY = 0, tapMoved = false
+    // Fire on click (the browser's synthesized tap-click, and real mouse
+    // clicks), but cancel the cast if the finger dragged off first. Touch
+    // events capture to their start element, so a finger that presses this
+    // button, drags far, and lifts elsewhere still gets a synthesized click
+    // HERE — which would cast without the drift check below. We don't need the
+    // old click gate: the synthesized click targets the touchstart element,
+    // not the lift point, so a drag that merely ENDS over a button (having
+    // started on the log or the map) never fires it.
+    let tapX = 0, tapY = 0, tapDrifted = false
     btn.addEventListener('touchstart', e => {
-      e.preventDefault()
       const t = e.touches?.[0]
       tapX = t?.clientX ?? 0
       tapY = t?.clientY ?? 0
-      tapMoved = false
-    }, { passive: false })
+      tapDrifted = false
+    }, { passive: true })
     btn.addEventListener('touchmove', e => {
       const t = e.touches?.[0]
-      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > TAP_SLOP_PX) tapMoved = true
-    })
-    btn.addEventListener('touchend', () => { if (!tapMoved) castSpellLetter(s.letter) })
-    // Mouse/desktop path. Gated on recent touch activity in the view: iOS
-    // dispatches its compatibility mouse events (incl. click) at the lift
-    // point of an unconsumed drag, so a finger that lands on the floating
-    // log and lifts over the rail "clicks" a button it never touched. Real
-    // touch taps cast via their own touchend above, so any click inside a
-    // touch session is synthetic or stray; mouse clicks have no preceding
-    // touch and pass.
-    btn.addEventListener('click', e => {
-      // Modern engines deliver click as a PointerEvent: a click that
-      // self-identifies as a genuine mouse (hybrid devices — iPad +
-      // trackpad, touchscreen laptops) bypasses the touch-recency gate,
-      // which would otherwise eat a real mouse click landing within 700ms
-      // of unrelated touch activity. Only 'mouse' bypasses: a pen tap also
-      // fires touch events (and casts via touchend above), and where
-      // pointerType is absent the timestamp heuristic decides.
-      if ((e as PointerEvent).pointerType !== 'mouse'
-        && performance.now() - lastViewTouchTs < SYNTH_CLICK_SUPPRESS_MS) return
-      castSpellLetter(s.letter)
-    })
+      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > 12) tapDrifted = true // px: drag, not a tap
+    }, { passive: true })
+    // Reset tapDrifted after each click so the flag is one-shot. Without this a
+    // drag-off (which leaves tapDrifted true and is never followed by a fresh
+    // touchstart that resets it) would suppress the NEXT genuine mouse click on
+    // this button — clicks have no preceding touchstart on hybrid devices
+    // (iPad + trackpad, touchscreen laptops), so they'd inherit the stale flag.
+    btn.addEventListener('click', () => { if (!tapDrifted) castSpellLetter(s.letter); tapDrifted = false })
     return btn
   }
 
@@ -2489,27 +2456,14 @@ export function buildGameView(
   // spells just fire. Guarded to a clean command-mode state — the rail is always
   // visible, so a stray tap during a menu/X-mode/overlay must be a no-op.
   //
-  // A guarded-out tap is queued (1-deep) when the blocker is our own
-  // just-sent cast: the engine answers the `z` by flushing
-  // input_mode:PROMPT plus the channel-2 "Cast which spell?" line (which the
-  // log renders as a prompt row → activePromptEl) BEFORE the letter resolves
-  // the cast, so the second tap of a quick double-tap lands inside that
-  // round-trip and used to vanish silently — while typing `zaza` on a
-  // keyboard queues server-side and casts twice. The pending tap fires on
-  // the input_mode→1 that ends the round-trip; PENDING_CAST_TTL_MS bounds
-  // both queueing and firing so a tap can't resurface as a surprise cast
-  // long after (e.g. the first cast was targeted and the player sat in the
-  // targeter).
-  const PENDING_CAST_TTL_MS = 1000
-  // Finger drift beyond this is a drag, not a tap — the touchend won't cast.
-  const TAP_SLOP_PX = 12
-  // A click this soon after touch activity is iOS's synthesized
-  // compatibility click (or a stray), never a real mouse press.
-  const SYNTH_CLICK_SUPPRESS_MS = 700
-  let lastCastSentAt = -Infinity
-  let pendingCastLetter: string | null = null
-  let pendingCastUntil = 0
-
+  // Simplified from 88c8379/b23b85b after device testing: a tap fires on the
+  // button's `click`, cancelled if the finger drifted (see makeSpellButton) —
+  // but WITHOUT the synthetic-click gate (the lift-point phantom it guarded
+  // against doesn't occur here; the synthesized click targets the touchstart
+  // element) and WITHOUT the pending-cast queue (the single-message dispatch
+  // below shrinks the cast round-trip enough that fast double-taps survive).
+  // A tap blocked by the guard below is simply dropped. Git holds the fuller
+  // versions (click gate at 88c8379, pending-cast queue at b23b85b) if needed.
   function castSpellLetter(letter: string): void {
     // `currentInputMode === 1` additionally rejects active targeting (a prior
     // targeted spell left the server in a target loop with a map cursor but no
@@ -2518,46 +2472,13 @@ export function buildGameView(
     // mode, so it needs its own gate: in landscape the rail stays visible in
     // the sidebar beside the panel, and a tap here bypasses the touch-input
     // swallow (the rail sends via conn.send, not that callback).
-    if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) {
-      // Queue only when our own cast is plausibly still in flight and the
-      // player isn't in a real context (menu/overlay/X-mode/panel) — there a
-      // deferred cast would be the exact stray the guard exists to stop.
-      const ownCastInFlight = performance.now() - lastCastSentAt < PENDING_CAST_TTL_MS
-      const inForeignContext = monsterPanelOpen || inXMode || crtActive || dialogActive
-        || uiStack.length > 0 || activeMenu !== null
-      if (ownCastInFlight && !inForeignContext) {
-        pendingCastLetter = letter  // latest tap wins
-        pendingCastUntil = performance.now() + PENDING_CAST_TTL_MS
-      }
-      return
-    }
-    sendCast(letter)
-  }
-
-  function sendCast(letter: string): void {
-    // One message, not two: the Python server writes each input message's
-    // text to the game pty in a single write (process_handler.handle_input),
-    // so "z"+letter arrive in the engine's buffer together and it never
-    // blocks (flushing the cast prompt and waiting on the socket) between
-    // them — the way it can when two messages land as two pty writes. This
-    // shrinks the prompt round-trip the pending-cast queue exists to cover.
-    conn.send({ msg: 'input', text: `z${letter}` })
-    lastCastSentAt = performance.now()
-  }
-
-  // Fire the queued double-tap cast now that input_mode→1 says the command
-  // channel is open again. Clears the queue before re-running the full tap
-  // guard: by this point the mode-1 handler has already hidden the more
-  // button and disabled the prompt row, but anything else still blocking
-  // (a menu that raced in, a reharvestIfDirty probe that just claimed the
-  // channel) means the tap is stale — dropped, not re-queued.
-  function flushPendingCast(): void {
-    if (pendingCastLetter === null) return
-    const letter = pendingCastLetter
-    pendingCastLetter = null
-    if (performance.now() > pendingCastUntil) return
     if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) return
-    sendCast(letter)
+    // One message, not two: the Python server writes each input message's text
+    // to the game pty in a single write (process_handler.handle_input), so
+    // "z"+letter arrive in the engine's buffer together and it never blocks
+    // (flushing the cast prompt and waiting on the socket) between them — the
+    // way it can when two messages land as two pty writes.
+    conn.send({ msg: 'input', text: `z${letter}` })
   }
 
   // Render the persistent quick-cast rail from spellCache. Hidden when there are
