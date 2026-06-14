@@ -314,6 +314,39 @@ describe('ui-push / ui-pop overlay stack', () => {
     expect(texts).toContain('   -Anonymous')
   })
 
+  it('reflows monster-status descriptions: joins the server 77-col wrap into one hang line', () => {
+    const h = setup()
+    // The real "Asleep" status as it arrives on the wire: opens-only colour
+    // switches from formatted_string::to_colour_string (`<w>Label</w>` ->
+    // `<white>Label<lightgrey>`), the description hard-wrapped at 77 columns and
+    // indented 3 spaces per line (describe.cc:6965). The server's 77-col break
+    // splits "...other monsters) will" / "deal increased damage." across two
+    // wire lines — those must NOT survive as a hard break at phone width.
+    const status = [
+      '<white>Asleep:<lightgrey>',
+      '   This creature is unable to move, act, block, or dodge. Any hostile action',
+      '   will awaken it, though melee attacks against it (even by other monsters) will',
+      '   deal increased damage.',
+      '   ',
+      '   <blue>Melee attacks you make against this creature will deal greatly increased',
+      '   damage, especially if made with a short blade.<lightgrey>',
+    ].join('\n')
+    h.dispatch({ msg: 'ui-push', type: 'describe-monster', title: 'a blink frog', body: 'A blink frog.', status })
+    // Each wrapped paragraph collapses to ONE hanging line (3ch), so it reflows
+    // to the real width instead of keeping the 77-col staircase.
+    const hangs = [...overlay(h).querySelectorAll<HTMLElement>('.overlay-line--hang')]
+    expect(hangs.length).toBe(2)
+    expect(hangs.every(el => el.style.getPropertyValue('--hang-col') === '3ch')).toBe(true)
+    // The user's bug: "will" and "deal" land on the same logical line now.
+    expect(hangs[0].textContent).toContain('other monsters) will deal increased damage.')
+    expect(hangs[1].textContent).toContain('short blade.')
+    // The label row and the client heading stay flush (no hang).
+    const flat = (t: string) => [...overlay(h).querySelectorAll('.overlay-line')]
+      .find(el => el.textContent?.startsWith(t))
+    expect(flat('Status:')?.classList.contains('overlay-line--hang')).toBe(false)
+    expect(flat('Asleep:')?.classList.contains('overlay-line--hang')).toBe(false)
+  })
+
   it('ui-stack re-dispatches each nested item back through the handler (spectator join)', () => {
     const h = setup()
     h.dispatch({ msg: 'ui-stack', items: [{ msg: 'ui-push', type: 'describe-item', title: 'SNAP', body: 'b' }] })

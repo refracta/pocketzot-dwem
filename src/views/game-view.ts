@@ -1401,7 +1401,7 @@ export function buildGameView(
       // describe.cc:4001) — render it as-is, preserving the source's
       // original line structure (dialogue, stage directions, attribution).
       const extra: string[] = []
-      if (msg.status) extra.push(`<lightblue>Status:</lightblue>\n${msg.status}`)
+      if (msg.status) extra.push(`<lightblue>Status:</lightblue>\n${joinIndentedRuns(msg.status)}`)
       if (msg.quote) extra.push(`<lightblue>Quote:</lightblue>\n${msg.quote}`)
       if (extra.length) rawBody = (rawBody ? rawBody + '\n\n' : '') + extra.join('\n\n')
     }
@@ -3490,6 +3490,35 @@ export function unwrapHangingIndents(body: string): string {
   return out.join('\n')
 }
 
+// Monster status descriptions arrive pre-wrapped at 77 columns and indented
+// 3 spaces per line (describe.cc _get_monster_status_descriptions:
+// `linebreak_string(lookup, 77)` then a 3-space indent on every line). At
+// phone width those hard 77-col breaks survive as hard line breaks
+// mid-sentence (e.g. "...other monsters) will" / "deal increased damage."),
+// because renderBodyLines hangs each wire line on its own. Each indented block
+// is a single wrapped paragraph, so join every run of consecutive same-indent
+// lines back into one logical line; the hanging-indent treatment then reflows
+// it to the actual width. A blank/short line, a flush-left label line, or a
+// differently-indented line ends the run, so paragraph breaks and the
+// `<w>Label:</w>` headers survive. Scope this to the status field only —
+// elsewhere (weapon skill sub-items) equally-indented lines are distinct
+// statements that must NOT be merged.
+export function joinIndentedRuns(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^( {2,})\S/.exec(lines[i])
+    if (!m) { out.push(lines[i]); continue }
+    const cont = new RegExp(`^${m[1]}(?=\\S)`)
+    const run = [lines[i]]
+    let j = i + 1
+    while (j < lines.length && cont.test(lines[j])) { run.push(lines[j].slice(m[1].length)); j++ }
+    out.push(run.join(' '))
+    i = j - 1
+  }
+  return out.join('\n')
+}
+
 // `terminal` renders the body as one fixed-width block: every line is nowrap
 // and the stat-row/per-line-tabular reformatting is skipped, so the caller can
 // scale the whole block to fit (see fitTerminalBody). Used for the game-over
@@ -3511,7 +3540,15 @@ function renderBodyLines(rawBody: string, highlight: string, terminal = false): 
       line = line.replace(HANG_MARK, '')
       const pm = line.match(/^[^\s<][^<]*?:( +)(?=\S)/)
       const col = pm ? pm[0].length : 0
-      if (pm && pm[1].length >= 2 && col <= 18) hangStyle = ` style="--hang-col:${col}ch"`
+      // Hang wrapped text at the description column so the block stays aligned.
+      // Exception: the mundane-ego run-in form `'Of X': ` hangs at a compact
+      // 2ch default (its column is its full natural width, too deep on a
+      // phone). Don't gate on the padding-space count — a column-aligned
+      // artprop label whose name exactly fills the column has only ONE trailing
+      // space (e.g. `Corpsefed: `, padded to 11), and must still hang at its
+      // column to line up with its 2+-space siblings (`rMiasma:`, `^Drain:`).
+      // The quote prefix is what marks the run-in form, not the space count.
+      if (pm && col <= 18 && !line.startsWith("'")) hangStyle = ` style="--hang-col:${col}ch"`
     }
     if (!terminal && !hang) {
       const stat = tryStatRow(line)
@@ -3529,13 +3566,25 @@ function renderBodyLines(rawBody: string, highlight: string, terminal = false): 
         : 'overlay-line'
     // Indented prose sub-items ("    Your skill: 3.6", "    At 100%
     // training you would reach 18.0 in about 9.3 XLs." — describe.cc
-    // emits these with a 4-space indent): wrap with a hanging indent at
-    // the line's own depth so continuations stay aligned under the
-    // sub-item instead of falling flush-left. The leading spaces render
-    // on line 1 as-is; the negative text-indent/padding pair only moves
-    // the wrapped lines. Deeply indented lines (>18) are left alone.
+    // emits these with a 4-space indent; monster-status descriptions with a
+    // 3-space indent): wrap with a hanging indent at the line's own depth so
+    // continuations stay aligned under the sub-item instead of falling
+    // flush-left. The leading spaces render on line 1 as-is; the negative
+    // text-indent/padding pair only moves the wrapped lines. Deeply indented
+    // lines (>18) are left alone. Skip past any leading colour-markup tags:
+    // opens-only bodies (formatted_string::to_colour_string, e.g. msg.status)
+    // get reopened tags prepended at each line start by
+    // balanceColorTagsAcrossLines, so the indent no longer sits at column 0 —
+    // the tags are zero-width spans, so the literal-space hang still lines up.
+    // Darkgrey is the one exception: it is the quote/verse convention (see
+    // unwrapHangingIndents), never reflowed, so a darkgrey-led line stays flush.
+    // The remainder after the indent must hold real text — a paragraph-break
+    // line is `<colour>   </colour>` after balancing, all tags and spaces, and
+    // must not be hung.
     if (cls === 'overlay-line' && !hang) {
-      const ind = /^( {2,})\S/.exec(line)?.[1].length ?? 0
+      const m = /^((?:<[^>]+>)*)( {2,})(.*)$/.exec(line)
+      const hasText = !!m && m[3].replace(/<[^>]+>/g, '').trim() !== ''
+      const ind = m && hasText && !/<\/?darkgrey>/.test(m[1]) ? m[2].length : 0
       if (ind > 0 && ind <= 18) {
         cls += ' overlay-line--hang'
         hangStyle = ` style="--hang-col:${ind}ch"`
