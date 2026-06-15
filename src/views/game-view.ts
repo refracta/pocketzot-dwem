@@ -17,6 +17,7 @@ import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
+import { reflowSkillCrt } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { getPref, setPref } from '../prefs'
@@ -56,8 +57,13 @@ interface SpellEntry {
   letter: string
   tile: number
   colour?: number
+  // `effect` / `range_string` are the server's spellset wire fields, present
+  // only on describe-monster/item spell lists (the spell's damage effect and
+  // range). The player's own memorised-spell list has neither — its harvest
+  // parser fills `fail`/`schools`/`level` from the menu's default columns.
   effect?: string
   range_string?: string
+  fail?: string
   schools?: string
   level?: number
 }
@@ -153,7 +159,7 @@ const MF_ARROWS_SELECT = 0x40000
 
 // Cell/glyph multiplier applied while X-mode (eXamine level map) is active.
 // Honored by both renderers via setFontScale (ASCII shrinks glyphs, tiles
-// shrink cellPx); the symmetric slack-fill turns the freed HUD/log area
+// shrink cellPx); each renderer's fill logic turns the freed HUD/log area
 // into extra cells. Upstream's tile_map_scale defaults to 0.6 — we ship
 // 0.7 for now; tune in one place.
 const X_MODE_SCALE = 0.7
@@ -247,6 +253,59 @@ export function buildGameView(
   // default. After the first user-driven move the flag stays on for the
   // lifetime of the menu, and server echoes track normally.
   let menuHoverFromUser = false
+
+  // --- Spellcaster spell harvest (step 1) ---------------------------------
+  // The player's memorised spells are never pushed proactively over WebTiles;
+  // they surface only when the `list_spells` menu opens (tag:"spell"). We
+  // harvest them silently: fire the `I` command (CMD_DISPLAY_SPELLS →
+  // inspect_spells → list_spells(viewing=true) — view-only, costs no turn and
+  // can't cast), capture the resulting menu items, Escape it closed, and never
+  // render it. The cache will feed a tap-to-cast spell panel (later steps).
+  //
+  // The spell menu is a ToggleableMenu with two column sets: the default
+  // (schools / failure% / level) arrives in the `menu` message; the alternate
+  // (power / damage / range / noise) is only the items' `alt_text` and is NOT
+  // transmitted until a `!` (CMD_MENU_CYCLE_MODE) toggle. We deliberately
+  // capture only the default set — nothing rendered uses the alternate
+  // columns, and skipping the toggle halves the harvest's round-trips (and
+  // with them the input-suppression window). If a UI ever surfaces
+  // power/damage/noise, re-add the second phase in the same change (it lives
+  // in git history: `mergeSpellExtra` + the 'extra' harvestPhase).
+  let spellCache: SpellEntry[] = []
+  // 'late-base' is the base phase after its input-suppression budget ran out:
+  // the `I` reply is slower than HARVEST_SUPPRESS_MS, so the user gets the
+  // input channel back, but we keep listening (up to HARVEST_LATE_MS) so the
+  // late menu is still captured silently instead of rendering as a surprise
+  // full-screen spell list with the rail abandoned empty for the whole game.
+  let harvestPhase: 'idle' | 'base' | 'late-base' = 'idle'
+  let harvestTimer = 0
+  // Input-suppression budget for the harvest's single `I` round-trip, and how
+  // much longer a slow reply is still accepted after suppression ends.
+  const HARVEST_SUPPRESS_MS = 1500
+  const HARVEST_LATE_MS = 8500
+  // Set when we send the harvest-closing Escape so the matching server
+  // close_menu — for a menu we deliberately never pushed onto menuStack — is
+  // swallowed instead of popping/clearing our real overlay state.
+  let pendingHarvestClose = false
+
+  // Spell rail: a persistent row of quick-cast buttons floated over the map's
+  // bottom edge in portrait (landscape slots it into the sidebar `spells`
+  // row). The message log floats over the map too — always, casters or not —
+  // so the rail is out of flow and its appearance never resizes the map; the
+  // `spell-row` class on #game-view only lifts the log (and --more--) by the
+  // rail's height. Always visible during play once spells are harvested.
+  const spellRail = document.createElement('div')
+  spellRail.id = 'spell-rail'
+  spellRail.style.display = 'none'
+  // Auto-harvest once per game (so the rail is populated without the player
+  // opening the tray). Reset on go_lobby for the next game.
+  let autoHarvestedThisGame = false
+  // Set when the letter→spell map changes (memorise / forget / `=` reassign) so
+  // the rail isn't left mapping a stale letter — which would cast the WRONG
+  // spell on tap. Resolved by reharvestIfDirty() at the next clean command-mode
+  // moment (it fires a fresh silent harvest). Event-driven, not timer-polled.
+  let spellsDirty = false
+
   let activePromptEl: HTMLElement | null = null
   let inXMode = false
   let exitedXModeForInput = false
@@ -291,6 +350,17 @@ export function buildGameView(
   const view = document.createElement('div')
   view.id = 'game-view'
 
+  // Timestamp of the last touch contact anywhere in the view. The spell
+  // buttons' click handlers consult this to reject iOS's compatibility
+  // mouse events: WebKit fires them at the LIFT point of a touch that
+  // nothing scrolled, so a drag from the log onto the rail lands a `click`
+  // on a button the finger never started on. Tracked on the view (not
+  // document) so the listeners die with it on rebuild.
+  let lastViewTouchTs = -Infinity
+  const noteViewTouch = () => { lastViewTouchTs = performance.now() }
+  view.addEventListener('touchstart', noteViewTouch, { capture: true, passive: true })
+  view.addEventListener('touchend', noteViewTouch, { capture: true, passive: true })
+
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
   uiOverlay.style.display = 'none'
@@ -298,6 +368,7 @@ export function buildGameView(
   const msgLog = document.createElement('div')
   msgLog.id = 'game-messages'
   msgLog.addEventListener('click', (e) => {
+    if (isHarvesting()) return
     if (uiOverlay.style.display === 'none' && !(e.target as HTMLElement).closest('button, input, .game-text-input-row')) {
       conn.send({ msg: 'key', keycode: 16 })
       view.focus({ preventScroll: true })
@@ -307,7 +378,6 @@ export function buildGameView(
   const mapWrap = document.createElement('div')
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
-  mapWrap.appendChild(monsterListView.element)
 
   // Double-tap the map to toggle zoom. Bypassed while X-mode is active
   // (font scale is overridden there) — single-tap behavior is undefined on
@@ -375,9 +445,12 @@ export function buildGameView(
 
   // Tap the compact monster list to open the full-screen GUI variant.
   // Refuse while a server-side prompt is up so we don't drop the user out
-  // of an in-progress targeting/menu/etc.
+  // of an in-progress targeting/menu/etc. Also refuse while the panel is
+  // already open: in landscape it covers only the map, leaving the sidebar
+  // chip clickable, and a re-open would rebuild the overlay and reset the
+  // panel's scroll position.
   monsterListView.element.addEventListener('click', (e) => {
-    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu) return
+    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu || isHarvesting() || monsterPanelOpen) return
     if (monsterListView.element.childElementCount === 0) return
     e.stopPropagation()
     openMonsterPanel()
@@ -407,6 +480,7 @@ export function buildGameView(
   moreBtn.textContent = '— more —'
   moreBtn.style.display = 'none'
   moreBtn.addEventListener('click', () => {
+    if (isHarvesting()) return
     conn.send({ msg: 'key', keycode: 32 })
     view.focus({ preventScroll: true })
   })
@@ -437,6 +511,17 @@ export function buildGameView(
   }
 
   const touchControls: TouchControls = buildTouchControls((msg) => {
+    if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
+    // The monster panel is a client-only overlay. In landscape it covers just
+    // the map, so the sidebar keyboard stays visible (the display:none hide
+    // that works in portrait is undone whenever a server message re-reveals
+    // the sidebar). Route its Esc to close the panel — mirroring the physical
+    // Esc handler in docKeyHandler — and swallow every other key so a stray
+    // tap can't drive the hidden game beneath the overlay.
+    if (monsterPanelOpen) {
+      if (msg.msg === 'key' && msg.keycode === 27) closeMonsterPanel()
+      return
+    }
     if (msg.msg === 'key' && menuNavActive()) {
       if (msg.keycode === CK_DOWN) { cycleMenuHover(false); return }
       if (msg.keycode === CK_UP) { cycleMenuHover(true); return }
@@ -448,7 +533,7 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  })
+  }, spectating ? {} : { spellTab: { render: renderSpellGrid, hasSpells: () => spellCache.length > 0 } })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'
@@ -460,7 +545,13 @@ export function buildGameView(
 
   view.appendChild(uiOverlay)
   view.appendChild(mapWrap)
+  // Direct grid child (not inside #map-wrap) so each orientation can place
+  // it: portrait floats it over the map cell (grid-area:map + abspos, same
+  // containing-block trick as #more-btn), landscape slots it into the
+  // sidebar between HUD and spell rail.
+  view.appendChild(monsterListView.element)
   view.appendChild(msgLog)
+  view.appendChild(spellRail)
   view.appendChild(moreBtn)
   view.appendChild(hud)
   view.appendChild(numpadInput)
@@ -530,6 +621,9 @@ export function buildGameView(
     if (mode === renderMode) return
     renderMode = mode
     setPref('mapRenderMode', mode)
+    // CSS hook for mode-dependent chrome (e.g. the floating log's scrim
+    // lightens over tiles — see --msglog-bg in style.css).
+    view.classList.toggle('tiles-mode', mode === 'tiles')
     const center = { x: store.playerPos.x, y: store.playerPos.y }
     fontScaleObserver.unobserve(mapView.element)
     const oldEl = mapView.element
@@ -563,6 +657,30 @@ export function buildGameView(
   if (import.meta.env.DEV) {
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
       (on) => setRenderMode(on === undefined ? (renderMode === 'tiles' ? 'ascii' : 'tiles') : (on ? 'tiles' : 'ascii'))
+    // Spell harvest: __dcssHarvestSpells() fires a silent `I` and fills
+    // __dcssSpellCache with the parsed memorised spells.
+    ;(window as unknown as { __dcssHarvestSpells: () => void }).__dcssHarvestSpells = harvestSpells
+    // __dcssFakeSpells(n) — layout aid: pad the cache to n fake spells (cloning
+    // the real harvested tiles so the icons still render, with distinct letters)
+    // to eyeball rail/grid overflow + scrolling. Tapping a fake casts a bogus
+    // letter (harmless — the server just rejects it). Re-harvest to reset.
+    ;(window as unknown as { __dcssFakeSpells: (n?: number) => void }).__dcssFakeSpells = (n = 24) => {
+      if (spellCache.length === 0) return
+      const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+      const real = spellCache.slice()
+      spellCache = Array.from({ length: Math.min(n, letters.length) }, (_, i) => ({
+        ...real[i % real.length],
+        letter: letters[i],
+        title: `${real[i % real.length].title} ${i + 1}`,
+      }))
+      exposeSpellCache()
+    }
+    exposeSpellCache()
+    // __dcssMsgPill() — A/B the per-line message-log scrim variant (style.css
+    // `.msg-pill`): background hugs each line's text instead of filling the
+    // whole strip. Toggles; pass true/false to force.
+    ;(window as unknown as { __dcssMsgPill: (on?: boolean) => void }).__dcssMsgPill =
+      (on) => { view.classList.toggle('msg-pill', on) }
   }
 
   // Apply the persisted render-mode preference now that the map element,
@@ -575,6 +693,7 @@ export function buildGameView(
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
+    if (isHarvesting()) { e.preventDefault(); return }  // suppress during silent harvest
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -595,6 +714,24 @@ export function buildGameView(
   }
   document.addEventListener('keydown', docKeyHandler)
 
+  // The monster list lives in the landscape sidebar, but only a tablet has the
+  // vertical room for the full multi-row list there: a phone in landscape
+  // (~390px tall) spends ~360px on HUD + spells + touch panel, leaving room
+  // for barely one monster row. So gate on HEIGHT — tall landscape (tablet)
+  // shows the full expanding list; short landscape (phone) collapses it to the
+  // single-line compact chip. 600px cleanly separates phones (≤~430px tall in
+  // landscape) from tablets (≥744px). Portrait floats the full list over the
+  // map and never matches this query. Re-sync on rotation/resize, self-removing
+  // once the view is gone (mirrors docKeyHandler); set the initial state before
+  // the first map message so the first render is already in the right mode.
+  const compactMql = window.matchMedia('(orientation: landscape) and (max-height: 600px)')
+  const syncMonsterCompact = (): void => {
+    if (!view.isConnected) { compactMql.removeEventListener('change', syncMonsterCompact); return }
+    monsterListView.setCompact(compactMql.matches)
+  }
+  compactMql.addEventListener('change', syncMonsterCompact)
+  monsterListView.setCompact(compactMql.matches)
+
   conn.onMessage = handleMsg
 
   function handleMsg(msg: ServerMsg): void {
@@ -604,7 +741,7 @@ export function buildGameView(
       // actually sends.
       case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; hideOverlay() }
+        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; resetHarvest(); hideOverlay() }
         break
 
       // Raw-HTML modal pushed by the server (save-transfer prompt on trunk
@@ -847,6 +984,47 @@ export function buildGameView(
 
       case 'menu': {
         const m = msg as unknown as MenuMsg
+        const titlePlain = stripDcss(m.title?.text ?? '')
+        // Silent spell harvest: capture the menu's default columns, then
+        // Escape it closed. See harvestSpells().
+        // In `late-base` (slow link; suppression already lifted) the user has
+        // had the channel back, so a tag:'spell' menu could also be one THEY
+        // opened (memorise, amnesia, `=` adjust all share the tag) — only
+        // capture when the title is the probe's own "Your spells (describe)"
+        // (`I` → list_spells(viewing=true) → real_action "describe").
+        if (m.tag === 'spell'
+            && (harvestPhase === 'base'
+                || (harvestPhase === 'late-base'
+                    && /^Your spells \(describe\)/.test(titlePlain)))) {
+          resetHarvest()  // timer + phase; the latch is re-set just below
+          spellCache = (m.items ?? [])
+            .filter(it => !!it.hotkeys?.length && !!it.tiles?.length)
+            .map(parseSpellItem)
+          exposeSpellCache()
+          pendingHarvestClose = true
+          conn.send({ msg: 'key', keycode: 27 })  // Escape closes the menu
+          break  // swallow: never render the menu
+        }
+        // A `menu` arrived mid-harvest that isn't our spell menu (some other
+        // menu raced in after the silent `I`). It can't be ours: our spell
+        // menu is captured + swallowed above. Abort the harvest so this
+        // renders now — otherwise harvestPhase stays non-idle, isHarvesting()
+        // stays true, and every input handler keeps early-returning until the
+        // suppression fallback, leaving a real menu the user can see but can't
+        // touch. (Covers `late-base` too: a foreign menu opening means the
+        // server isn't sitting in our probe's menu, so stop waiting for it.)
+        if (harvestPhase !== 'idle') resetHarvest()
+        // A real menu is opening, so any pending harvest-close expectation is
+        // stale (its close_menu already came or never will). Drop the latch —
+        // otherwise THIS menu's eventual close_menu would be wrongly swallowed.
+        pendingHarvestClose = false
+        // The `=` spell-letter reassign is the one spell-menu flow that
+        // silently rewrites the letter→spell map yet emits no distinctive
+        // message. All spell-list flows share tag:"spell" (list_spells hardcodes
+        // it), so the title is the only discriminator — "Your spells (adjust)"
+        // vs "(describe)" etc. Flag the rail stale; it re-harvests once the
+        // player finishes and we're back at a command prompt (input_mode→1).
+        if (m.tag === 'spell' && /\(adjust\)/i.test(titlePlain)) spellsDirty = true
         if (m.type === 'crt') showCrt(m.tag)
         else {
           if (m.replace) menuStack.pop()
@@ -927,6 +1105,12 @@ export function buildGameView(
           // Reference only marks on the COMMAND transition, not on every
           // COMMAND-while-COMMAND repeat (game.js set_input_mode early-returns).
           if (prevInputMode !== 1) markLastMsg('cmd')
+          maybeAutoHarvest()  // populate the spell rail on first entry to play
+          reharvestIfDirty()  // refresh after a `=` reassign (or a deferred memorise/forget)
+          // After the harvest hooks: if one just claimed the channel, the
+          // flush's guard drops the queued tap instead of injecting `z` into
+          // the probe's menu.
+          flushPendingCast()
         }
         // YESNO prompts fire inside any menu that calls yesno() while open:
         // shop purchase (shopping.cc), acquirement (acquire.cc), Nemelex
@@ -963,7 +1147,7 @@ export function buildGameView(
         if (titlePromptInput) break
         if (msg.type === 'messages') {
           if (inXMode) { exitedXModeForInput = true; exitXMode() }
-          showTextInput(msg.prefill ?? '', msg.maxlen ?? 99)
+          showTextInput(msg.prefill ?? '', msg.maxlen ?? 99, msg.tag)
         } else if (msg.type === 'generic' && msg.tag === 'skill_target') {
           // `type:"generic"` fires only for prompts inside a CRT menu, and
           // the only such prompt in DCSS 0.34 is the skill target editor.
@@ -986,6 +1170,42 @@ export function buildGameView(
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
+          // A non-caster's silent-harvest `I` prints "You don't know any
+          // spells." (canned MSG_NO_SPELLS) and opens no menu, so the base
+          // phase has no menu to capture. Recognise this line as the harvest's
+          // no-spells terminator and end the harvest right now — otherwise
+          // isHarvesting() keeps suppressing all input until the 1.5s fallback
+          // fires, a lockout every spell-less character hits at game start.
+          // Clearing the cache + resetHarvest lifts the suppression this frame;
+          // `continue` swallows the line so the player never sees our probe.
+          // Checks harvestPhase (not isHarvesting()) so a reply slow enough to
+          // land in `late-base` still terminates the harvest silently.
+          // The strip+trim is gated behind the phase check: this loop runs for
+          // every line of every msgs batch, and only a mid-harvest line can be
+          // the terminator.
+          if (harvestPhase !== 'idle' && /^You don't know any spells\b/.test(stripDcss(m.text).trim())) {
+            spellCache = []
+            resetHarvest()
+            exposeSpellCache()
+            continue
+          }
+          // The letter→spell map just changed under us — flag the rail stale so
+          // reharvestIfDirty() (after this loop) refreshes it; otherwise a tap
+          // would cast the wrong spell. Every spell GAIN funnels through the
+          // engine's add_spell_to_memory(), which emits "Spell assigned to
+          // '<letter>'." — so key off that one line rather than each flavour
+          // message it trails: "You finish memorising." on a book memorise,
+          // "The power to cast X wells up from within." on a Djinni / level-up
+          // gift, a revenant/Vehumet gift, etc. A LOSS instead prints "Your
+          // memory of X unravels." (`=` reassign rewrites letters silently —
+          // caught at its menu by the title check, not here).
+          // Match as SUBSTRINGS, never whole-line: DCSS joins same-turn,
+          // same-channel mprs onto one msgs line (e.g. "You finish memorising.
+          // Spell assigned to 'b'."), so an anchored `$` would miss it.
+          // Tested against the raw wire text (no stripDcss): colour tags wrap
+          // whole messages, they never split a phrase, and skipping the strip
+          // keeps this per-line check allocation-free.
+          if (/Spell assigned to\b/.test(m.text) || /Your memory of .+ unravels\b/.test(m.text)) spellsDirty = true
           if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
@@ -997,6 +1217,10 @@ export function buildGameView(
         }
         if (msg.more) showMoreBtn(msg.more_text)
         else if (msg.more === false) hideMoreBtn()
+        // A memorise/forget this frame leaves us at a command prompt (the delay
+        // finished; no input_mode transition fires), so re-harvest now rather
+        // than waiting for the next menu round-trip.
+        reharvestIfDirty()
         break
       }
 
@@ -1022,6 +1246,9 @@ export function buildGameView(
         break
 
       case 'close_menu': {
+        // Swallow the close for a spell menu we harvested but never pushed,
+        // so it can't pop/clear a real overlay underneath.
+        if (pendingHarvestClose) { pendingHarvestClose = false; break }
         menuStack.pop()
         const prev = menuStack[menuStack.length - 1] ?? null
         activeMenu = prev
@@ -1044,11 +1271,15 @@ export function buildGameView(
         menuShift.reset()
         monsterPanelOpen = false
         titlePromptInput = null
+        resetHarvest()
         hideOverlay()
         break
 
       case 'go_lobby':
       case 'close':
+        resetHarvest()
+        autoHarvestedThisGame = false  // re-harvest for the next game
+        spellsDirty = false  // no pending re-harvest carries into the next game
         onLobby()
         break
 
@@ -1071,8 +1302,10 @@ export function buildGameView(
 
   function enterXMode(): void {
     inXMode = true
+    view.classList.add('x-mode')  // drops the map's log-strip padding (style.css)
     msgLog.style.display = 'none'
     hud.style.display = 'none'
+    renderSpellRail()  // drop the rail row (and the log's map overlay) for the examine map
     touchControls.enterXMode()
     mapView.setFontScale(X_MODE_SCALE)
     // Zoom mode is left untouched: tiles already had zoom-on (forced at
@@ -1094,9 +1327,11 @@ export function buildGameView(
 
   function exitXMode(): void {
     inXMode = false
+    view.classList.remove('x-mode')
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
     requestAnimationFrame(() => mapView.fitToContainer())
+    renderSpellRail()  // restore the quick-cast rail hidden by enterXMode
     if (activeMenu?.tag === 'stash') {
       // Returning to the stash results menu: keep HUD/msglog hidden (they were
       // hidden before the preview by renderOverlay, and the overlay layout
@@ -1148,6 +1383,12 @@ export function buildGameView(
     if (msg.type === 'version') {
       rawBody = [msg.information, msg.features, msg.changes].filter(Boolean).join('\n\n')
     }
+    // Unwrap hanging-indent label rows in the server-built body only, BEFORE
+    // the client-assembled sections below: those append plain-text quotes
+    // (msg.quote, feats[].quote) and god power lists, which must not be
+    // reflowed (dialogue-format quote lines look like label rows). game-over
+    // is one fixed-width terminal block — leave it alone.
+    if (msg.type !== 'game-over') rawBody = unwrapHangingIndents(rawBody)
     if (msg.type === 'describe-god') {
       // describe-god has no `title`/`text` — name is the heading, and the
       // body is split across pane fields (description / favour+powers_list /
@@ -1746,6 +1987,9 @@ export function buildGameView(
     menuControls.style.display = 'none'
     const el = document.createElement('div')
     el.id = 'crt-display'
+    // Skills CRT is reflowed to one column, so it no longer needs to pan; let
+    // it wrap instead (the help text below the grid is full-width).
+    if (crtTag === 'skills') el.classList.add('crt-skills')
     uiOverlay.appendChild(el)
     view.focus({ preventScroll: true })
   }
@@ -1755,10 +1999,15 @@ export function buildGameView(
     if (!el) return
     el.innerHTML = ''
     const maxKey = crtLines.size > 0 ? Math.max(...crtLines.keys()) : 0
-    for (let i = 0; i <= maxKey; i++) {
+    let rows: string[] = []
+    for (let i = 0; i <= maxKey; i++) rows.push(crtLines.get(i) ?? '')
+    // The skills menu (`m`) ships a fixed two-column terminal grid; reflow it
+    // into a single column so it fits a phone without horizontal panning.
+    if (crtTag === 'skills') rows = reflowSkillCrt(rows)
+    for (const html of rows) {
       const line = document.createElement('div')
       line.className = 'crt-line'
-      line.innerHTML = crtLines.get(i) ?? ''
+      line.innerHTML = html
       el.appendChild(line)
     }
     if (crtTag === 'skills') updateSkillLetterButtons()
@@ -1937,19 +2186,12 @@ export function buildGameView(
   }
 
   function syncMenuShiftLabels(): void {
-    // Shop item hotkeys are rendered into .overlay-list rows; skill-letter
-    // buttons live in the menu-controls bar. Update both so what the user
-    // sees matches what tapping will send.
+    // Skill-letter buttons in the menu-controls bar echo the shift state so
+    // what the user sees matches what tapping will send. (Shop rows used to
+    // toggle an inline hotkey chip here too, but rows now render their text
+    // verbatim — the hotkey lives inside item.text — so the ⇧ control's own
+    // active/locked styling is the shift indicator there.)
     const shiftOn = menuShift.isOn
-    if (activeMenu?.tag === 'shop') {
-      const listEl = uiOverlay.querySelector('.overlay-list')
-      listEl?.querySelectorAll<HTMLElement>('.overlay-item .overlay-key').forEach(el => {
-        const t = el.textContent ?? ''
-        if (t.length === 1 && /[a-zA-Z]/.test(t)) {
-          el.textContent = shiftOn ? t.toUpperCase() : t.toLowerCase()
-        }
-      })
-    }
     menuControls.querySelectorAll<HTMLElement>('.skill-letter-btn').forEach(el => {
       const t = el.textContent ?? ''
       if (t.length === 1 && /[a-zA-Z]/.test(t)) {
@@ -2121,6 +2363,336 @@ export function buildGameView(
     return false
   }
 
+  // Strip the menu hotkey preface from a spell row, leaving the column text at
+  // offset 0. It's " a - <text>" for a normal row, but " a + <text>" for the
+  // preselected (you.last_cast_spell) row — SpellMenuEntry::_get_text_preface
+  // (spl-cast.cc) uses '+' there. Match either sign: miss it and that row's
+  // title (and every fixed-width column below) shifts. Anyone who has cast a
+  // spell this game hits this, so it's the common case, not an edge.
+  function stripSpellPreface(rawText: string | undefined): string {
+    return stripDcss(rawText ?? '').replace(/^\s*\S+\s*[-+]\s*/, '')
+  }
+
+  // Parse one row of the list_spells menu into a SpellEntry. Letter and icon
+  // come straight off the wire (hotkeys[0], tiles[0]); only the name/columns
+  // need teasing out of the text. After the preface the row is fixed-position
+  // (_spell_base_description in the 0.34 source): name chopped to 32, schools
+  // padded out to column 58, then failure in a 9-wide field (13 for revenants'
+  // enkindle column) and the level digit. Slice by position, NOT by whitespace
+  // runs: a 25-char schools string ("Conjuration/Translocation" — Momentum
+  // Strike, Iskenderun's Mystic Blast) leaves only ONE pad space before the
+  // failure column, so a \s{2,} split merges schools+fail and shifts every
+  // later column. The fail/level tail isn't position-stable across the two
+  // field widths, so split that small piece on whitespace instead: level is
+  // the last token, fail is everything before it.
+  function parseSpellItem(it: MenuItem): SpellEntry {
+    const letter = String.fromCharCode(it.hotkeys![0])
+    const plain = stripSpellPreface(it.text)
+    const tail = plain.slice(58).trim().split(/\s+/).filter(Boolean)
+    const level = Number(tail[tail.length - 1])
+    return {
+      letter,
+      tile: it.tiles![0].t,
+      colour: it.colour,
+      title: plain.slice(0, 32).trim() || plain.trim(),
+      schools: plain.slice(32, 58).trim() || undefined,
+      fail: tail.slice(0, -1).join(' ') || undefined,
+      level: Number.isFinite(level) ? level : undefined,
+    }
+  }
+
+  // Keep the dev inspection hook pointing at the current cache array, and
+  // refresh both spell surfaces (the quick-cast rail and the z tab grid) so an
+  // auto/re-harvest fills them in when its menu capture lands.
+  function exposeSpellCache(): void {
+    if (import.meta.env.DEV)
+      (window as unknown as { __dcssSpellCache: SpellEntry[] }).__dcssSpellCache = spellCache
+    renderSpellRail()
+    touchControls.refreshSpellTab()
+  }
+
+  // Build the spell grid for the touch-panel z tab from spellCache, or null when
+  // there's nothing to show (no spells / spectating) → the tab shows its empty
+  // state. Mirrors the rail's per-spell button (tile + letter badge) but in the
+  // panel's content area: costs no map space and scrolls past the visible rows.
+  // One quick-cast button (tile + "za"-style corner letter, tap to cast),
+  // shared by the rail and the z-tab grid so the two surfaces can't drift —
+  // only the container-specific button class differs.
+  function makeSpellButton(s: SpellEntry, btnClass: string): HTMLElement {
+    const btn = document.createElement('button')
+    btn.className = btnClass
+    btn.title = `${s.title}${s.fail ? ` (${s.fail})` : ''}`
+    if (typeof s.colour === 'number') btn.style.color = uiColor(s.colour)
+    btn.appendChild(renderTiles(loader, [{ t: s.tile, tex: TEX.GUI }], 1))
+    const lbl = document.createElement('span')
+    lbl.className = 'spell-letter'
+    // "za"/"zb" — the literal cast keystroke (z then the spell's letter), so
+    // the button doubles as a reminder of what tapping sends.
+    lbl.textContent = `z${s.letter}`
+    btn.appendChild(lbl)
+    // Touch taps are detected manually (touchstart records the contact,
+    // touchend casts if the finger didn't drift) rather than firing on raw
+    // touchstart like touch.ts buttons or trusting iOS click synthesis:
+    //  - raw touchstart casts the instant a drag CONTACTS the button — and a
+    //    drag aimed at the log above lands fat-finger contacts on the rail;
+    //  - iOS click synthesis both drops fast second taps (the original
+    //    dropped-cast bug) and conjures clicks at the LIFT point of a drag
+    //    that nothing scrolled (see the click gate below).
+    // Firing on our own touchend keeps double-taps reliable (no browser
+    // heuristics) at the cost of finger-up rather than finger-down timing.
+    // preventDefault on touchstart suppresses the tap's own synthetic click.
+    let tapX = 0, tapY = 0, tapMoved = false
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault()
+      const t = e.touches?.[0]
+      tapX = t?.clientX ?? 0
+      tapY = t?.clientY ?? 0
+      tapMoved = false
+    }, { passive: false })
+    btn.addEventListener('touchmove', e => {
+      const t = e.touches?.[0]
+      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > TAP_SLOP_PX) tapMoved = true
+    })
+    btn.addEventListener('touchend', () => { if (!tapMoved) castSpellLetter(s.letter) })
+    // Mouse/desktop path. Gated on recent touch activity in the view: iOS
+    // dispatches its compatibility mouse events (incl. click) at the lift
+    // point of an unconsumed drag, so a finger that lands on the floating
+    // log and lifts over the rail "clicks" a button it never touched. Real
+    // touch taps cast via their own touchend above, so any click inside a
+    // touch session is synthetic or stray; mouse clicks have no preceding
+    // touch and pass.
+    btn.addEventListener('click', e => {
+      // Modern engines deliver click as a PointerEvent: a click that
+      // self-identifies as a genuine mouse (hybrid devices — iPad +
+      // trackpad, touchscreen laptops) bypasses the touch-recency gate,
+      // which would otherwise eat a real mouse click landing within 700ms
+      // of unrelated touch activity. Only 'mouse' bypasses: a pen tap also
+      // fires touch events (and casts via touchend above), and where
+      // pointerType is absent the timestamp heuristic decides.
+      if ((e as PointerEvent).pointerType !== 'mouse'
+        && performance.now() - lastViewTouchTs < SYNTH_CLICK_SUPPRESS_MS) return
+      castSpellLetter(s.letter)
+    })
+    return btn
+  }
+
+  function renderSpellGrid(): HTMLElement | null {
+    if (spectating || spellCache.length === 0) return null
+    const grid = document.createElement('div')
+    grid.className = 'tc-spell-grid'
+    for (const s of spellCache) grid.appendChild(makeSpellButton(s, 'tc-spell-btn'))
+    return grid
+  }
+
+  // Cast a memorised spell from normal play: `z` opens the cast prompt and the
+  // spell's letter selects it (≡ typing `z<letter>`). Targeted spells drop the
+  // server into targeting, handled by the existing cursor/d-pad UI; self/instant
+  // spells just fire. Guarded to a clean command-mode state — the rail is always
+  // visible, so a stray tap during a menu/X-mode/overlay must be a no-op.
+  //
+  // A guarded-out tap is queued (1-deep) when the blocker is our own
+  // just-sent cast: the engine answers the `z` by flushing
+  // input_mode:PROMPT plus the channel-2 "Cast which spell?" line (which the
+  // log renders as a prompt row → activePromptEl) BEFORE the letter resolves
+  // the cast, so the second tap of a quick double-tap lands inside that
+  // round-trip and used to vanish silently — while typing `zaza` on a
+  // keyboard queues server-side and casts twice. The pending tap fires on
+  // the input_mode→1 that ends the round-trip; PENDING_CAST_TTL_MS bounds
+  // both queueing and firing so a tap can't resurface as a surprise cast
+  // long after (e.g. the first cast was targeted and the player sat in the
+  // targeter).
+  const PENDING_CAST_TTL_MS = 1000
+  // Finger drift beyond this is a drag, not a tap — the touchend won't cast.
+  const TAP_SLOP_PX = 12
+  // A click this soon after touch activity is iOS's synthesized
+  // compatibility click (or a stray), never a real mouse press.
+  const SYNTH_CLICK_SUPPRESS_MS = 700
+  let lastCastSentAt = -Infinity
+  let pendingCastLetter: string | null = null
+  let pendingCastUntil = 0
+
+  function castSpellLetter(letter: string): void {
+    // `currentInputMode === 1` additionally rejects active targeting (a prior
+    // targeted spell left the server in a target loop with a map cursor but no
+    // menu/overlay) — `z<letter>` there would land mid-targeting, not cast.
+    // The monster panel is a client-only overlay that doesn't change input
+    // mode, so it needs its own gate: in landscape the rail stays visible in
+    // the sidebar beside the panel, and a tap here bypasses the touch-input
+    // swallow (the rail sends via conn.send, not that callback).
+    if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) {
+      // Queue only when our own cast is plausibly still in flight and the
+      // player isn't in a real context (menu/overlay/X-mode/panel) — there a
+      // deferred cast would be the exact stray the guard exists to stop.
+      const ownCastInFlight = performance.now() - lastCastSentAt < PENDING_CAST_TTL_MS
+      const inForeignContext = monsterPanelOpen || inXMode || crtActive || dialogActive
+        || uiStack.length > 0 || activeMenu !== null
+      if (ownCastInFlight && !inForeignContext) {
+        pendingCastLetter = letter  // latest tap wins
+        pendingCastUntil = performance.now() + PENDING_CAST_TTL_MS
+      }
+      return
+    }
+    sendCast(letter)
+  }
+
+  function sendCast(letter: string): void {
+    // One message, not two: the Python server writes each input message's
+    // text to the game pty in a single write (process_handler.handle_input),
+    // so "z"+letter arrive in the engine's buffer together and it never
+    // blocks (flushing the cast prompt and waiting on the socket) between
+    // them — the way it can when two messages land as two pty writes. This
+    // shrinks the prompt round-trip the pending-cast queue exists to cover.
+    conn.send({ msg: 'input', text: `z${letter}` })
+    lastCastSentAt = performance.now()
+  }
+
+  // Fire the queued double-tap cast now that input_mode→1 says the command
+  // channel is open again. Clears the queue before re-running the full tap
+  // guard: by this point the mode-1 handler has already hidden the more
+  // button and disabled the prompt row, but anything else still blocking
+  // (a menu that raced in, a reharvestIfDirty probe that just claimed the
+  // channel) means the tap is stale — dropped, not re-queued.
+  function flushPendingCast(): void {
+    if (pendingCastLetter === null) return
+    const letter = pendingCastLetter
+    pendingCastLetter = null
+    if (performance.now() > pendingCastUntil) return
+    if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) return
+    sendCast(letter)
+  }
+
+  // Render the persistent quick-cast rail from spellCache. Hidden when there are
+  // no spells. Each button casts on tap via castSpellLetter (its own guard keeps
+  // a tap during a menu/overlay/X-mode inert). The `spell-row` class on the view
+  // tracks rail visibility: while set, CSS lifts the floating message log (and
+  // --more--) by the rail's height so the rail fits beneath them — the rail
+  // itself floats over the map, so showing it never resizes the map.
+  // The cache array the rail's buttons were last built from. Every harvest
+  // (and the dev fake-spells hook) assigns a NEW array to spellCache, so
+  // reference identity distinguishes "content changed, rebuild" from
+  // "visibility toggled, just un/hide" — the X-mode enter/exit calls land on
+  // the cheap path instead of rebuilding every button + tile per examine.
+  let railBuiltFrom: SpellEntry[] | null = null
+  function renderSpellRail(): void {
+    // Hidden while examining (X-mode): the zoomed-out examine map claims the
+    // log/HUD rows, and the rail's row (plus the log overlay) would shrink and
+    // occlude the very cells the player entered X-mode to read.
+    const visible = !spectating && !inXMode && spellCache.length > 0
+    view.classList.toggle('spell-row', visible)
+    if (!visible) { spellRail.style.display = 'none'; return }
+    if (railBuiltFrom !== spellCache) {
+      spellRail.innerHTML = ''
+      for (const s of spellCache) spellRail.appendChild(makeSpellButton(s, 'spell-rail-btn'))
+      railBuiltFrom = spellCache
+    }
+    spellRail.style.display = ''
+  }
+
+  // True while a silent harvest owns the input channel. During this brief
+  // window (one round-trip) the server is sitting in the spell menu
+  // while the client still looks like normal play (activeMenu stays null), so
+  // user input must be suppressed — otherwise a stray keystroke lands in that
+  // menu (describing a spell, scrolling, or Escaping it) and desyncs the
+  // harvest. Suppression can't get stuck: harvestPhase always leaves the
+  // suppressing states within HARVEST_SUPPRESS_MS via armHarvestTimeout, even
+  // if a message is dropped. (Crawl is turn-based, so a suppressed keystroke
+  // just means the player re-presses it.) 'late-base' is deliberately NOT a
+  // suppressing state: the reply is overdue and the player gets the channel
+  // back — a keystroke they fire may be eaten by the still-open server menu,
+  // which is the price of not locking input on a slow link.
+  function isHarvesting(): boolean {
+    return harvestPhase === 'base'
+  }
+
+  // The command channel is idle: the server is sitting at the command prompt
+  // with nothing transient in front of it — no menu/overlay/CRT/dialog, no
+  // examine cursor (X-mode), no `--more--` pager, no in-log y/n prompt, and no
+  // silent harvest already in flight. Only then is it safe to inject a
+  // command-level keystroke (a harvest's `I` or a rail `z<letter>`).
+  // The earlier guards listed only the menu/overlay subset, so a rail tap or an
+  // auto/re-harvest fired during a `--more--` or a channel-2 prompt leaked a
+  // stray keystroke into it (eating the pager/answering the prompt, or — for a
+  // harvest — getting the `I` swallowed so the probe times out and clears the
+  // rail). `moreBtn`/`activePromptEl` are exactly that missing state.
+  // Checks harvestPhase directly (not isHarvesting()) because 'late-base'
+  // must also block injection: the probe's menu may still be open server-side
+  // even though user input suppression has been lifted.
+  function commandChannelIdle(): boolean {
+    return harvestPhase === 'idle'
+      && uiStack.length === 0 && !crtActive && !dialogActive && !activeMenu
+      && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
+  }
+
+  // End any in-flight harvest and clear its latches — every harvest-exit
+  // path routes through here so the timer/phase/latch lifecycle lives in one
+  // place: the successful menu capture (which re-latches pendingHarvestClose
+  // right after), the foreign-menu abort, the no-spells terminator, and the
+  // full-state teardowns (layer:"game", close_all_menus, go_lobby). The
+  // teardown calls are what keep a bulk menu close or game transition
+  // mid-harvest from leaving input suppressed (harvestPhase stuck) or
+  // pendingHarvestClose latched — the latter would otherwise swallow the
+  // NEXT genuine close_menu and strand a real overlay.
+  function resetHarvest(): void {
+    clearTimeout(harvestTimer)
+    harvestPhase = 'idle'
+    pendingHarvestClose = false
+  }
+
+  // Fire a silent `I` to (re)populate spellCache. Only from a clean game
+  // state — otherwise the keystroke is swallowed by whatever prompt/menu/
+  // overlay is up (and could mean something else entirely).
+  // Returns true if the harvest actually started (so the auto-trigger only
+  // marks itself done when it really fired, not when the guard bailed).
+  function harvestSpells(): boolean {
+    if (!commandChannelIdle()) return false
+    harvestPhase = 'base'
+    conn.send({ msg: 'input', text: 'I' })
+    armHarvestTimeout()
+    return true
+  }
+
+  // Auto-harvest once per game so the persistent rail is populated. Fired on
+  // the first clean COMMAND-mode transition.
+  function maybeAutoHarvest(): void {
+    if (spectating || autoHarvestedThisGame || isHarvesting()) return
+    if (harvestSpells()) autoHarvestedThisGame = true
+  }
+
+  // Resolve a pending letter-map change (spellsDirty): re-harvest so the rail
+  // reflects the new spells/letters. Clears the flag only when a harvest really
+  // fires — if the guard bails (mid-menu, etc.) the flag persists and the next
+  // clean command-mode retries. Spectators never harvest, so just drop the flag.
+  function reharvestIfDirty(): void {
+    if (!spellsDirty) return
+    if (spectating) { spellsDirty = false; return }
+    if (harvestSpells()) spellsDirty = false
+  }
+
+  // Fallback if the harvest's `I` reply never arrives within the
+  // input-suppression budget — either the character has no spells and the
+  // MSG_NO_SPELLS fast path was lost, or the link is just slower than the
+  // budget (RTT > 1.5s is real on mobile). Don't give up: drop to
+  // `late-base`, which lifts input suppression but keeps listening for the
+  // menu so a slow reply is still captured silently — the old reset-to-idle
+  // here let that late menu render as an unrequested full-screen spell list
+  // AND left the rail empty for the rest of the game (autoHarvestedThisGame
+  // stays true; nothing retries). Only after the extended `late-base` window
+  // also passes do we conclude the frame was truly dropped and clear the
+  // cache.
+  function armHarvestTimeout(): void {
+    clearTimeout(harvestTimer)
+    harvestTimer = window.setTimeout(() => {
+      if (harvestPhase !== 'base') return
+      harvestPhase = 'late-base'
+      harvestTimer = window.setTimeout(() => {
+        if (harvestPhase !== 'late-base') return
+        resetHarvest()
+        spellCache = []
+        exposeSpellCache()
+      }, HARVEST_LATE_MS)
+    }, HARVEST_SUPPRESS_MS)
+  }
+
   function showMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
       hoveredMenuIdx = -1
@@ -2232,41 +2804,31 @@ export function buildGameView(
         if (item.colour != null) hdr.style.color = uiColor(item.colour)
         hdr.innerHTML = dcssToHtml(String(item.text ?? ''))
         listEl.appendChild(hdr)
-      } else {                        // level 2: selectable item
+      } else {                        // level 2: item row
         const keycode = item.hotkeys?.[0]
-        const keyLabel = keycode != null ? keypressLabel(keycode) : ''
-        let rawText = String(item.text ?? '').trimStart()
-        // Two prefix shapes to handle:
-        //
-        //  1) Gods menu (god-menu.cc): " <yellow>A</yellow> - Ashenzari"
-        //     — the hotkey is wrapped in a matched colour pair; separator
-        //     and name are outside the pair. Strip the whole pair so the
-        //     deity name renders in the default menu colour (matching the
-        //     upstream client). The wrap colour still drives the hotkey
-        //     span via keyColor.
-        //
-        //  2) Shop rows: "<lightgreen>a - </lightgreen><lightgrey>72 gold
-        //     ...</lightgrey>" — the opening tag spans the whole prefix
-        //     and is meant to colour the row (affordability). Preserve
-        //     that opening tag in the label so the colour carries onto
-        //     the rest of the row.
-        let separator = '-'
-        let keyTagName: string | undefined
-        const wrappedHotkey = rawText.match(/^<([a-zA-Z]+)>.<\/\1>\s([-+# $])\s/)
-        if (wrappedHotkey) {
-          separator = wrappedHotkey[2]
-          keyTagName = wrappedHotkey[1].toLowerCase()
-          rawText = rawText.replace(/^<[a-zA-Z]+>.<\/[a-zA-Z]+>\s[-+# $]\s/, '')
-        } else {
-          const stateMatch = rawText.match(/^(?:<[^>]+>)*.\s([-+# $])\s/)
-          if (stateMatch) separator = stateMatch[1]
-          keyTagName = rawText.match(/^<([a-zA-Z]+)>/)?.[1]?.toLowerCase()
-          rawText = rawText.replace(/^((?:<[^>]+>)*).\s[-+# $]\s/, '$1')
-        }
-        const labelHtml = dcssToHtml(rawText)
+        // Render the row text verbatim (markup → HTML), mirroring the
+        // reference client (menu.js set_item_contents): the hotkey letter and
+        // the " - "/" + " selection marker are part of item.text — DCSS bakes
+        // them in for letter-selectable rows — so we don't destructure them
+        // into separate key/separator chips. The base colour comes from
+        // item.colour (like the reference's fg<col> class); inline markup in
+        // the text overrides per span. The label wraps at our display width.
+        // The hotkey still drives clicks below.
         const itemColor = item.colour != null ? uiColor(item.colour) : undefined
-        const keyColor = (keyTagName && DCSS_COLOR_MAP[keyTagName]) || itemColor
-        const el = makeItemButton(keyLabel, labelHtml, () => {
+        // Detect the DCSS "<key> - " prefix without stripping it (rendering
+        // stays verbatim). Two shapes: a plain hotkey ("a - ...", shop
+        // "<col>a - </col>...") and the gods-style colour-wrapped hotkey
+        // ("<yellow>A</yellow> - ..."). Two things key off the result:
+        //   • the " + " marker drives the selected-row highlight (multiselect
+        //     menus — shop purchase, known-items autopickup);
+        //   • a prefix means wrapped continuation lines should hang-indent 4ch
+        //     (the fixed "<key> - " width) so they sit under the item title.
+        // Prefixless rows (the unrecognised-items list — bare " staff of air"
+        // / " scroll of fog (uncommon)") start at column 0 and must NOT indent.
+        const prefix = String(item.text ?? '')
+          .match(/^\s*(?:<[a-zA-Z]+>.<\/[a-zA-Z]+>|(?:<[^>]+>)*.)\s([-+# $])\s/)
+        const selected = prefix?.[1] === '+'
+        const el = makeItemButton(dcssToHtml(String(item.text ?? '')), () => {
           // Shop shift-tap: shopping list uses the uppercase letter as a direct
           // keybind (shopping.cc), separate from the arrows-select activate-on-
           // hover path — so route it before the MF_ARROWS_SELECT branch below,
@@ -2300,12 +2862,13 @@ export function buildGameView(
           if (keycode == null) return
           conn.send({ msg: 'key', keycode })
           menuShift.consume()
-        }, itemColor, separator, keyColor)
+        }, itemColor)
         if (item.tiles && item.tiles.length > 0) {
           el.insertBefore(renderTiles(loader, item.tiles), el.firstChild)
         }
         el.dataset.menuIdx = String(i)
-        if (separator === '+') el.classList.add('item-selected')
+        if (selected) el.classList.add('item-selected')
+        if (prefix) el.classList.add('item-hang')
         if (i === hoveredMenuIdx) el.classList.add('item-hovered')
         listEl.appendChild(el)
       }
@@ -2539,15 +3102,11 @@ export function buildGameView(
     })
   }
 
-  function makeItemButton(key: string, labelHtml: string, onClick: () => void, color?: string, separator = '–', keyColor?: string): HTMLButtonElement {
+  function makeItemButton(labelHtml: string, onClick: () => void, color?: string): HTMLButtonElement {
     const el = document.createElement('button')
     el.className = 'overlay-item'
     const labelStyle = color ? ` style="color:${color}"` : ''
-    const keyStyle = keyColor ? ` style="color:${keyColor}"` : ''
-    const sepHtml = key
-      ? ` <span class="overlay-sep" data-sep="${escHtml(separator)}">${escHtml(separator)}</span> `
-      : ''
-    el.innerHTML = `<span class="overlay-key"${keyStyle}>${escHtml(key)}</span>${sepHtml}<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
+    el.innerHTML = `<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
     el.addEventListener('click', () => {
       onClick()
       view.focus({ preventScroll: true })
@@ -2664,7 +3223,7 @@ export function buildGameView(
     numpadInput.appendChild(grid)
   }
 
-  function showTextInput(prefill: string, maxlen: number): void {
+  function showTextInput(prefill: string, maxlen: number, tag?: string): void {
     removeTextInput()
     const row = document.createElement('p')
     row.className = 'game-msg game-text-input-row'
@@ -2683,6 +3242,16 @@ export function buildGameView(
         e.preventDefault()
         const text = input.value + '\r'
         removeTextInput()
+        // The server's resumable_line_reader still holds the prefill (e.g. the
+        // old ally name) with the cursor at its end, so a bare text_input gets
+        // appended to it ("OldnameNewname"). Wipe the buffer first with Ctrl-U
+        // (kill-to-start, 21) + Ctrl-K (kill-to-end, 11), matching the
+        // reference client (textinput.js send_input_line). The "repeat" count
+        // prompt is excluded there and here — it doesn't carry a prefill.
+        if (tag !== 'repeat') {
+          conn.send({ msg: 'key', keycode: 21 })
+          conn.send({ msg: 'key', keycode: 11 })
+        }
         conn.send({ msg: 'text_input', text })
         view.focus({ preventScroll: true })
       } else if (e.key === 'Escape') {
@@ -2815,16 +3384,6 @@ export function buildGameView(
   return view
 }
 
-// Convert a numeric keycode to a display label (printable char or symbol)
-function keypressLabel(code: number): string {
-  if (code >= 32 && code < 127) return String.fromCharCode(code)
-  if (code === 8)  return '⌫'
-  if (code === 27) return '⎋'
-  if (code === 13) return '⏎'
-  if (code === 9)  return '⇥'
-  return ''
-}
-
 // Render a single spellset book as DOM: an optional header line followed
 // by one row per spell with its tile, letter, name, damage effect, and
 // range string. Mirrors the reference client's _fmt_spells_list (see
@@ -2937,21 +3496,133 @@ function propagateDarkgreyColor(body: string): string {
   return result
 }
 
+// Ego/artprop descriptions arrive pre-formatted by the server's
+// _format_prop_desc (describe.cc): a `Label: ` prefix, the description
+// hard-wrapped at 80 columns, and every continuation line padded with
+// spaces to align under the description column. That layout assumes an
+// 80-char terminal — at phone width each source line soft-wraps again and
+// the block turns into a jagged staircase. Detect the shape precisely
+// (first line has `label:` + padding + text; following lines indented with
+// exactly that many spaces), join each block into one logical line with the
+// padding collapsed, and tag it with HANG_MARK so renderBodyLines reflows
+// it as prose with a compact CSS hanging indent. Collapsing the padding
+// also keeps isTabularLine from classifying the joined line as nowrap.
+// Verse/quote lines never carry the exact-column indent, so they pass
+// through untouched. Lines with markup tags before the colon (stat rows,
+// key-help rows) are skipped by the [^<] guard.
+export const HANG_MARK = '\u0001'
+
+export function unwrapHangingIndents(body: string): string {
+  const lines = body.split('\n')
+  const out: string[] = []
+  // Active opens-only color carried across lines. Quote blocks arrive as
+  // `<darkgrey>` on their first line only (formatted_string color switch),
+  // so later quote lines are raw text — dialogue-format quotes
+  // ("Buttercup:    “And to think…”") would otherwise match the label-row
+  // shape. Never mark inside a darkgrey block.
+  let activeColor = ''
+  const trackTags = (l: string): void => {
+    for (const t of l.matchAll(/<(\/?)(\w+)>/g)) {
+      if (t[1]) activeColor = ''
+      else if (t[2] in DCSS_COLOR_MAP) activeColor = t[2]
+    }
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const shielded = activeColor === 'darkgrey'
+    trackTags(line)
+    const m = shielded ? null : line.match(/^([^\s<][^<]*?:)( +)(?=\S)/)
+    if (m) {
+      const col = m[1].length + m[2].length
+      const contRe = new RegExp(`^ {${col}}(?=\\S)`)
+      let j = i + 1
+      while (j < lines.length && contRe.test(lines[j])) j++
+      if (j > i + 1) {
+        // Keep line 1 verbatim (label + original padding) — renderBodyLines
+        // re-derives the description column from it to set the hang width,
+        // so wrapped text aligns under the description column.
+        const joined = [line, ...lines.slice(i + 1, j).map(l => l.slice(col))].join(' ')
+        out.push(HANG_MARK + joined)
+        for (let k = i + 1; k < j; k++) trackTags(lines[k])
+        i = j - 1
+        continue
+      }
+      // Single-line padded-label row: same server formatter, but the
+      // description fit within one wire line so there's no continuation
+      // indent to validate against. At phone width these still misbehave:
+      // ≥3 padding spaces trips isTabularLine into nowrap (row pans
+      // offscreen), while a 2-space pad (9-char labels like "*Corrode:")
+      // soft-wraps flush-left. Mark them so they wrap within the
+      // description column like the joined blocks; rows that fit render
+      // pixel-identical to the nowrap form. Guards: padding ≥2 spaces (a
+      // single space is ordinary prose, e.g. "Mesmerism radius: 2"), short
+      // label, description column ≤18 (the widest real formatter column —
+      // excludes right-aligned-to-col-80 layouts like the god-powers
+      // "Granted powers:        (Cost)" header), and no multi-space runs in
+      // the remainder (multi-column rows keep their alignment).
+      if (m[2].length >= 2 && m[1].length <= 16 && col <= 18 && !/ {3,}/.test(line.slice(col))) {
+        out.push(HANG_MARK + line)
+        continue
+      }
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
 // `terminal` renders the body as one fixed-width block: every line is nowrap
 // and the stat-row/per-line-tabular reformatting is skipped, so the caller can
 // scale the whole block to fit (see fitTerminalBody). Used for the game-over
 // screen; the describe-* panels keep the per-line heuristic (terminal=false).
 function renderBodyLines(rawBody: string, highlight: string, terminal = false): string {
   return balanceColorTagsAcrossLines(rawBody).split('\n').map(line => {
-    if (!terminal) {
+    // Lines marked by unwrapHangingIndents wrap with a hanging indent.
+    // propagateDarkgreyColor may have prepended tags, so the mark isn't
+    // necessarily at index 0. The marked line keeps its original
+    // `label + padding` prefix; re-derive the description column from it so
+    // wrapped text aligns under the column (the body is monospace, so Nch
+    // matches N wire characters exactly). Padded columns are honored up to
+    // 18ch (the widest real DBRAND label, "Manifold Assault:") — beyond
+    // that, and for single-space run-in labels like `'Of mesmerism': `,
+    // fall back to a compact 2ch hang.
+    const hang = line.includes(HANG_MARK)
+    let hangStyle = ''
+    if (hang) {
+      line = line.replace(HANG_MARK, '')
+      const pm = line.match(/^[^\s<][^<]*?:( +)(?=\S)/)
+      const col = pm ? pm[0].length : 0
+      if (pm && pm[1].length >= 2 && col <= 18) hangStyle = ` style="--hang-col:${col}ch"`
+    }
+    if (!terminal && !hang) {
       const stat = tryStatRow(line)
       if (stat) return stat
+      const plain = plainStatSegments(line)
+      if (plain) {
+        const chips = plain.map(s => `<span class="overlay-stat">${dcssToHtml(s)}</span>`).join('')
+        return `<div class="overlay-line overlay-stat-row">${chips}</div>`
+      }
     }
-    const cls = terminal || isTabularLine(line)
-      ? 'overlay-line overlay-line--nowrap'
-      : 'overlay-line'
+    let cls = hang
+      ? 'overlay-line overlay-line--hang'
+      : terminal || isTabularLine(line)
+        ? 'overlay-line overlay-line--nowrap'
+        : 'overlay-line'
+    // Indented prose sub-items ("    Your skill: 3.6", "    At 100%
+    // training you would reach 18.0 in about 9.3 XLs." — describe.cc
+    // emits these with a 4-space indent): wrap with a hanging indent at
+    // the line's own depth so continuations stay aligned under the
+    // sub-item instead of falling flush-left. The leading spaces render
+    // on line 1 as-is; the negative text-indent/padding pair only moves
+    // the wrapped lines. Deeply indented lines (>18) are left alone.
+    if (cls === 'overlay-line' && !hang) {
+      const ind = /^( {2,})\S/.exec(line)?.[1].length ?? 0
+      if (ind > 0 && ind <= 18) {
+        cls += ' overlay-line--hang'
+        hangStyle = ` style="--hang-col:${ind}ch"`
+      }
+    }
     const html = applyHighlight(dcssToHtml(line), highlight) || '&nbsp;'
-    return `<div class="${cls}">${html}</div>`
+    return `<div class="${cls}"${hangStyle}>${html}</div>`
   }).join('')
 }
 
@@ -3012,6 +3683,24 @@ function tryStatRow(line: string): string | null {
     .map(b => `<span class="overlay-stat">${dcssToHtml(`<${b.color}>${b.text}</${b.color}>`)}</span>`)
     .join('')
   return `<div class="overlay-line overlay-stat-row">${html}</div>`
+}
+
+// Untagged multi-stat lines: `label: value` pairs separated by 2+ spaces,
+// all on one line. Real shapes: the weapon header "Base accuracy: -2  Base
+// damage: 13  Base attack delay: 1.6" (describe.cc:1577), the armour header
+// "Base armour rating: 5     Encumbrance rating: 2" (describe.cc:2288), the
+// spell header "Level: 5        Schools: Conjuration" (describe.cc:4218).
+// At phone width these soft-wrap mid-pair ("Base / attack delay: 1.6");
+// rendering them as the same chip row used for tagged stat rows lets pairs
+// wrap as units. Indented lines are sub-items, not stat headers — skip.
+export function plainStatSegments(line: string): string[] | null {
+  if (line.includes('<') || /^\s/.test(line)) return null
+  const segs = line.trim().split(/ {2,}/)
+  if (segs.length < 2) return null
+  for (const s of segs) {
+    if (!/^[^\s:][^:]{0,23}: \S/.test(s)) return null
+  }
+  return segs
 }
 
 function isTabularLine(line: string): boolean {

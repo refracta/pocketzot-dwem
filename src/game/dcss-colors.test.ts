@@ -79,13 +79,25 @@ describe('dcssToHtml', () => {
     expect(dcssToHtml('<bogus>x</bogus>')).toBe('x')
   })
 
-  it('greedy split: raw < inside payload is consumed as a pseudo-tag', () => {
-    // Documents a parser limitation: the splitter regex /(<[^>]+>)/ matches
-    // "< b></red>" as one token, so payload that contains a literal '<'
-    // breaks the surrounding markup. Server messages don't normally include
-    // raw '<' — escape upstream if you ever need to feed user text in.
+  it('renders a raw < inside payload as a literal, not a pseudo-tag', () => {
+    // A lone '<' that doesn't form a complete tag is escaped to &lt; and the
+    // surrounding markup is preserved (the old /(<[^>]+>)/ splitter swallowed
+    // "< b></red>" as one token and truncated the line).
     expect(dcssToHtml('<red>a < b</red>'))
-      .toBe('<span style="color:#b30009">a </span>')
+      .toBe('<span style="color:#b30009">a &lt; b</span>')
+  })
+
+  it('unescapes the engine\'s doubled << to a literal <', () => {
+    // DCSS doubles a literal '<' to '<<' because '<' opens a markup tag.
+    expect(dcssToHtml('a << b')).toBe('a &lt; b')
+  })
+
+  it('keeps the leading < of the ring-swap prompt (<w><<</w>)', () => {
+    // Regression for item-use.cc _item_swap_prompt: the '<' swap slot arrives
+    // as `<w><<</w> or a - …`. The greedy splitter ate `<<</w>` as a bogus tag
+    // and dropped both the '<' and the close, so the line lost its first char.
+    expect(dcssToHtml('<w><<</w> or a - the ring of Iduirph'))
+      .toBe('<span style="color:#eeeeec">&lt;</span> or a - the ring of Iduirph')
   })
 
   it('handles <w> alias as a white highlight', () => {

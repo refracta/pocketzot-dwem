@@ -11,14 +11,11 @@ import { decodeColor, DEFAULT_FG, flashColor } from './colors'
 import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
 import {
   FG_TILE_ID_MASK,
-  FG_ATTITUDE_MASK, FG_PET, FG_GD_NEUTRAL, FG_NEUTRAL,
   FG_S_UNDER, FG_FLYING,
   FG_BEHAVIOUR_MASK, FG_STAB, FG_MAY_STAB, FG_FLEEING, FG_PARALYSED,
   FG_NET, FG_WEB,
   FG_MDAM_LO_MASK, FG_MDAM_LIGHT_LO, FG_MDAM_MOD_LO, FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT,
-  FG_GHOST,
   FG_POISON_MASK_HI, FG_POISON, FG_MORE_POISON, FG_MAX_POISON,
-  FG_THREAT_MASK_HI, FG_THREAT_TRIVIAL, FG_THREAT_EASY, FG_THREAT_TOUGH, FG_THREAT_NASTY, FG_THREAT_UNUSUAL,
   BG_TILE_ID_MASK,
   BG_MM_UNSEEN, BG_UNSEEN, BG_TRAV_EXCL, BG_EXCL_CTR, BG_OOR, BG_WATER,
   BG_NEW_STAIR, BG_NEW_TRANSPORTER,
@@ -28,23 +25,35 @@ import {
   bgLo, bgHi,
 } from './cell-flags'
 import { buildStatusIconSizeMap } from './icon-sizes'
-import { buildStatusOverlays, resolveOverlayId } from '../hud/monster-style'
+import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId } from '../hud/monster-style'
 
 // Tile-mode minimum viewport. Square because tile cells are square; 21×21
 // is roughly the smallest cell count where a phone-sized container still
 // gives readable sprites without the player feeling boxed in. fitToContainer
-// expands beyond this in 2-cell increments (one per side) on whichever axis
-// has slack, so portrait phones grow vertically and landscape grows
-// horizontally without off-center shifts.
+// expands beyond this to full-bleed the container on both axes — partial
+// edge cells clip at the viewport boundary, the natural tile-game look —
+// with centerCol/centerRow pinning the player.
 const NORMAL_AXIS = 21
 // Square zoom viewport. DCSS LOS radius is 7, so 15×15 covers all visible
-// cells; 17×17 adds a one-cell border. Same symmetric slack-fill applies on
+// cells; 17×17 adds a one-cell border. The same full-bleed fill applies on
 // top, so zoom still uses freed space — just with a smaller floor.
 const ZOOM_AXIS = 17
 
 // Authored cell size of every DCSS sprite atlas. Per-tile {ox,oy,w,h} positions
 // the sprite inside this 32×32 logical box; we scale the whole box to cellPx.
 const ATLAS_CELL = 32
+
+// One axis of the full-bleed fit: pick the cell whose middle can land exactly
+// on `center` (px from the element's start edge), the sub-cell shift ∈
+// (-cell, 0] that puts it there (applied as a CSS margin on the canvas), and
+// the cell count needed to cover the whole element from that offset.
+function pinAxis(center: number, cell: number, totalLen: number, minCells: number):
+    { centerCell: number; shift: number; count: number } {
+  const centerCell = Math.ceil(center / cell - 0.5)
+  const shift = center - (centerCell + 0.5) * cell
+  const count = Math.max(minCells, Math.ceil((totalLen - shift) / cell))
+  return { centerCell, shift, count }
+}
 
 // Mask out the upper TILE_FLAG bits (MDAM/STAB/etc.) before looking up a tile
 // id. Reference defines TILE_FLAG_MASK = 0xffff but uses ~0x7fff for the fg
@@ -71,15 +80,16 @@ const HALO_UMBRA_LAST = 5
 // compare correctly — bitwise `&` in JS returns int32, which would make
 // `(lo & 0xC0000000) === 0xC0000000` test `-1073741824 === 3221225472` and
 // fail. Coerced both sides land in the same positive range.
+// Attitude (PET/…) and threat-tier (TRIVIAL/…/UNUSUAL, GHOST) bits aren't
+// decoded here: their only consumer was the halo / threat-wash tile choice,
+// which now goes through fgHaloDngnName / fgThreatDngnName (monster-style.ts)
+// — the selectors shared with the HUD monster list and touch panel.
 interface DecodedFg {
   value: number
-  PET: boolean; GD_NEUTRAL: boolean; NEUTRAL: boolean
   S_UNDER: boolean; FLYING: boolean
   STAB: boolean; MAY_STAB: boolean; FLEEING: boolean; PARALYSED: boolean
   NET: boolean; WEB: boolean
   POISON: boolean; MORE_POISON: boolean; MAX_POISON: boolean
-  TRIVIAL: boolean; EASY: boolean; TOUGH: boolean; NASTY: boolean; UNUSUAL: boolean
-  GHOST: boolean
   MDAM_LIGHT: boolean; MDAM_MOD: boolean; MDAM_HEAVY: boolean; MDAM_SEV: boolean; MDAM_ADEAD: boolean
 }
 function decodeFg(fg: number | number[] | undefined): DecodedFg {
@@ -87,17 +97,12 @@ function decodeFg(fg: number | number[] | undefined): DecodedFg {
   const hiRaw = fg === undefined ? 0 : (typeof fg === 'number' ? 0 : (fg[1] ?? 0))
   const lo = loRaw >>> 0
   const hi = hiRaw >>> 0
-  const attitude = lo & FG_ATTITUDE_MASK
   const behavior = lo & FG_BEHAVIOUR_MASK
   const poison = hi & FG_POISON_MASK_HI
-  const threat = (hi & FG_THREAT_MASK_HI) >>> 0
   const mdamLo = (lo & FG_MDAM_LO_MASK) >>> 0
   const mdamHi = hi & FG_MDAM_HI_BIT
   return {
     value: lo & FG_TILE_ID_MASK,
-    PET: attitude === FG_PET,
-    GD_NEUTRAL: attitude === FG_GD_NEUTRAL,
-    NEUTRAL: attitude === FG_NEUTRAL,
     S_UNDER: (lo & FG_S_UNDER) !== 0,
     FLYING: (lo & FG_FLYING) !== 0,
     STAB: behavior === FG_STAB,
@@ -109,12 +114,6 @@ function decodeFg(fg: number | number[] | undefined): DecodedFg {
     POISON: poison === FG_POISON,
     MORE_POISON: poison === FG_MORE_POISON,
     MAX_POISON: poison === FG_MAX_POISON,
-    GHOST: (hi & FG_GHOST) !== 0,
-    TRIVIAL: threat === FG_THREAT_TRIVIAL,
-    EASY: threat === FG_THREAT_EASY,
-    TOUGH: threat === FG_THREAT_TOUGH,
-    NASTY: threat === FG_THREAT_NASTY,
-    UNUSUAL: threat === FG_THREAT_UNUSUAL,
     MDAM_LIGHT: mdamLo === FG_MDAM_LIGHT_LO && mdamHi === 0,
     MDAM_MOD: mdamLo === FG_MDAM_MOD_LO && mdamHi === 0,
     MDAM_HEAVY: mdamLo === FG_MDAM_HEAVY_LO && mdamHi === 0,
@@ -175,9 +174,11 @@ function decodeBg(bg: number | number[] | undefined): DecodedBg {
 
 // Tile renderer. Same public API as MapView, but each cell is a stack of
 // sprites drawn to a single <canvas>. Viewport floors at 21×21 (non-zoom)
-// or 17×17 (zoom) and expands symmetrically into available slack in 2-cell
-// increments. X-mode hides the HUD/log to give the map more room but does
-// not shrink cells — the freed area is absorbed by the same slack-fill.
+// or 17×17 (zoom) and full-bleeds the container on both axes — partial
+// cells clip at the edges, with centerCol/centerRow pinning the player
+// (NOT the middle cell; see those fields). X-mode hides the HUD/log to
+// give the map more room and shrinks cells via setFontScale(0.7), the
+// full-bleed fill turning the freed area into more cells.
 // Falls back to ASCII glyphs (also drawn on the canvas) until the tile
 // atlases finish loading.
 export class TileMapView {
@@ -187,9 +188,20 @@ export class TileMapView {
   private store: MapStore
   private viewportW = NORMAL_AXIS
   private viewportH = NORMAL_AXIS
+  // Cell that viewCenter (the player, in normal play) renders on. The canvas
+  // full-bleeds the element on both axes (partial cells clip at the edges),
+  // so this is NOT simply the middle cell: fitToContainer picks it — together
+  // with the sub-cell --map-col/row-shift margins — to pin the player's
+  // center on the element's horizontal center and the clear area's vertical
+  // center (asymmetric bottom padding being portrait's floating-log reserve).
+  private centerCol = Math.floor(NORMAL_AXIS / 2)
+  private centerRow = Math.floor(NORMAL_AXIS / 2)
+  // Last CSS display width applied to the canvas, kept as a number for the
+  // setViewportSize early-exit (see the comment there).
+  private lastCssW = 0
   private zoomMode = false
   // Multiplier on cellPx — mirrors MapView.fontScale. X-mode sets this to
-  // <1 to shrink cells and let the symmetric slack-fill add more of them.
+  // <1 to shrink cells and let the full-bleed fill add more of them.
   // Named `renderScale` internally; setFontScale() stores into it for API
   // parity with the ASCII view.
   private renderScale = 1.0
@@ -338,7 +350,7 @@ export class TileMapView {
   }
   // Mirrors MapView.setFontScale. Stored as a multiplier on cellPx, applied
   // in fitToContainer. X-mode calls this with 0.7 to zoom out (smaller cells
-  // ⇒ more of them fit, courtesy of the symmetric slack-fill); back to 1.0
+  // ⇒ more of them fit, courtesy of the full-bleed fill); back to 1.0
   // on exit. Caller is expected to invoke fitToContainer() next.
   setFontScale(scale: number): void { this.renderScale = scale }
   setZoomMode(on: boolean): void { this.zoomMode = on }
@@ -348,19 +360,21 @@ export class TileMapView {
     const rect = this.container.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return
     const cs = getComputedStyle(this.container)
-    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
-    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
-    const availW = rect.width - padX
-    const availH = rect.height - padY
+    const padTop = parseFloat(cs.paddingTop)
+    const padBottom = parseFloat(cs.paddingBottom)
+    const padLeft = parseFloat(cs.paddingLeft)
+    const padRight = parseFloat(cs.paddingRight)
+    const availW = rect.width - padLeft - padRight
+    const availH = rect.height - padTop - padBottom
     if (availW <= 0 || availH <= 0) return
 
     // Minimum viewport floor: 21×21 normal, 17×17 zoom. Cell size is picked
-    // so this floor fits the binding axis; the slack axis (and any extra
-    // space the binding axis happens to have) then grows in increments of 2
-    // cells — one per side — so the player stays centered. X-mode flows
-    // through the same code: HUD/log are hidden by game-view, availH grows,
-    // and the renderScale<1 (set via setFontScale) shrinks each cell so the
-    // slack-fill turns the freed area into still more cells.
+    // so this floor fits the binding axis of the CLEAR area (availH excludes
+    // the asymmetric bottom padding — portrait's floating-log reserve — so
+    // the player's surroundings stay above the log). X-mode flows through
+    // the same code: HUD/log are hidden by game-view, availH grows, and the
+    // renderScale<1 (set via setFontScale) shrinks each cell so the
+    // full-bleed fill turns the freed area into still more cells.
     const baseAxis = this.zoomMode ? ZOOM_AXIS : NORMAL_AXIS
 
     // Float cell size — fills the binding axis exactly. The backing canvas
@@ -372,21 +386,50 @@ export class TileMapView {
     const cell = Math.max(8, Math.min(96, baseCell * this.renderScale))
     this.cellPx = cell
 
-    const fitW = Math.floor(availW / cell)
-    const fitH = Math.floor(availH / cell)
-    const extraW = Math.max(0, Math.floor((fitW - baseAxis) / 2) * 2)
-    const extraH = Math.max(0, Math.floor((fitH - baseAxis) / 2) * 2)
-    this.setViewportSize(baseAxis + extraW, baseAxis + extraH)
+    // Full-bleed: cover the ENTIRE element on both axes, partial cells
+    // clipping at the edges — sprites cut by the viewport boundary are the
+    // natural tile-game look, and whole-cell fitting would lose up to a cell
+    // of map to slack bands at each edge. (ASCII keeps whole rows instead —
+    // a clipped half-glyph reads as a bug; see MapView.fitToContainer.)
+    // The canvas is anchored to the top-left content corner (CSS), and the
+    // sub-cell --map-col/row-shift margins pull it up/left so the pinned
+    // cell's middle lands EXACTLY on the element's horizontal center and the
+    // clear area's vertical center (see pinAxis). No fit hysteresis: a ±1
+    // cell change only adds/removes a clipped partial at an edge, so there's
+    // no visible cell-drop to dampen.
+    const x = pinAxis(padLeft + availW / 2, cell, rect.width, baseAxis)
+    const y = pinAxis(padTop + availH / 2, cell, rect.height, baseAxis)
+
+    const prevCenterCol = this.centerCol
+    const prevCenterRow = this.centerRow
+    this.centerCol = Math.min(x.centerCell, x.count - 1)
+    this.centerRow = Math.min(y.centerCell, y.count - 1)
+    this.container.style.setProperty('--map-col-shift', `${x.shift - padLeft}px`)
+    this.container.style.setProperty('--map-row-shift', `${y.shift - padTop}px`)
+
+    // A centerCol/centerRow shift remaps every cell (offX/offY change); if
+    // setViewportSize early-exited (nothing else changed), repaint explicitly.
+    const resized = this.setViewportSize(x.count, y.count)
+    if (!resized && (this.centerCol !== prevCenterCol || this.centerRow !== prevCenterRow)) {
+      this.fullRender()
+    }
   }
 
-  setViewportSize(w: number, h: number): void {
+  // Returns true if the canvas was reconfigured (and therefore fully
+  // repainted); false on the unchanged early-exit, so callers know whether a
+  // centerCol/centerRow-only change still needs an explicit fullRender.
+  setViewportSize(w: number, h: number): boolean {
     const cssW = w * this.cellPx
     const cssH = h * this.cellPx
+    // lastCssW (a number) rather than comparing this.canvas.style.width
+    // against a template string: engines may re-serialize the assigned CSS
+    // length, making a string round-trip compare unreliable for floats.
     const same = w === this.viewportW && h === this.viewportH
-      && this.canvas.style.width === `${cssW}px`
-    if (same) return
+      && cssW === this.lastCssW
+    if (same) return false
     this.viewportW = w
     this.viewportH = h
+    this.lastCssW = cssW
     // Backing store at native atlas resolution. CSS scales it up/down to the
     // float display size; `image-rendering: pixelated` keeps the scale
     // nearest-neighbor so we don't need a DPR multiplier on the backing.
@@ -397,18 +440,22 @@ export class TileMapView {
     this.ctx.setTransform(1, 0, 0, 1, 0, 0)
     this.ctx.imageSmoothingEnabled = false
     this.fullRender()
+    return true
   }
 
   resetViewportSize(): void {
     const axis = this.zoomMode ? ZOOM_AXIS : NORMAL_AXIS
+    this.centerCol = Math.floor(axis / 2)
+    this.centerRow = Math.floor(axis / 2)
     this.setViewportSize(axis, axis)
   }
 
   // Screen↔dungeon origin: the top-left dungeon coord of the viewport. Screen
   // cell (col,row) ↔ dungeon (offX+col, offY+row). One definition each so the
   // centering rule lives in a single place (see CLAUDE.md coordinate system).
-  private get offX(): number { return this.viewCenter.x - Math.floor(this.viewportW / 2) }
-  private get offY(): number { return this.viewCenter.y - Math.floor(this.viewportH / 2) }
+  // The center is `centerCol`/`centerRow`, not the middle cell — see the fields.
+  private get offX(): number { return this.viewCenter.x - this.centerCol }
+  private get offY(): number { return this.viewCenter.y - this.centerRow }
   private inView(col: number, row: number): boolean {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }
@@ -694,25 +741,14 @@ export class TileMapView {
         }
         if (cell.awakened_forest) this.paintIcon('BERSERK', px, py)
 
-        // Attitude halos (ring under the monster).
-        if (fg.PET) this.paintDngnName('HALO_FRIENDLY', px, py)
-        else if (fg.GD_NEUTRAL) this.paintDngnName('HALO_GD_NEUTRAL', px, py)
-        else if (fg.NEUTRAL) this.paintDngnName('HALO_NEUTRAL', px, py)
-
-        // Threat-level stars (ghost variants are distinct).
-        if (fg.GHOST) {
-          if (fg.TRIVIAL) this.paintDngnName('THREAT_GHOST_TRIVIAL', px, py)
-          else if (fg.EASY) this.paintDngnName('THREAT_GHOST_EASY', px, py)
-          else if (fg.TOUGH) this.paintDngnName('THREAT_GHOST_TOUGH', px, py)
-          else if (fg.NASTY) this.paintDngnName('THREAT_GHOST_NASTY', px, py)
-          else if (fg.UNUSUAL) this.paintDngnName('THREAT_UNUSUAL', px, py)
-        } else {
-          if (fg.TRIVIAL) this.paintDngnName('THREAT_TRIVIAL', px, py)
-          else if (fg.EASY) this.paintDngnName('THREAT_EASY', px, py)
-          else if (fg.TOUGH) this.paintDngnName('THREAT_TOUGH', px, py)
-          else if (fg.NASTY) this.paintDngnName('THREAT_NASTY', px, py)
-          else if (fg.UNUSUAL) this.paintDngnName('THREAT_UNUSUAL', px, py)
-        }
+        // Attitude halo ring + threat-level wash under the monster. Tile
+        // selection is shared with the HUD monster list and touch panel
+        // (monster-style.ts); the name tables there transcribe
+        // cell_renderer.js draw_background lines 811-845.
+        const halo = fgHaloDngnName(cell.fg)
+        if (halo) this.paintDngnName(halo, px, py)
+        const threatWash = fgThreatDngnName(cell.fg)
+        if (threatWash) this.paintDngnName(threatWash, px, py)
 
         if (cell.highlighted_summoner) this.paintDngnName('HALO_SUMMONER', px, py)
       }

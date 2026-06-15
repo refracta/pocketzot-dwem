@@ -23,6 +23,16 @@
   --map-font-size: 17px;
   --map-line-height: 1.0;
   --crt-line-height: 1.2;
+
+  /* Server-menu/overlay font scale. Most server menus (i, a, shops,
+     descriptions) read through the .overlay-* classes; the skills menu reads
+     through #crt-display. Both paths share these tokens, so they're the single
+     knob for menu text. --fs-overlay is reading text (rows, descriptions,
+     titles, CRT body); --fs-overlay-chrome is secondary labels (headers,
+     footers). Control buttons stay literal — different role. */
+  --fs-overlay:        0.9rem;
+  --fs-overlay-chrome: 0.8rem;
+
   --app-bottom-pad: 25px;
   touch-action: manipulation;
 }
@@ -146,6 +156,14 @@ html, body {
   list-style: none;
 }
 .login-add-section > summary::-webkit-details-marker { display: none; }
+.login-add-section > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1ch;
+  margin-right: 0.5ch;
+  text-align: center;
+}
+.login-add-section[open] > summary::before { content: "−"; }
 .login-add-section[open] > summary { margin-bottom: 0.6rem; }
 
 .login-spectate-select {
@@ -359,6 +377,18 @@ html, body {
   padding: 0.4rem 0.6rem;
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Trunk headline button: same size/prominence as the filled stable primary,
+   but an outline (not filled) treatment. The two headline buttons render in a
+   fixed order (stable on top); differentiating trunk by fill vs. outline — not
+   just position — keeps a player who's used to a trunk-first server (CAO/CPO)
+   from launching stable by reflex. Overrides the .lobby-btn-primary fill via
+   later source order (equal specificity). */
+.lobby-btn-trunk {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
 }
 
 /* Ghost nav button used for "← Back"-style header actions in the lobby and
@@ -643,7 +673,7 @@ html, body {
 .doc-close:active { background: var(--surface2); }
 .doc-body {
   overflow-y: auto;
-  padding: 0.25rem 1.25rem 1.5rem;
+  padding: 0.75rem 1rem 1.5rem;
   color: var(--text);
   /* Proportional font for prose readability; inline code/keys stay monospace
      via the explicit --font-mono on .doc-body code below. */
@@ -671,14 +701,39 @@ html, body {
 
 /* ── Game view ────────────────────────────────────────────── */
 #game-view {
+  /* Message-log typography, declared once so the height calc below can never
+     drift from what #game-messages actually renders at. */
+  --msglog-font: 0.75rem;
+  --msglog-line: 1.3;
+  /* Message-log height: 5 lines (≡ the old `5lh`, but usable from other
+     elements' contexts — `lh` would re-resolve against the consumer's own
+     line-height). A var so the spell-row rules below can offset #more-btn
+     by exactly the log's height. */
+  --msglog-h: calc(5 * var(--msglog-font) * var(--msglog-line));
+  /* Floating-log scrim. Text legibility comes from the text-shadow on
+     #game-messages, so the scrim's job is figure/ground separation — dimming
+     the map content behind the log. ASCII is the binding case: behind the log
+     are full-brightness bold glyphs (text over text), and only the scrim
+     keeps the layers apart, so it needs the stronger wash. Tiles are
+     continuous imagery the eye parses as "behind" on its own — the
+     .tiles-mode override lightens it (set by setRenderMode in game-view.ts,
+     which is also what swaps in TileMapView). */
+  --msglog-bg: color-mix(in srgb, var(--bg) 30%, transparent);
+  /* Spell-rail button band: 32px tile + 2×2px button padding + own 0.25rem
+     padding. Shared so the rail's height, the log float that sits just above it,
+     and the --more-- offset that clears both stay locked together. */
+  --spell-rail-h: calc(36px + 0.5rem);
   position: relative;
   flex: 1;
   display: grid;
-  grid-template-rows: 1fr auto auto auto auto;
+  /* No `msg` row: the message log and spell rail both float over the map
+     (position:absolute, see their rules) so the map's 1fr claims the full
+     height. Keeping them out of flow is what makes the rail's post-harvest
+     arrival a non-event for the map's size — no re-fit, no jump. */
+  grid-template-rows: 1fr auto auto auto;
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "map"
-    "msg"
     "hud"
     "touch"
     "menu";
@@ -686,7 +741,7 @@ html, body {
   outline: none;
 }
 
-/* Map wrapper (positions floating monster list over map) */
+/* Map wrapper */
 #map-wrap {
   grid-area: map;
   position: relative;
@@ -715,7 +770,7 @@ html, body {
   display: flex;
   flex-direction: column;
   /* Center the rendered grid vertically. The player glyph sits at the
-     viewport's center, so centering keeps it at the container's center
+     viewport's center, so centering keeps it at the center of the content box
      regardless of viewport row count — the map stays a fixed reticle the
      world scrolls under, instead of sliding whenever a refit adds/removes
      rows (e.g. the HUD revealing on load, or status lights growing it
@@ -726,7 +781,12 @@ html, body {
      floating monster-list overlay is position:absolute (top-left), so it
      doesn't depend on slack landing above the map. The row-drop hazard a
      1-2px container shrink could introduce (crossing floor(availH/lineH))
-     is handled by the hysteresis in MapView.fitToContainer(). */
+     is handled by the hysteresis in MapView.fitToContainer().
+     EXCEPTION: portrait ASCII mode overrides this to flex-start (see the
+     portrait rules) — there the rows deliberately overrun the content box
+     downward, behind the floating log, and centered overflow would spill
+     out BOTH edges, clipping the top rows. MapView.centerRow keeps the
+     player reticle at the clear-area middle in that anchoring. */
   justify-content: center;
 }
 
@@ -745,15 +805,36 @@ html, body {
 }
 
 /* Tile-render variant of #map-grid: drops the font-based <pre> layout for a
-   single <canvas> centered in the flex column. Padding/justification match
-   the ASCII variant so swapping doesn't shift the surrounding HUD. */
+   single full-bleed <canvas>. Padding matches the ASCII variant so swapping
+   doesn't shift the surrounding HUD. */
 #map-grid.map-tile {
   font-family: var(--font-mono);
   position: relative;
-  align-items: center;
+}
+/* Anchor the full-bleed canvas to the content box's top-left corner in ALL
+   modes: its position must be exactly the --map-col/row-shift sub-cell
+   margins below, so no flex centering may redistribute the overflow. The
+   `#game-view` prefix keeps this ahead of the portrait/x-mode ASCII
+   anchoring rules (equal specificity would let the later x-mode `center`
+   win; those rules are scoped :not(.map-tile) for the same reason). */
+#game-view #map-grid.map-tile {
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 #map-grid.map-tile .map-tile-canvas {
   display: block;
+  /* The canvas deliberately overruns the content box (full-bleed, clipped at
+     the element edges). As a flex item it would otherwise flex-shrink to fit
+     the container, squishing the CSS scale. */
+  flex: none;
+  /* Sub-cell shifts set inline by TileMapView.fitToContainer: pull the
+     canvas up/left so the player cell's center sits exactly on the element's
+     horizontal center and the clear area's vertical center, with partial
+     cells clipping at the edges instead of leaving slack bands. ASCII never
+     sets these — a clipped half-glyph reads as a bug, so MapView fits whole
+     rows only. */
+  margin-top: var(--map-row-shift, 0px);
+  margin-left: var(--map-col-shift, 0px);
   /* image-rendering: pixelated downsamples cleanly when the rendered cell is
      smaller than the 32px atlas tile. Without it WebKit applies bilinear by
      default and 12-14 px cells become a blurry mush. */
@@ -762,17 +843,37 @@ html, body {
 
 /* Messages */
 #game-messages {
-  grid-area: msg;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  font-size: 0.75rem;
-  line-height: 1.3;
-  /* Reserve the full 5lh from the start so the map only sizes itself
-     once. Otherwise the log grows 0 → 5lh as the first messages arrive
-     and the map re-fits (and may drop a row) on each step. */
-  height: 5lh;
+  /* Floats translucently over the map's edge in BOTH orientations (bottom in
+     portrait, top in landscape — the per-orientation rules set the anchor) so
+     the map keeps its full height: the log never occupies an in-flow row that
+     would shrink it. Out of flow also means the log's content/width can't feed
+     back into the map's size, so the map fits once and never re-jumps. */
+  grid-area: map;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  background: var(--msglog-bg);
+  /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
+     darkgrey) legible over bright floor tiles without raising the scrim —
+     the scrim level is tuned for layer separation, not contrast (see
+     --msglog-bg). Inherits to all log content. */
+  text-shadow: 0 1px 2px #000, 0 0 3px #000;
+  font-size: var(--msglog-font);
+  line-height: var(--msglog-line);
+  /* A fixed 5-line floating box; newest message pinned to the anchored edge
+     via column-reverse below. */
+  height: var(--msglog-h);
   overflow-y: auto;
-  padding: 0 0.25rem;
+  /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
+     box-sizing:border-box the padding-bottom lifts the bottom-pinned column up
+     off the bottom edge, which pushes the row scrolled just out of view a few
+     px clear of the top edge. That gap absorbs WebKit's fractional column-reverse
+     scroll offset (which Chrome rounds away but Safari/iOS doesn't), so the
+     hidden row's descenders no longer bleed in at the top. It also makes the
+     content box no longer an exact 5×line-box multiple, removing the
+     boundary-aligned cut that made the artifact possible. */
+  padding: 0.2rem 0.2rem;
   cursor: pointer;
   /* Bottom-pinned chat-log pattern: column-reverse lays children from the
      visual bottom upward, which lets the browser keep scroll naturally at
@@ -785,7 +886,84 @@ html, body {
   flex-direction: column-reverse;
 }
 
-.game-msg { color: var(--text); line-height: 1.3; }
+/* Tile rendering: lighter scrim — see --msglog-bg. */
+#game-view.tiles-mode { --msglog-bg: color-mix(in srgb, var(--bg) 15%, transparent); }
+
+/* Per-line scrim ("pill") variant — toggle live via the dev hook
+   __dcssMsgPill() in game-view.ts. The strip scrim goes fully transparent and
+   each message line carries its own backing instead, so the map shows through
+   wherever there's no text (short lines, quiet turns). Lines shrink to their
+   text (align-self overrides the column-reverse stretch). Horizontal padding
+   only: vertical would break the 5-lines-in---msglog-h rhythm. */
+#game-view.msg-pill #game-messages { background: transparent; }
+#game-view.msg-pill .game-msg {
+  align-self: flex-start;
+  max-width: 100%;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  padding: 0;
+}
+
+/* Portrait: the log (base rule) floats over the map's BOTTOM edge; these rules
+   set its anchor and float the quick-cast rail. Both are out of flow, so the
+   map keeps its full height and — crucially — the rail's late arrival (a
+   round-trip after load, when the silent harvest populates it) only fades in
+   over the map; it never resizes the map, which would re-fit and jump. Casters
+   and non-casters share the float; the only caster delta is the rail itself
+   and the log/--more-- offsets that clear it. An abspos grid item's containing
+   block is its grid area, so bottom:0 = the map cell's bottom edge. */
+@media (orientation: portrait) {
+  #game-messages { bottom: 0; }
+  /* Rail present: float the log just above it. */
+  #game-view.spell-row #game-messages { bottom: var(--spell-rail-h); }
+
+  /* Quick-cast rail floats over the map's very bottom edge (casters only —
+     hidden via inline display otherwise). */
+  #spell-rail {
+    grid-area: map;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+  }
+
+  /* --more-- (z-index 4) sits above the floating log — and the rail, for
+     casters — so it never covers the newest message lines. (`#game-view` prefix
+     to outrank the base `#more-btn { bottom: 0 }`, which is later in source.) */
+  #game-view #more-btn { bottom: var(--msglog-h); }
+  #game-view.spell-row #more-btn { bottom: calc(var(--msglog-h) + var(--spell-rail-h)); }
+  /* X-mode hides the log (and drops the rail), so there's nothing to clear —
+     --more-- hugs the bottom edge. Equal specificity to the two rules above;
+     later in source wins. */
+  #game-view.x-mode #more-btn { bottom: 0; }
+
+  /* Reserve the log's strip as extra BOTTOM padding so the map centers the
+     player in the clear area above the floating log/rail, not in the geometric
+     middle of the full element (which would drop the player — and the tiles
+     around it — under the log). fitToContainer reads this asymmetry and still
+     fills rows on down behind the translucent log. Constant (log height only,
+     not + rail) so the rail's arrival doesn't re-center the map. `#game-view`
+     prefix outranks the base `#map-grid` padding regardless of source order. */
+  #game-view #map-grid { padding-bottom: calc(2px + var(--msglog-h)); }
+  /* Top-anchor the ASCII row stack: it deliberately overruns the content box
+     DOWNWARD (whole rows filling behind the log — availHFit in
+     MapView.fitToContainer), and the base justify-content:center would split
+     that overflow across BOTH edges, clipping the top rows at the 2px top
+     padding while backing only half the log strip. Anchored, the overflow
+     all hangs below and MapView.centerRow biases the player up to the
+     clear-area middle. (Tiles are anchored globally by the .map-tile rules —
+     they full-bleed both axes — so this only matters for the ASCII <pre>.) */
+  #game-view #map-grid { justify-content: flex-start; }
+  /* X-mode hides the log and zooms the examine map to fill everything — drop
+     the reserve so the map isn't pinned above an empty strip, and restore
+     ASCII centering to match (reserve 0 ⇒ no overrun). :not(.map-tile) keeps
+     the equal-specificity, later-in-source `center` from beating the tile
+     anchoring rule — the full-bleed canvas must stay top-left anchored. */
+  #game-view.x-mode #map-grid { padding-bottom: 2px; }
+  #game-view.x-mode #map-grid:not(.map-tile) { justify-content: center; }
+}
+
+.game-msg { color: var(--text); line-height: var(--msglog-line); }
 
 .msg-turn-mark {
   display: inline-block;
@@ -1055,12 +1233,20 @@ html, body {
 #game-hud {
   grid-area: hud;
   background: var(--bg);
-  border-top: 1px solid var(--border);
-  padding: 0.2rem 0.25rem;
+  padding: 0.2rem 0.2rem;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  /* Non-casters have no rail, so the floating log's bottom edge lands right at
+     the HUD boundary — text above text at near-identical size, and a yellow log
+     warning can scan as part of the yellow name line. Keep the hairline for
+     that boundary. */
+  border-top: 1px solid var(--border);
 }
+/* In spell-row mode the rail's icon band already separates log from HUD, so
+   casters get the fully borderless stack. (Landscape drops the border for
+   everyone — its sidebar HUD rule below wins over the base by source order.) */
+#game-view.spell-row #game-hud { border-top: none; }
 
 #hud-top {
   display: flex;
@@ -1078,17 +1264,19 @@ html, body {
 }
 
 #monster-list {
-  position: absolute;
-  top: 0.25rem;
-  left: 0.25rem;
+  /* Shared card styling. Placement is orientation-specific and lives in the
+     media blocks: portrait floats it over the map's top-left, landscape slots
+     it into the sidebar. position:relative is the in-flow default; portrait
+     promotes it to absolute so the float overlays the map without consuming
+     layout space. */
+  position: relative;
   z-index: 2;
   font-size: 0.82rem;
   font-family: var(--font-mono);
-  max-width: calc(100% - 0.5rem);
   /* No max-height / overflow: the JS caps content at MAX_ROWS rows, with
-     a small .ml-corner-more chip in the bottom-right corner when more
-     groups exist. The panel auto-sizes and never scrolls. Tapping opens
-     the full monster panel. */
+     an inline right-aligned "+N" suffix on the last row when more groups
+     exist. The panel auto-sizes and never scrolls. Tapping opens the full
+     monster panel. */
   background: rgba(0, 0, 0, 0.7);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
@@ -1101,6 +1289,22 @@ html, body {
 }
 
 #monster-list:empty { display: none; }
+
+/* Portrait: float over the map's top-left. An abspos grid item's containing
+   block is its grid area (same trick as #more-btn), so this overlays the map
+   cell without consuming layout space; max-width keeps a 0.25rem gutter each
+   side. Scoped to portrait — like the spell-row log float above — so the
+   landscape block can place the in-flow card without neutralizing each float
+   property individually. */
+@media (orientation: portrait) {
+  #monster-list {
+    grid-area: map;
+    position: absolute;
+    top: 0.25rem;
+    left: 0.25rem;
+    max-width: calc(100% - 0.5rem);
+  }
+}
 
 /* Red outline when any hostile is visible — ambient danger cue. Differs
    from the baseline grey outline by both hue AND thickness (1px → 2px),
@@ -1118,13 +1322,12 @@ html, body {
   position: relative;
   overflow-wrap: break-word;
 }
-/* Both the chevron (top-right) and the "+N" chip (bottom-right) straddle
-   their respective panel corners, so neither contributes to row layout —
-   no right-gutter reservation is needed in either case. */
+/* Contain both float directions: glyphs float left; the chevron and "+N"
+   suffix float right inside their rows. */
 .ml-row::after {
   content: "";
   display: block;
-  clear: left;
+  clear: both;
 }
 /* Threat bar lives in the panel's left padding so glyph alignment is identical
    between bordered and unbordered rows. left:-5px abuts the 1px panel border. */
@@ -1163,66 +1366,47 @@ html, body {
   margin-left: 0.3em;
 }
 
-/* Overflow indicator centered on the panel's bottom-right border corner —
-   same notch treatment as .ml-toggle. The bg patch masks the border running
-   directly underneath, and because the chip is absolute and translated out
-   of layout flow it doesn't widen the panel even when overflow is active.
-   pointer-events:none so taps fall through to the panel's open-full-panel
-   click handler. */
-.ml-corner-more {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  /* Less horizontal offset than the chevron's translate(50%, …): the chip's
-     multi-char width (~3ch) would extend ~12px past the border with a full
-     50% translate. 25% keeps the overhang to ~5-6px, matching the chevron. */
-  transform: translate(25%, 50%);
-  font-size: 0.7em;
-  font-style: italic;
-  line-height: 1;
-  color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.85);
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Collapse chevron centered on the panel's top-right border corner. The
-   translate(50%, -50%) plants the glyph's center on the corner point; the
-   bg patch masks the border running directly underneath so the corner reads
-   as having a tiny notch around the chevron. Spatial-motion icon: ▴ when
-   expanded (tap collapses up into the corner), ▾ when collapsed (tap expands
-   down). Matches the abc▴/abc▾ keyboard toggle. Because it's absolute and
-   positioned outside layout flow, it contributes zero width to the panel. */
+/* Collapse chevron, floated right inside the FIRST row (JS re-inserts it as
+   that row's first child each render — first-in-source right floats sit
+   rightmost, so on the collapsed single line it lands at the far right edge
+   with the "+N" suffix to its left). Spatial-motion icon: ▴ when expanded
+   (tap collapses upward), ▾ when collapsed (tap expands down). Matches the
+   abc▴/abc▾ keyboard toggle. Being a float, it only widens the panel when
+   its own row is the longest. */
 .ml-toggle {
-  position: absolute;
-  top: 0;
-  right: 0;
-  transform: translate(50%, -50%);
+  float: right;
+  position: relative; /* containing block for the ::before tap zone */
+  margin-left: 0.6em;
   font-size: 0.85em;
-  line-height: 1;
   color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.85);
   cursor: pointer;
   pointer-events: auto;
   user-select: none;
 }
-/* Hit-target expansion. The glyph now straddles the corner (half outside the
-   panel, half inside), so the zone extends ~10px in every direction giving a
-   ~30×28px tap area centered on the corner. Pointer events bubble to the
-   parent .ml-toggle so the click handler still fires. */
+/* Hit-target expansion: the bare glyph is ~10px, so grow the tap zone to
+   roughly 28px square. It overlaps adjacent row text; a tap in the halo
+   toggles collapse instead of opening the full panel, which is the right
+   bias for a control this small. Pointer events bubble to the parent
+   .ml-toggle so the click handler still fires. */
 .ml-toggle::before {
   content: "";
   position: absolute;
-  inset: -10px -10px -10px -10px;
+  inset: -8px;
 }
 
 /* The collapsed-mode row uses the same layout as an expanded top row —
    .ml-collapsed is kept on the element as a DOM marker but needs no
-   styling beyond what .ml-row already provides. The "+N more" suffix
-   appended after the name uses .ml-collapsed-more for muted, italic
-   secondary text with a clear left gap from the name. */
+   styling beyond what .ml-row already provides. The "+N" suffix (collapsed
+   line, or the last expanded row when groups overflow MAX_ROWS) is muted
+   italic secondary text floated to the row's right edge — right-aligned
+   under longer rows above, and emitted after the name so it lands on the
+   row's LAST line (bottom-right of the panel when the name wraps);
+   margin-left keeps a minimum gap from the name. */
 .ml-collapsed-more {
-  font-size: 0.85em;
+  float: right;
+  /* No font-size/line-height override: inheriting the row's keeps +N on the
+     name's baseline. A smaller font here would top-align off the baseline and
+     ride high — don't reintroduce one without baseline-aligning another way. */
   color: var(--text-dim);
   margin-left: 0.6em;
   font-style: italic;
@@ -1467,6 +1651,47 @@ html, body {
 }
 .hg-warn:empty { display: none; }
 
+/* Square HUD (the landscape template — StatsView.squareTemplate). Mirrors
+   the reference stats panel (game.html #stats): Health/Magic caption lines
+   with right-anchored bars, then a 45/55 two-column block pairing AC|Str,
+   EV|Int, SH|Dex, XL+Next|Place, Noise|Time. Doom and Contam ride the Str
+   and Int rows (reference #stats_doom_ui / #stats_contam_ui), so the danger
+   meters get a real slot instead of the compact row's clipped right end. */
+.hs-species {
+  font-size: 0.75rem;
+  line-height: 1.2;
+  display: flex;
+  align-items: baseline;
+}
+.hs-species #hud-species { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-sq-gold { margin-left: 0.5em; white-space: nowrap; flex-shrink: 0; }
+/* Caption + value at the reference's stat size; the bar anchors right at the
+   reference's 55% width so the Health and Magic bars start aligned. It may
+   shrink (never grow) when a drained "(real max)" lengthens the value. */
+.hud-sq-barline { font-size: 0.7rem; }
+.hud-sq-barline .hg-bar-cell {
+  flex: 1 1 55%;
+  max-width: 55%;
+  margin-left: auto;
+}
+.hud-grid {
+  display: grid;
+  /* The reference splits 45%/55%, but its panel is wider — at 15rem that
+     wastes width the right column needs ("Str: 5(10) Doom: 40%"). Size the
+     left column to its widest cell (XL+Next or Noise+bar) instead; minmax(0)
+     keeps a long right cell overflow-painting rather than pushing the grid
+     wide. */
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+.hud-grid > span { white-space: nowrap; }
+/* Doom/Contam offset from the Str/Int values (reference uses fixed margins;
+   ours is smaller — the worst case "Str: 5(10) Doom: 40%" runs within a few
+   px of the sidebar edge) */
+.hud-sq-warn { margin-left: 0.5em; }
+
 /* Status row is locked to a single fixed-height line. flex-wrap:nowrap +
    overflow:hidden prevents 10+ active lights from wrapping to a second
    row, which would shrink the map (grid `1fr`) and risk a row drop. */
@@ -1516,7 +1741,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
+  font-size: var(--fs-overlay);
   flex-shrink: 0;
 }
 
@@ -1551,6 +1776,13 @@ html, body {
 
 .overlay-item .tile-stack {
   margin-right: -0.2rem;
+  /* Centre the 32px tile on the FIRST text line (not the whole row): the row
+     is align-items:flex-start, so pull the tile up by half its overhang vs one
+     line-height. Matches the reference client's vertical-align:middle tile on
+     its (non-wrapping) rows, but stays correct when our rows wrap to 2+ lines —
+     the icon sits next to the title/first line instead of floating at the
+     vertical middle of the block. */
+  margin-top: calc((1lh - 32px) / 2);
 }
 .overlay-close:active { color: var(--text); }
 
@@ -1566,13 +1798,13 @@ html, body {
 
 .overlay-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.6rem;
   background: transparent;
   border: none;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 1.00rem;
+  font-size: var(--fs-overlay);
   padding: 0.35rem 0.25rem;
   text-align: left;
   cursor: pointer;
@@ -1588,26 +1820,27 @@ html, body {
   background: var(--surface);
 }
 
-.overlay-key {
-  color: var(--accent);
-  min-width: 1.4rem;
-  text-align: center;
-  flex-shrink: 0;
-}
+/* Rows render item.text verbatim (hotkey + selection marker are inline in
+   the text), so the label span carries the whole row and wraps at width.
+   Note we don't follow the reference convention of right-aligned item prices
+   within a 4-char column, followed by literal spaces before item names. To
+   match that, append `white-space: pre-wrap;`. Tested and rejected. */
+.overlay-label { color: var(--text); min-width: 0; }
 
-.overlay-label { color: var(--text); }
-
-.overlay-sep { color: var(--text-dim); flex-shrink: 0; }
-.overlay-sep[data-sep="$"] { color: #34e2e2; font-weight: bold; }
-.overlay-sep[data-sep="+"] { color: #fce94f; font-weight: bold; }
+/* Rows carrying a fixed-width "<key> - " prefix (4 monospace cells) get a 4ch
+   hanging indent so wrapped continuation lines sit under the item title:
+   pull the first line back 4ch, pad the rest in by 4ch. Gated by .item-hang
+   (set in fillMenuItems) — prefixless rows like the unrecognised-items list
+   start at column 0 and must wrap flush, not indent. */
+.overlay-item.item-hang .overlay-label { padding-left: 4ch; text-indent: -4ch; }
 
 .overlay-header {
-  font-size: 0.8rem;
+  font-size: var(--fs-overlay-chrome);
   padding: 0.5rem 0.25rem 0.15rem;
 }
 
 .overlay-body {
-  font-size: 0.9rem;
+  font-size: var(--fs-overlay);
   line-height: 1.5;
   overflow-x: auto;
   overflow-y: auto;
@@ -1619,6 +1852,16 @@ html, body {
 
 .overlay-line { min-height: 1lh; white-space: pre-wrap; }
 .overlay-line--nowrap { white-space: pre; }
+/* Unwrapped `Label: description` blocks (unwrapHangingIndents). Wrapped
+   text hangs at the row's own description column (--hang-col, derived from
+   the wire's label + padding; monospace so ch units line up exactly), giving
+   the server's two-column look with in-column wrapping. Run-in labels
+   (single-space, e.g. `'Of mesmerism': `) and over-wide columns fall back
+   to the compact 2ch default. */
+.overlay-line--hang {
+  padding-left: var(--hang-col, 2ch);
+  text-indent: calc(-1 * var(--hang-col, 2ch));
+}
 
 /* Server `show_dialog` modal (save-transfer prompt on trunk resume,
    end-of-game prompts). The server HTML carries class="button" and inline
@@ -1720,12 +1963,57 @@ html, body {
 }
 .overlay-spell-effect, .overlay-spell-range { flex: 0 0 auto; }
 
+/* Spell rail: persistent quick-cast button row pinned to the map's bottom edge
+   (portrait floats it there; landscape places it in the sidebar `spells` row). */
+#spell-rail {
+  /* grid-area is overridden per orientation (portrait floats it over the map,
+     landscape uses the sidebar row); this default just keeps it in the map
+     area. Fixed at one button-row tall: overflow spells wrap onto a clipped
+     second line, so the row shows the first N that fit and the z tab carries
+     the full list. */
+  grid-area: map;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--bg);
+  /* No border-top: the translucent log overlay sits directly above, and a
+     hard line under it reads as stray chrome — the opaque icon band is its
+     own separator (and the HUD's hairline is non-caster-only, so the whole
+     caster stack below the map is borderless). */
+  height: var(--spell-rail-h);
+  overflow: hidden;
+}
+.spell-rail-btn {
+  position: relative;
+  display: block;
+  padding: 2px;
+  line-height: 0;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.spell-rail-btn:active { background: var(--surface); }
+/* Corner cast-keystroke letter ("za"), shared by the rail and the z-tab grid
+   (both built by makeSpellButton) so it looks/sits the same in both. */
+.spell-letter {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  font-size: 0.62rem;
+  line-height: 1;
+  color: var(--text);
+  text-shadow: 0 0 2px #000, 0 0 3px #000;
+  pointer-events: none;
+}
+
 /* Terminal-mode: engaged when server sends scroll positions */
 .overlay-body--term .overlay-line { white-space: nowrap; }
 
 .overlay-footer {
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: var(--fs-overlay-chrome);
   padding-top: 0.4rem;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
@@ -1877,6 +2165,8 @@ html, body {
   order: -1;
   padding-bottom: 0.2rem;
 }
+/* No selectable skills (distributed training) → no letter buttons. */
+.skill-letter-row:empty { display: none; }
 .skill-letter-btn {
   flex: 0 0 auto;
   min-width: 2.2rem;
@@ -1906,14 +2196,33 @@ html, body {
 
 /* ── Unified touch controls ─────────────────────────────────── */
 #touch-controls {
+  --tc-dpad: 3.6rem;  /* d-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) */
+  /* Resting palette one step darker than the app-wide tokens: at night the
+     map is sparse dim glyphs on near-black, so --text/--surface2 buttons
+     outshine the play area. Presses brighten (--tc-press + accent label) —
+     the inverse of the app-wide darken-on-press — so tap feedback stays
+     crisp against the dim resting state. */
+  --tc-fill: var(--surface);
+  --tc-press: var(--surface2);
+  --tc-label: var(--text-dim);
+  --tc-label-dim: #78716c;  /* one stone step below --text-dim, for the wait btn */
+  --tc-border: rgba(245, 158, 11, 0.07);
   grid-area: touch;
   display: flex;
   flex-direction: row;
   gap: 0.35rem;
-  padding: 0.2rem 0.35rem;
+  padding: 0.1rem 0.35rem;
   background: var(--bg);
-  border-top: 1px solid var(--border);
+  /* Transparent (not removed): X-mode colors this border as its active-mode
+     indicator (.x-mode rule below), and keeping the 1px avoids a layout
+     shift when entering/leaving X-mode. */
+  border-top: 1px solid transparent;
   align-items: stretch;
+  /* Cap the strip to the d-pad's height (3 cells + 2 gaps + own padding) so a
+     tall z spell grid scrolls inside the panel instead of growing the whole
+     strip and eating the map. The flex chain below needs min-height:0 to let
+     the grid shrink and scroll rather than forcing the panel taller. */
+  max-height: calc(var(--tc-dpad) * 3 + 4px + 0.4rem);
 }
 
 #touch-controls.x-mode { border-top-color: var(--accent); }
@@ -1936,20 +2245,20 @@ html, body {
 /* D-pad: 3×3 CSS grid of large buttons */
 .tc-dpad {
   display: grid;
-  grid-template-columns: repeat(3, 3.6rem);
-  grid-template-rows: repeat(3, 3.6rem);
+  grid-template-columns: repeat(3, var(--tc-dpad));
+  grid-template-rows: repeat(3, var(--tc-dpad));
   gap: 2px;
   flex-shrink: 0;
 }
 
 .tc-dpad-btn {
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
   border-radius: 4px;
-  color: var(--text);
+  color: var(--tc-label);
   font-size: 1.4rem;
-  width: 3.6rem;
-  height: 3.6rem;
+  width: var(--tc-dpad);
+  height: var(--tc-dpad);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1959,8 +2268,8 @@ html, body {
   touch-action: manipulation;
 }
 
-.tc-dpad-btn:active { background: var(--surface); color: var(--accent); }
-.tc-dpad-btn.wait { color: var(--text-dim); }
+.tc-dpad-btn:active { background: var(--tc-press); color: var(--accent); }
+.tc-dpad-btn.wait { color: var(--tc-label-dim); }
 
 /* Right panel */
 .tc-panel {
@@ -1969,6 +2278,7 @@ html, body {
   flex: 1;
   gap: 2px;
   min-width: 0;
+  min-height: 0;
 }
 
 /* Header: Esc | tabs | Enter */
@@ -1981,10 +2291,10 @@ html, body {
 
 .tc-esc,
 .tc-enter {
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
   border-radius: 3px;
-  color: var(--text);
+  color: var(--tc-label);
   font-size: 0.8rem;
   height: 1.4rem;
   min-width: 2.6rem;
@@ -1999,7 +2309,7 @@ html, body {
 }
 
 .tc-esc:active,
-.tc-enter:active { background: var(--surface); color: var(--accent); }
+.tc-enter:active { background: var(--tc-press); color: var(--accent); }
 
 /* Tab strip */
 .tc-tabs {
@@ -2011,10 +2321,10 @@ html, body {
 
 .tc-tab {
   flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
   border-radius: 3px;
-  color: var(--text-dim);
+  color: var(--tc-label);
   font-size: 0.72rem;
   height: 1.4rem;
   cursor: pointer;
@@ -2033,7 +2343,7 @@ html, body {
   background: rgba(245, 158, 11, 0.18);
 }
 
-.tc-tab:active { background: var(--surface); }
+.tc-tab:active { background: var(--tc-press); }
 
 /* Content area: tab-specific buttons */
 .tc-content {
@@ -2041,6 +2351,7 @@ html, body {
   flex-direction: column;
   gap: 2px;
   flex: 1;
+  min-height: 0;
 }
 
 .tc-row {
@@ -2051,10 +2362,10 @@ html, body {
 
 .tc-btn {
   flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
   border-radius: 3px;
-  color: var(--text);
+  color: var(--tc-label);
   font-family: var(--font-mono);
   font-size: 0.95rem;
   min-height: 2rem;
@@ -2067,14 +2378,52 @@ html, body {
   touch-action: manipulation;
 }
 
-.tc-btn:active { background: var(--surface); color: var(--accent); }
+.tc-btn:active { background: var(--tc-press); color: var(--accent); }
 
 .tc-btn-spacer { background: transparent; border-color: transparent; pointer-events: none; }
 
+/* Symbol macro buttons (⇥ auto-fight, ⎋, ⏎, …): a fixed size matched to the
+   d-pad arrows so the panel's large glyphs read consistently. Was a vw clamp,
+   which pinned to its ceiling in landscape and dwarfed the adjacent text. */
 .tc-btn.glyph {
-  font-size: clamp(1.3rem, 5vw, 1.9rem);
+  font-size: 1.4rem;
   line-height: 1;
 }
+
+/* z tab: quick-cast spell grid hosted in the panel's content area. 4 columns,
+   scrolls when spells overflow — so it scales to any spell count without
+   covering the map. Buttons get the rail's treatment: just the tile with a
+   corner letter, no button box (justify-items:center keeps each content-sized
+   icon centered in its column). A border frames the whole area so the boxless
+   icons read as one grouped region. */
+.tc-spell-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: min-content;
+  justify-items: center;
+  gap: 4px 2px;
+  align-content: start;
+  padding: 4px;
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
+  border-radius: 3px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tc-spell-btn {
+  position: relative;
+  display: block;
+  padding: 2px;
+  line-height: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+/* --tc-press (not --tc-fill) so the tap still contrasts against the tray fill. */
+.tc-spell-btn:active { background: var(--tc-press); }
 
 /* Footer: Shift, Ctrl, Keyboard */
 .tc-footer {
@@ -2087,10 +2436,10 @@ html, body {
 .tc-ctrl,
 .tc-kbd {
   flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
   border-radius: 3px;
-  color: var(--text);
+  color: var(--tc-label);
   font-size: 0.65rem;
   height: 1.4rem;
   cursor: pointer;
@@ -2118,7 +2467,7 @@ html, body {
 
 .tc-shift:active,
 .tc-ctrl:active,
-.tc-kbd:active { background: var(--surface); color: var(--accent); }
+.tc-kbd:active { background: var(--tc-press); color: var(--accent); }
 
 /* Virtual QWERTY keyboard overlay */
 #kbd-overlay {
@@ -2133,6 +2482,11 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
+  /* Single base for all key text. Letters use 1em, glyph keys a fixed em
+     bump and corner marks a fixed em fraction — so every label scales from
+     this one value and stays in proportion across orientations (no vw). */
+  --kbd-font: 1.1rem;
+  font-size: var(--kbd-font);
   --kbd-key-w: calc((100% - 9 * var(--kbd-gap)) / 10);
   --kbd-key-h: clamp(2.6rem, 11vw, 4.2rem);
   --kbd-gap: 0.3rem;
@@ -2161,7 +2515,7 @@ html, body {
   border-radius: 3px;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 1.1rem;
+  font-size: 1em;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2183,7 +2537,6 @@ html, body {
   width: auto;
   min-width: var(--kbd-key-w);
   padding: 0 0.45rem;
-  font-size: 0.9rem;
 }
 
 .kbd-key.wide.flex {
@@ -2191,9 +2544,11 @@ html, body {
   min-width: 0;
 }
 
-/* Glyph keys (⎋ ⌃ ⇥ ⏎ ⌫ ⇧) — bump size so the Unicode symbols visually fill the key */
+/* Glyph keys (⎋ ⌃ ⇥ ⏎ ⌫ ⇧) — a fixed em bump over the key text so the thinner
+   Unicode symbols read at a comparable weight to the letters, without coupling
+   to viewport width (which blew them up to the clamp ceiling in landscape). */
 .kbd-key.glyph {
-  font-size: clamp(1.5rem, 5.5vw, 2.2rem);
+  font-size: 1.3em;
   line-height: 1;
 }
 
@@ -2218,7 +2573,7 @@ html, body {
   position: absolute;
   top: 2px;
   right: 4px;
-  font-size: 0.6rem;
+  font-size: 0.55em;
   line-height: 1;
   color: var(--text-dim);
   pointer-events: none;
@@ -2230,16 +2585,9 @@ html, body {
 #kbd-overlay.shift-on .kbd-key.letter { text-transform: uppercase; }
 #kbd-overlay.ctrl-on .kbd-key.letter::before { content: "^"; }
 
-/* Dim text on persistent touch chrome so the amber accent and map glyphs
-   carry the visual hierarchy. :active and modifier states override via
-   higher specificity (:active / .active / .locked all add a class). */
-.tc-dpad-btn,
-.tc-esc,
-.tc-enter,
-.tc-btn,
-.tc-shift,
-.tc-ctrl,
-.tc-kbd,
+/* Half-dim the QWERTY overlay keys. The persistent touch strip dims further
+   (--tc-label, set in the #touch-controls block) — the keyboard is transient
+   and summoned deliberately, so it can afford to stay more readable. */
 .kbd-key { color: #c9c4be; }
 
 /* CRT terminal color classes (fg0–fg15, bg0–bg15) */
@@ -2254,60 +2602,105 @@ html, body {
 .bg12{background-color:#ef2929}.bg13{background-color:#fd59fa}.bg14{background-color:#fce94f}
 .bg15{background-color:#eeeeec}
 
-/* CRT full-screen display */
+/* CRT full-screen display (skills menu `m`, plus the unreachable-in-mobile
+   startup/arena popups). Shares --fs-overlay with .overlay-body so the skills
+   screen reads like every other overlay rather than at map-glyph size. */
 #crt-display {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: var(--map-font-size);
+  font-size: var(--fs-overlay);
   line-height: var(--crt-line-height);
   overflow-x: auto;
   white-space: pre;
 }
 
+/* Skills menu (`m`) is reflowed to a single column (skill-reflow.ts), so the
+   grid fits without horizontal panning; pre-wrap lets the full-width help text
+   below the grid wrap instead of overflowing. */
+#crt-display.crt-skills {
+  white-space: pre-wrap;
+  overflow-x: hidden;
+}
+
 .crt-line { min-height: 1em; }
+/* DCSS assumes a black terminal, so it tags ordinary CRT text with bg0
+   (#000000) as the "no background" colour. On our warm near-black overlay
+   that paints a visible black rectangle behind each text run; make bg0
+   transparent here so the panel background shows through uniformly. Coloured
+   backgrounds (bg1–bg15, e.g. selection highlights) are intentional, so leave
+   them. */
+#crt-display .bg0 { background-color: transparent; }
 .crt-highlight { background: rgba(255,255,100,0.15); display: block; }
 
 /* ── Landscape layout ────────────────────────────────────────
-   3 columns. Left: msg log on top, d-pad on bottom.
-   Center: map (with floating monster list).
-   Right: HUD on top, touch panel (Esc/tabs/buttons/footer) on bottom.
+   2 columns: the map takes everything left of a 16rem sidebar.
+   (The map binds on viewport height, so sidebar width only trims
+   the map's outermost expansion columns, never its cell size.)
+   The sidebar groups info at the top (HUD, then monster list) and
+   controls at the bottom (quick-cast rail, then touch panel), with
+   a flexible spacer row holding the slack between them — so the
+   monster list sits directly under the HUD rather than drifting to
+   the controls on a tall sidebar (e.g. iPad). The message log
+   floats over the map's top edge on a translucent scrim (the
+   portrait spell-row trick, anchored top instead of bottom), and
+   the d-pad floats over the bottom-left corner.
    ──────────────────────────────────────────────────────────── */
 @media (orientation: landscape) {
   #app { padding-bottom: 0; }
 
   #game-view {
-    grid-template-columns: calc(12rem + 4px) minmax(0, 1fr) 15rem;
-    grid-template-rows: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) 16rem;
+    /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
+       HUD+monster list to the top and spell rail+panel to the bottom. The HUD
+       row is minmax(0, auto): content-sized when there's room, but able to
+       shrink so it scrolls (overflow-y:auto below) when a short landscape
+       viewport can't fit everything — keeping the bottom controls visible. */
+    grid-template-rows: minmax(0, auto) auto 1fr auto auto;
     grid-template-areas:
-      "msg  map  hud"
-      "dpad map  panel";
+      "map hud"
+      "map mons"
+      "map ."
+      "map spells"
+      "map panel";
     column-gap: 0;
   }
 
   /* Inventory / menus / ui-push overlays render only over the map area
-     (not over the side columns), and stack above the floating monster
-     list via z-index. */
+     (not over the sidebar), and stack above the floating log, d-pad and
+     monster list via z-index. */
   #ui-overlay {
     grid-area: map;
     position: relative;
     z-index: 5;
   }
 
-  #game-messages {
-    grid-area: msg;
-    height: auto;
-    border-top: none;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+  /* The log floats over the map's TOP edge in landscape. Everything else —
+     grid-area, abspos, translucent scrim, z-index, height, column-reverse —
+     comes from the base #game-messages rule; only the anchor differs (the
+     portrait block sets bottom instead). */
+  #game-messages { top: 0; }
+
+  /* Monster list: in-flow sidebar card in the `mons` row, directly beneath the
+     HUD and aligned to its horizontal padding. On a tablet-height sidebar this
+     is the normal multi-row list (expanding up to MAX_ROWS, the 1fr spacer
+     below absorbing the slack). A phone in landscape can't afford those rows —
+     HUD + spells + touch panel already claim nearly the whole height — so
+     game-view's `(max-height: 600px)` matchMedia flips MonsterListView into
+     compact mode there, collapsing this to a single-line chip (top-threat
+     glyph(s) + name + "+N", red .has-hostile outline, tap-through to the full
+     panel). Either way it stays in flow (position:relative is the base default;
+     portrait promotes it to absolute to float over the map). */
+  #monster-list {
+    grid-area: mons;
+    margin: 0.3rem 0.4rem 0;
+    max-width: calc(16rem - 0.8rem);
   }
 
-  /* --more-- prompt: anchor to the bottom of the msg column with a
-     stacking context so it sits on top of #game-messages content. */
+  /* --more-- re-anchors directly below the floating log (the base rule
+     already provides grid-area:map, absolute, left/right, z-index 4). */
   #more-btn {
-    grid-area: msg;
-    align-self: end;
-    position: relative;
-    z-index: 4;
+    top: var(--msglog-h);
+    bottom: auto;
   }
 
   #map-wrap { grid-area: map; }
@@ -2315,8 +2708,6 @@ html, body {
   #game-hud {
     grid-area: hud;
     border-top: none;
-    border-left: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
     overflow-y: auto;
     padding: 0.3rem 0.4rem;
   }
@@ -2331,32 +2722,69 @@ html, body {
     display: contents;
   }
 
+  /* D-pad floats over the map's bottom-left corner (the same float trick
+     as the message log above), with translucent buttons so the map reads
+     through. */
   .tc-dpad {
-    grid-area: dpad;
-    justify-self: start;
+    grid-area: map;
     align-self: end;
-    margin: 0.35rem 0 0 0;
+    justify-self: start;
+    position: relative;
+    z-index: 3;
+    /* Bottom margin matches the sidebar panel's home-indicator lift (see
+       the .tc-panel comment below) so ↓/↘ taps don't ride the home swipe. */
+    margin: 0.3rem 0.3rem 1.25rem;
+  }
+  .tc-dpad-btn {
+    background: color-mix(in srgb, var(--surface2) 20%, transparent);
+    color: color-mix(in srgb, var(--text) 55%, transparent);
+    /* The 20%-opaque fill leaves the border as the button's visible edge
+       over the map, so the app-wide border is needed here — the dimmer
+       --tc-border is tuned for the solid portrait strip and all but
+       disappears on a floating translucent button. */
+    border-color: var(--border);
+  }
+  /* The center "·" (.wait) has its own dimmer color at higher specificity than
+     .tc-dpad-btn, so fade it explicitly too. :active stays fully opaque (the
+     base var(--accent) rule wins) for press feedback. */
+  .tc-dpad-btn.wait {
+    color: color-mix(in srgb, var(--text-dim) 55%, transparent);
   }
 
+  /* The 1.25rem bottom margins here (panel, menu controls, spectator bar,
+     d-pad) lift the bottom-row buttons clear of the iOS home-indicator
+     gesture zone (~20px), where taps get swallowed by the swipe-up-home
+     gesture. Portrait gets this from #app's --app-bottom-pad, which this
+     block zeroes to keep the map full height — padding #app here instead
+     would shrink the height-bound map cells. (No viewport-fit=cover, so
+     env(safe-area-inset-bottom) is 0 and the gap must be a fixed value.) */
   .tc-panel {
     grid-area: panel;
-    border-top: 1px solid var(--border);
     padding: 0;
-    margin: 0.35rem 0 0 0;
+    margin: 0.35rem 0 1.25rem 0;
   }
+  /* Footer keys are 1.4rem in portrait, where dead padding sits below
+     them; flush against a screen edge they need real height to hit. */
+  .tc-shift,
+  .tc-ctrl,
+  .tc-kbd { height: 1.8rem; }
 
   /* Menu-specific touch buttons replace the regular touch panel
      while a CRT/menu is active. */
-  #menu-controls { grid-area: panel; }
+  #menu-controls {
+    grid-area: panel;
+    margin-bottom: 1.25rem;
+  }
 
-  /* Spectator mode: bar sits under the message log (bottom-left, where the
-     d-pad would be). The chip is hidden — the column is too narrow to fit
-     it without clipping, and the watched player's name already shows in
-     the HUD stats line. No border-right: matches the d-pad area when
-     playing — column borders end at the row boundary. */
+  /* Spectator mode appends no touch/menu controls, so the panel slot is
+     free — the bar takes it (bottom of the sidebar; its base grid-area
+     `touch` is unmapped here and would create implicit tracks). The chip
+     is hidden — the sidebar is too narrow to fit it without clipping, and
+     the watched player's name already shows in the HUD stats line. */
   #spectator-bar {
-    grid-area: dpad;
+    grid-area: panel;
     border-top: 0;
+    margin-bottom: 1.25rem;
   }
   #spectator-bar .lobby-account-chip { display: none; }
 
@@ -2364,10 +2792,35 @@ html, body {
      elements to maximize overlay space (a portrait-mode assumption).
      In landscape the overlay is confined to the map cell, so these
      panels stay visible alongside it. !important is needed to win
-     against the inline style. */
-  #game-messages { display: block !important; }
+     against the inline style. The log forces flex (not block) so the
+     base column-reverse bottom-pin survives — block would render the
+     newest message at the top. #spell-rail is deliberately absent:
+     renderSpellRail hides it via inline display (X-mode / spectating /
+     no spells) and that must keep winning. */
+  #game-messages { display: flex  !important; }
   #game-hud      { display: flex  !important; }
   #touch-controls { display: contents !important; }
+
+  /* Spell rail: in-flow sidebar row directly above the touch panel. Base
+     styling applies — including the fixed one-row height, so the rail
+     shows the first seven 36px buttons that fit the 16rem column (zero
+     horizontal padding) and the wrapped line beyond is clipped (same
+     clip behavior as portrait). */
+  #spell-rail {
+    grid-area: spells;
+    padding: 0.25rem 0.0rem;
+  }
+
+  /* QWERTY overlay: the base key height scales with viewport WIDTH
+     (11vw, clamped) — sensible in portrait where width is the narrow
+     dimension, but in landscape it pins every key at the clamp ceiling
+     and the keyboard swallows ~80% of a phone screen. Scale against
+     height here instead, keeping the whole keyboard to roughly 40-45%
+     of the viewport. */
+  #kbd-overlay {
+    --kbd-key-h: clamp(1.8rem, 9vh, 2.8rem);
+    --kbd-row-gap: clamp(0.25rem, 1.2vh, 0.5rem);
+  }
 }
 
 /* Landscape on short viewports: compact the login card so it fits

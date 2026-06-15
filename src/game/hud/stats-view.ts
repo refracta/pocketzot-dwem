@@ -28,16 +28,44 @@ export class StatsView {
   private oldNoise: number | undefined
   private oldHp: number | undefined
   private oldMp: number | undefined
+  private layout: 'compact' | 'square'
+  private mql: MediaQueryList | null
 
   constructor(inv: InventoryStore) {
     this.inv = inv
     this.el = document.createElement('div')
     this.el.id = 'hud-stats'
+    // Portrait gets the compact HUD (single nowrap rows); landscape gets the
+    // square two-column HUD, which fits the 15rem sidebar without clipping.
+    // Same query string as the style.css landscape block so JS and CSS can
+    // never disagree about which mode is active.
+    this.mql = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(orientation: landscape)')
+      : null
+    this.layout = this.mql?.matches ? 'square' : 'compact'
     this.el.innerHTML = this.template()
+    this.mql?.addEventListener('change', this.onOrientationChange)
   }
 
   get element(): HTMLElement {
     return this.el
+  }
+
+  // Swap templates on rotate and repaint from the accumulated state — render()
+  // re-queries its slots every pass and both templates expose the same slot
+  // ids, so the render methods are layout-agnostic. buildGameView creates a
+  // fresh StatsView per game session with no dispose hook; the listener
+  // detects its element has left the document and unhooks itself.
+  private onOrientationChange = (): void => {
+    if (!this.el.isConnected) {
+      this.mql?.removeEventListener('change', this.onOrientationChange)
+      return
+    }
+    const layout = this.mql?.matches ? 'square' : 'compact'
+    if (layout === this.layout) return
+    this.layout = layout
+    this.el.innerHTML = this.template()
+    this.render()
   }
 
   update(p: Partial<PlayerMsg>): void {
@@ -66,8 +94,17 @@ export class StatsView {
     const godStr = god && god !== 'No God' ? ` of ${god}` : ''
     const nameTitle = name && title ? `${name} ${title}` : name || title
     const speciesGod = species + godStr
-    const idLine = nameTitle && speciesGod ? `${nameTitle} — ${speciesGod}` : nameTitle || speciesGod
-    this.setText('hud-id', idLine)
+    const idEl = this.el.querySelector<HTMLElement>('#hud-id')
+    if (idEl) {
+      // compact: one combined line
+      const idLine = nameTitle && speciesGod ? `${nameTitle} — ${speciesGod}` : nameTitle || speciesGod
+      idEl.textContent = idLine
+    } else {
+      // square: separate title and species lines, as in the reference
+      // (#stats_titleline / #stats_species_god in game.html)
+      this.setText('hud-title', nameTitle)
+      this.setText('hud-species', speciesGod)
+    }
 
     const pietyEl = this.el.querySelector<HTMLElement>('#hud-piety')
     if (pietyEl) {
@@ -78,10 +115,22 @@ export class StatsView {
     }
 
     const realHpMax = s.real_hp_max
-    const hpText = realHpMax != null && realHpMax !== hpMax
+    const hpDrained = realHpMax != null && realHpMax !== hpMax
+    const hpText = hpDrained
       ? `${hp}/${hpMax} (${realHpMax})`
       : `${hp}/${hpMax}`
     this.setText('hud-hp', hpText)
+
+    // Djinni (whose HP is their casting pool) hide the Magic line entirely,
+    // mirroring player.js hiding #stats_mpline. Both templates tag their MP
+    // row #hud-mp-line, so this applies in portrait and landscape alike.
+    const mpLine = this.el.querySelector<HTMLElement>('#hud-mp-line')
+    if (mpLine) mpLine.style.display = species === 'Djinni' ? 'none' : ''
+    // Square-only: the HP caption reads "Health:" until a drained "(real max)"
+    // needs the room, then shortens to "HP:". Compact has no caption element,
+    // so this no-ops there.
+    const hpCap = this.el.querySelector<HTMLElement>('#hud-hp-caption')
+    if (hpCap) hpCap.textContent = hpDrained ? 'HP:' : 'Health:'
 
     // dd_real_mp_max is sent as 0 for non-Deep-Dwarves; only show parens for DD with reduced max.
     const ddRealMpMax = s.dd_real_mp_max ?? 0
@@ -113,23 +162,41 @@ export class StatsView {
     const place = s.place ?? ''
     const depth = s.depth
     const placeStr = depth ? `${place}:${depth}` : place
+    const goldAura = (s.status ?? []).some(st => st.text === 'gold aura')
     const xlEl = this.el.querySelector<HTMLElement>('#hud-xl-place')
     if (xlEl) {
+      // compact: XL/progress/place/gold composed onto one line
       let html = `<span class="hg-caption">XL</span><span>${escHtml(String(xl))}</span>`
       if (s.progress != null) html += ` ${escHtml(String(s.progress))}%`
       if (placeStr) html += ` <span class="hg-caption">@</span><span>${escHtml(placeStr)}</span>`
       if (god === 'Gozag' && s.gold != null) {
-        const aura = (s.status ?? []).some(st => st.text === 'gold aura')
-        const valClass = aura ? ' class="stat-boosted"' : ''
+        const valClass = goldAura ? ' class="stat-boosted"' : ''
         html += ` <span class="hg-caption">$</span><span${valClass}>${escHtml(String(s.gold))}</span>`
       }
       xlEl.innerHTML = html
+    } else {
+      // square: XL+Next pair with Place across the grid row (reference rows)
+      this.setText('hud-xl', String(xl))
+      this.setText('hud-prog', `${s.progress ?? 0}%`)
+      this.setText('hud-place', placeStr)
+    }
+
+    // Square: Gozag gold rides the species line (reference
+    // #stats_gozag_gold_label sits after piety there).
+    const goldUi = this.el.querySelector<HTMLElement>('#hud-gold-ui')
+    if (goldUi) {
+      const showGold = god === 'Gozag' && s.gold != null
+      goldUi.style.display = showGold ? '' : 'none'
+      const goldEl = this.el.querySelector<HTMLElement>('#hud-gold')
+      if (goldEl) {
+        goldEl.textContent = showGold ? String(s.gold) : ''
+        goldEl.classList.toggle('stat-boosted', goldAura)
+      }
     }
 
     const time = s.time ?? 0
     const timeStr = (time / 10).toFixed(1) + (this.timeDelta > 0 ? ` (${(this.timeDelta / 10).toFixed(1)})` : '')
-    const timeEl = this.el.querySelector<HTMLElement>('#hud-time')
-    if (timeEl) timeEl.innerHTML = `<span class="hg-caption">T</span><span>${escHtml(timeStr)}</span>`
+    this.setText('hud-time-val', timeStr)
 
     this.renderBar('hp', hp, hpMax, s.poison_survival)
     this.renderBar('mp', mp, mpMax, undefined)
@@ -299,26 +366,44 @@ export class StatsView {
 
   // Contamination and Doom, mirroring update_contam/update_doom in player.js.
   // Both are shown only when nonzero (reference hides them at 0 unless
-  // always_show_doom_contam is set) and coloured by severity. They occupy the
-  // right end of the stats row (hidden when empty via .hg-warn:empty), where
-  // they get the prominent slot since they're active danger meters; Noise moves
-  // down to share the XL row with Time.
+  // always_show_doom_contam is set) and coloured by severity.
+  // Compact: joined at the right end of the stats row (hidden when empty via
+  // .hg-warn:empty) — the prominent slot, since they're active danger meters.
+  // Square: Doom rides the Str row and Contam the Int row, matching the
+  // reference's #stats_doom_ui / #stats_contam_ui placement in game.html.
   private renderWarnings(): void {
-    const parts: string[] = []
     const contam = this.state.contam ?? 0
-    if (contam > 0) {
-      const c = contam >= 200 ? 'fg4' : contam >= 100 ? 'fg14' : 'fg8'
-      parts.push(`<span class="hg-grp"><span class="hg-caption">Contam</span><span class="${c}">${contam}%</span></span>`)
-    }
     const doom = this.state.doom ?? 0
-    if (doom > 0) {
-      const c = doom >= 75 ? 'fg5' : doom >= 50 ? 'fg12' : doom >= 25 ? 'fg14' : 'fg7'
-      parts.push(`<span class="hg-grp"><span class="hg-caption">Doom</span><span class="${c}">${doom}%</span></span>`)
+    const contamCls = contam >= 200 ? 'fg4' : contam >= 100 ? 'fg14' : 'fg8'
+    const doomCls = doom >= 75 ? 'fg5' : doom >= 50 ? 'fg12' : doom >= 25 ? 'fg14' : 'fg7'
+
+    const joined = this.el.querySelector<HTMLElement>('#hud-warn')
+    if (joined) {
+      const parts: string[] = []
+      if (contam > 0) {
+        parts.push(`<span class="hg-grp"><span class="hg-caption">Contam</span><span class="${contamCls}">${contam}%</span></span>`)
+      }
+      if (doom > 0) {
+        parts.push(`<span class="hg-grp"><span class="hg-caption">Doom</span><span class="${doomCls}">${doom}%</span></span>`)
+      }
+      // Joined with a space so the Contam↔Doom gap matches the inter-stat gap
+      // (e.g. AC↔EV) — .hg-warn applies the same word-spacing to that space.
+      joined.innerHTML = parts.join(' ')
+      return
     }
-    // Joined with a space so the Contam↔Doom gap matches the inter-stat gap
-    // (e.g. AC↔EV) — .hg-warn applies the same word-spacing to that space.
-    const el = this.el.querySelector<HTMLElement>('#hud-warn')
-    if (el) el.innerHTML = parts.join(' ')
+
+    const setWarn = (ui: string, val: string, value: number, cls: string): void => {
+      const uiEl = this.el.querySelector<HTMLElement>(`#${ui}`)
+      if (!uiEl) return
+      uiEl.style.display = value > 0 ? '' : 'none'
+      const valEl = this.el.querySelector<HTMLElement>(`#${val}`)
+      if (valEl) {
+        valEl.textContent = value > 0 ? `${value}%` : ''
+        valEl.className = cls
+      }
+    }
+    setWarn('hud-doom-ui', 'hud-doom', doom, doomCls)
+    setWarn('hud-contam-ui', 'hud-contam', contam, contamCls)
   }
 
   private renderDefenseValue(id: string, val: number | undefined, mod: number | undefined): void {
@@ -335,6 +420,18 @@ export class StatsView {
   }
 
   private template(): string {
+    return this.layout === 'square' ? this.squareTemplate() : this.compactTemplate()
+  }
+
+  private wqQuiverRows(): string {
+    return `
+      <div class="hg-wq" id="hud-wq"></div>
+      <div class="hg-wq" id="hud-wq-offhand"></div>
+      <div class="hg-quiver" id="hud-quiver"></div>
+    `
+  }
+
+  private compactTemplate(): string {
     return `
       <div class="hs-id fg14"><span id="hud-id"></span><span class="hg-piety" id="hud-piety"></span></div>
       <div class="hg-bar-pair">
@@ -342,7 +439,7 @@ export class StatsView {
           <div class="hg-bar-cell"><span class="hud-bar-seg hp-full"></span><span class="hud-bar-seg hp-poison"></span><span class="hud-bar-seg hp-decrease"></span><span class="hud-bar-seg hp-increase"></span></div>
           <span class="hg-bar-val" id="hud-hp"></span>
         </div>
-        <div class="hg-bar-row hg-mp">
+        <div class="hg-bar-row hg-mp" id="hud-mp-line">
           <div class="hg-bar-cell"><span class="hud-bar-seg mp-full"></span><span class="hud-bar-seg mp-decrease"></span><span class="hud-bar-seg mp-increase"></span></div>
           <span class="hg-bar-val" id="hud-mp"></span>
         </div>
@@ -358,12 +455,47 @@ export class StatsView {
         <span class="hg-xl-place hg-grp" id="hud-xl-place"></span>
         <span class="hg-noise-time">
           <span class="hg-noise"><span class="hg-caption">N</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
-          <span class="hg-time" id="hud-time"></span>
+          <span class="hg-time"><span class="hg-caption">T</span><span id="hud-time-val"></span></span>
         </span>
       </div>
-      <div class="hg-wq" id="hud-wq"></div>
-      <div class="hg-wq" id="hud-wq-offhand"></div>
-      <div class="hg-quiver" id="hud-quiver"></div>
+      ${this.wqQuiverRows()}
+    `
+  }
+
+  // Square HUD for the landscape sidebar, mirroring the reference stats panel
+  // (game.html #stats): title and species/god/gold lines, Health/Magic
+  // caption lines with right-anchored bars, then a 45/55 two-column block
+  // pairing AC|Str, EV|Int, SH|Dex, XL+Next|Place, Noise|Time — Doom and
+  // Contam ride the Str/Int rows as in the reference — and full-width
+  // weapon/quiver rows. Every readout owns a cell, so nothing clips at
+  // sidebar width the way the compact template's nowrap rows do.
+  private squareTemplate(): string {
+    return `
+      <div class="hs-id fg14"><span id="hud-title"></span></div>
+      <div class="hs-species fg14"><span id="hud-species"></span><span class="hg-piety" id="hud-piety"></span><span class="hud-sq-gold" id="hud-gold-ui" style="display:none"><span class="hg-caption">Gold:</span><span id="hud-gold"></span></span></div>
+      <div class="hg-bar-row hud-sq-barline">
+        <span class="hg-caption" id="hud-hp-caption">Health:</span>
+        <span class="hg-bar-val" id="hud-hp"></span>
+        <div class="hg-bar-cell"><span class="hud-bar-seg hp-full"></span><span class="hud-bar-seg hp-poison"></span><span class="hud-bar-seg hp-decrease"></span><span class="hud-bar-seg hp-increase"></span></div>
+      </div>
+      <div class="hg-bar-row hud-sq-barline" id="hud-mp-line">
+        <span class="hg-caption">Magic:</span>
+        <span class="hg-bar-val" id="hud-mp"></span>
+        <div class="hg-bar-cell"><span class="hud-bar-seg mp-full"></span><span class="hud-bar-seg mp-decrease"></span><span class="hud-bar-seg mp-increase"></span></div>
+      </div>
+      <div class="hud-grid">
+        <span><span class="hg-caption">AC:</span><span id="hud-ac"></span></span>
+        <span><span class="hg-caption">Str:</span><span id="hud-str"></span><span class="hud-sq-warn" id="hud-doom-ui" style="display:none"><span class="hg-caption">Doom:</span><span id="hud-doom"></span></span></span>
+        <span><span class="hg-caption">EV:</span><span id="hud-ev"></span></span>
+        <span><span class="hg-caption">Int:</span><span id="hud-int"></span><span class="hud-sq-warn" id="hud-contam-ui" style="display:none"><span class="hg-caption">Contam:</span><span id="hud-contam"></span></span></span>
+        <span><span class="hg-caption">SH:</span><span id="hud-sh"></span></span>
+        <span><span class="hg-caption">Dex:</span><span id="hud-dex"></span></span>
+        <span><span class="hg-caption">XL:</span><span id="hud-xl"></span> <span class="hg-caption">Next:</span><span id="hud-prog"></span></span>
+        <span><span class="hg-caption">Place:</span><span id="hud-place"></span></span>
+        <span class="hg-noise"><span class="hg-caption">Noise:</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
+        <span class="hg-time"><span class="hg-caption">Time:</span><span id="hud-time-val"></span></span>
+      </div>
+      ${this.wqQuiverRows()}
     `
   }
 }

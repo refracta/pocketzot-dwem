@@ -7,7 +7,7 @@ import {
   MDAM_COLORS,
   decodeMdam, mdamTier,
   decodeFgStatuses,
-  fgHaloDngnName, fgTileIndex,
+  fgHaloDngnName, fgThreatDngnName, fgTileIndex,
   filterAndSortMonsters, nameColor,
 } from './monster-style'
 
@@ -80,10 +80,15 @@ export class MonsterPanelView {
       mcache: cell?.mcache,
     })
     if (baseSpec.length > 0) appendTiles(this.loader, tileEl, baseSpec, TILE_SCALE)
+    if (cell?.highlighted_summoner) prependDngnLayer(this.loader, tileEl, 'HALO_SUMMONER', TILE_SCALE)
+    const threatWash = fgThreatDngnName(cell?.fg)
+    if (threatWash) prependDngnLayer(this.loader, tileEl, threatWash, TILE_SCALE)
     const halo = fgHaloDngnName(cell?.fg)
     if (halo) prependDngnLayer(this.loader, tileEl, halo, TILE_SCALE)
     // Order matters: each prepend slots in at index 0, so the floor (called
-    // last) ends up at the bottom of the DOM stack, halo above, sprite on top.
+    // last) ends up at the bottom of the DOM stack, halo above it, threat
+    // wash above that, summoner ring above that, sprite on top — same
+    // bottom-up order as the map.
     if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, tileEl, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
 
     const mdam = decodeMdam(cell?.fg)

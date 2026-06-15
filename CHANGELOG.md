@@ -9,6 +9,41 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-12
+
+- Spellcasters now get a quick-cast row below the message log, with tappable
+  icons that send `z` plus the spell's letter.
+- The message log now floats translucently over the map's bottom edge instead
+  of taking its own band of the screen, so the map shows several more rows.
+- Tile rendering now fills the map area edge to edge, including partial tiles.
+- Dimmed the touch controls so they don't outshine the dungeon in darker
+  areas.
+- Overhauled how description text is rendered. Many kinds of text the game
+  sends (property lists, stat lines, indented notes, prose, etc.) now wrap
+  better for a phone screen.
+- Fixed an issue with certain text input prompts.
+- Various other improvements.
+
+## 2026-06-08
+
+- The skills menu (`m`) now displays in a single column.
+- Polished the appearance of various other in-game menus.
+
+## 2026-06-04
+
+- Prompts and messages no longer drop a literal `<` character.
+
+## 2026-06-03
+
+- A stray "–" no longer appears before entries in the "Items not yet
+  recognised" menu.
+
+## 2026-06-02
+
+- The stable and trunk buttons now look distinct.
+- Stable and trunk now appear as lobby buttons on CPO, where they were
+  previously hidden inside "Show all versions".
+
 ## 2026-06-01
 
 - Switching the map from ASCII to tiles now works during your own game on

@@ -126,6 +126,72 @@ describe('MonsterListView.renderTiles', () => {
     expect(rows[2].classList.contains('ml-bar')).toBe(false)  // ally
   })
 
+  it('collapses to one chevron-less row in compact (landscape) mode', () => {
+    // Phone landscape forces setCompact(true): the short sidebar can't host
+    // the multi-row expanded list, so it must render the single collapsed row
+    // (top group + "+N") and drop the expand/collapse chevron, regardless of
+    // how many groups are present. Uses ASCII (no loader) since the collapse
+    // is mode-independent.
+    const store = new MapStore()
+    store.merge([
+      { x: 1, y: 1, g: 'C', mon: {
+        id: 1, name: 'Lodul', att: 0, type: 5,
+        typedata: { avghp: 100 }, clientid: 42,
+      } },
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+      { x: 3, y: 3, g: 'O', mon: {
+        id: 3, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 50 },
+      } },
+    ])
+
+    const view = new MonsterListView(store)
+    view.setCompact(true)
+    view.update(store.getMonsters())
+
+    // One collapsed row for the top group, no expand chevron.
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(1)
+    expect(view.element.querySelector('.ml-toggle')).toBeNull()
+    expect(view.element.querySelector('.ml-name')?.textContent).toBe('Lodul')
+    // "+N" counts the monsters not in the top group (the two ogres).
+    expect(view.element.querySelector('.ml-collapsed-more')?.textContent).toBe('+2')
+
+    // Reverting to portrait restores the expanded multi-row list, with the
+    // chevron floated inside the FIRST row (not a panel-level corner glyph).
+    view.setCompact(false)
+    view.update(store.getMonsters())
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(3)
+    const toggle = view.element.querySelector('.ml-toggle')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.parentElement).toBe(view.element.querySelector('.ml-row'))
+  })
+
+  it('renders overflow past MAX_ROWS as an inline +N on the last row', () => {
+    // Seven hostile monsters in seven distinct groups (different types).
+    // MAX_ROWS = 5, so two monsters are hidden → the fifth row carries an
+    // inline "+2" suffix; there is no abspos corner chip anymore.
+    const store = new MapStore()
+    store.merge(Array.from({ length: 7 }, (_, i) => ({
+      x: i + 1, y: 1, g: 'x', mon: {
+        id: i + 1, name: `mon${i}`, att: 0, type: 100 + i,
+        typedata: { avghp: 90 - i },
+      },
+    })))
+
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const rows = view.element.querySelectorAll('.ml-row')
+    expect(rows.length).toBe(5)
+    expect(view.element.querySelector('.ml-corner-more')).toBeNull()
+    const more = view.element.querySelector('.ml-collapsed-more')
+    expect(more?.textContent).toBe('+2')
+    expect(more?.parentElement).toBe(rows[4])
+  })
+
   it('trims rows when groups shrink between renders', () => {
     // Renders with three groups, then with one, asserts the DOM is trimmed
     // to one row. Catches a regression where the position-indexed array

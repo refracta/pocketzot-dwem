@@ -218,26 +218,30 @@ export function buildLobbyView(
       all.push({ gameId, label })
     })
 
-    // Identify the "primary" main-DCSS games: trunk variant + highest stable.
-    let trunkId: string | null = null
-    let stableId: string | null = null
-    let stableVer: [number, number] = [-1, -1]
-    for (const g of all) {
-      if (!/^dcss-/.test(g.gameId)) continue
-      if (/^dcss-(trunk|git)$/.test(g.gameId)) {
-        trunkId = g.gameId
-      } else {
-        const v = parseVersion(g.gameId)
-        if (cmpVersion(v, stableVer) > 0) { stableVer = v; stableId = g.gameId }
-      }
-    }
-    const primary = new Set([stableId, trunkId].filter((x): x is string => !!x))
+    // The two headline games, already in display order (newest stable on top,
+    // trunk second); everything else goes behind the "Show all versions" toggle.
+    const primaryIds = selectPrimaryGameIds(all.map(g => g.gameId))
+    const primarySet = new Set(primaryIds)
+    const byId = new Map(all.map(g => [g.gameId, g] as const))
 
     gamesEl.innerHTML = ''
-    const primaryGames = all.filter(g => primary.has(g.gameId))
-    const otherGames = all.filter(g => !primary.has(g.gameId))
+    const primaryGames = primaryIds.map(id => byId.get(id)!)
+    const otherGames = all.filter(g => !primarySet.has(g.gameId))
 
-    for (const g of primaryGames) gamesEl.appendChild(makeGameBtn(g, 'lobby-btn-primary'))
+    for (const g of primaryGames) {
+      if (TRUNK_RE.test(g.gameId)) {
+        // Trunk gets the same prominence as the stable button but an outline
+        // (not filled) treatment, so the stable-vs-trunk distinction is visual
+        // rather than positional — muscle memory from a server's native ordering
+        // can't cause an accidental launch. Drop a redundant "(unstable)"/
+        // "(trunk)" parenthetical the server may bake into the name (e.g. CPO's
+        // "Trunk (unstable)") so the button reads cleanly as just the name.
+        const label = g.label.replace(/\s*\((?:unstable|trunk)\)\s*$/i, '')
+        gamesEl.appendChild(makeGameBtn({ ...g, label }, 'lobby-btn-primary lobby-btn-trunk'))
+      } else {
+        gamesEl.appendChild(makeGameBtn(g, 'lobby-btn-primary'))
+      }
+    }
 
     if (otherGames.length > 0) {
       const details = document.createElement('details')
@@ -477,13 +481,49 @@ function formatIdle(ms: number): string {
   return `idle ${Math.floor(s / 3600)}h`
 }
 
-// Extract a [major, minor] tuple from a game id like "dcss-0.34" or
-// "dcss-0.34-trunk". Returns [0,0] when no version is present (e.g. "dcss-git"),
-// which sorts below any explicit version — the trunk bucket is matched
-// separately so this only matters for ordering within trunk variants.
-function parseVersion(gameId: string): [number, number] {
+// Games whose id carries a non-standard *mode* marker (seeded, sprint,
+// tutorial, descent, zot-defense, the CPO weekly challenge, …). These are
+// never headline buttons regardless of version. Matched as a whole id segment
+// so it catches both prefix conventions (CDI/CAO `seeded-0.34`, `spr-0.34`,
+// `descent-git`, `zd-0.15`) and suffix conventions (CPO `0.34-seed`,
+// `0.34-sprint`, `0.34-tutorial`, `trunk-seed`, `weekly-challenge`).
+const VARIANT_RE =
+  /(^|[-_])(seed|seeded|spr|sprint|tut|tutorial|descent|zd|zotdef|challenge|weekly)([-_]|$)/i
+
+// The development build. CDI/CAO call it `dcss-git`, CPO calls it `trunk`;
+// some servers use `dcss-trunk`. Matched as a segment so `dcss-git`, `trunk`,
+// and `dcss-trunk` all qualify, while variants like `trunk-seed` are excluded
+// by VARIANT_RE before we get here.
+const TRUNK_RE = /(^|[-_])(trunk|git)([-_]|$)/i
+
+// Pick the two headline games to surface as large buttons, returned in display
+// order: newest stable release first, then the development (trunk) build.
+// Either may be absent (a server might offer only one). Everything else — older
+// versions, the mode variants above, and forks (`bcrawl`, `stoatsoup`, …) —
+// stays behind the "Show all versions" toggle. Server id conventions differ
+// wildly, so we classify by recognisable id *segments*, never a fixed prefix
+// (the old `^dcss-` assumption hid every CPO game, which uses bare `0.34`/`trunk`).
+// Exported for unit testing.
+export function selectPrimaryGameIds(ids: string[]): string[] {
+  let trunkId: string | null = null
+  let stableId: string | null = null
+  let stableVer: [number, number] = [-1, -1]
+  for (const id of ids) {
+    if (VARIANT_RE.test(id)) continue
+    if (TRUNK_RE.test(id)) { if (!trunkId) trunkId = id; continue }
+    const v = parseVersion(id)
+    if (v && cmpVersion(v, stableVer) > 0) { stableVer = v; stableId = id }
+  }
+  // Order is the contract: stable on top, trunk second.
+  return [stableId, trunkId].filter((x): x is string => !!x)
+}
+
+// Extract a [major, minor] tuple from a game id like "dcss-0.34" or "0.34".
+// Returns null when no version is present (e.g. "dcss-git", "trunk", "bcrawl"),
+// so forks and the trunk build never compete for the stable slot.
+function parseVersion(gameId: string): [number, number] | null {
   const m = /(\d+)\.(\d+)/.exec(gameId)
-  if (!m) return [0, 0]
+  if (!m) return null
   return [parseInt(m[1], 10), parseInt(m[2], 10)]
 }
 
