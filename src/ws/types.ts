@@ -235,7 +235,6 @@ export type ClientMsg =
   | { msg: 'watch'; username: string }
   | { msg: 'go_lobby' }
   | { msg: 'input'; text: string }
-  | { msg: 'text_input'; text: string }
   | { msg: 'key'; keycode: number }
   | { msg: 'chat_msg'; text: string }
   | { msg: 'pong' }

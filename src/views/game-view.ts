@@ -1515,7 +1515,7 @@ export function buildGameView(
   // Menu filter (Ctrl-F → "Search for what? (regex)"). Reference webtiles
   // client (menu.js:668-740) inlines an input field into the menu title and
   // — unlike msgwin-get-line — does NOT echo characters to the server while
-  // typing; the whole string is sent as a single text_input on Enter.
+  // typing; the whole string is sent as a single `input` message on Enter.
   // Matching that here means we don't have to ferry per-key updates back to
   // the server's resumable_line_reader (whose init_input/close_input pair we
   // also suppress in the dispatcher above).
@@ -1538,7 +1538,10 @@ export function buildGameView(
       e.stopPropagation()
       if (e.key === 'Enter') {
         e.preventDefault()
-        conn.send({ msg: 'text_input', text: input.value + '\r' })
+        // Submit via "input" (pty), not the 0.34+ "text_input" control message
+        // pre-0.34 engines drop — see showTextInput. No prefill on a menu
+        // filter, so no Ctrl-U/Ctrl-K clear is needed.
+        conn.send({ msg: 'input', text: input.value + '\r' })
         closeTitlePrompt()
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -3160,19 +3163,28 @@ export function buildGameView(
       e.stopPropagation()
       if (e.key === 'Enter') {
         e.preventDefault()
-        const text = input.value + '\r'
+        // Submit the line as ONE "input" message (written straight to the game
+        // pty), not "text_input". "text_input" is a control message added in
+        // 0.34; every engine before it (verified absent from 0.11 through 0.33,
+        // point releases included) silently drops it, so on those servers this
+        // prompt never receives the typed line — Ctrl-F stash search just hangs
+        // until you blind-type raw keys. "input" is understood by every version
+        // (upstream keeps it unchanged for back-compat) and pre-0.34 webtiles
+        // used it here too.
+        //
+        // The server's resumable_line_reader still holds any prefill (e.g. the
+        // old ally name) with the cursor at its end, so we first wipe it with
+        // Ctrl-U (kill-to-start, 0x15) + Ctrl-K (kill-to-end, 0x0b). Those go
+        // INSIDE the same input message rather than as separate "key" messages:
+        // "key" rides the control socket while "input" rides the pty, and the
+        // engine drains the pty first, so a split submit can apply the text
+        // before the clears and wipe everything — the very reordering this
+        // dodges is what text_input was introduced to fix (crawl 9e21798). One
+        // atomic pty write keeps clear→type→Enter ordered. "repeat" carries no
+        // prefill, so it skips the clear.
+        const text = (tag !== 'repeat' ? '\x15\x0b' : '') + input.value + '\r'
         removeTextInput()
-        // The server's resumable_line_reader still holds the prefill (e.g. the
-        // old ally name) with the cursor at its end, so a bare text_input gets
-        // appended to it ("OldnameNewname"). Wipe the buffer first with Ctrl-U
-        // (kill-to-start, 21) + Ctrl-K (kill-to-end, 11), matching the
-        // reference client (textinput.js send_input_line). The "repeat" count
-        // prompt is excluded there and here — it doesn't carry a prefill.
-        if (tag !== 'repeat') {
-          conn.send({ msg: 'key', keycode: 21 })
-          conn.send({ msg: 'key', keycode: 11 })
-        }
-        conn.send({ msg: 'text_input', text })
+        conn.send({ msg: 'input', text })
         view.focus({ preventScroll: true })
       } else if (e.key === 'Escape') {
         e.preventDefault()
