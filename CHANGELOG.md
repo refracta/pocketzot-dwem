@@ -9,6 +9,13 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-17
+
+- Stash search (`Ctrl-F`) and other text prompts (level annotations, renaming
+  allies, etc.) now work on pre-0.34 DCSS versions, where typing and pressing
+  Enter previously did nothing. Note that older versions are not officially
+  supported.
+
 ## 2026-06-12
 
 - Spellcasters now get a quick-cast row below the message log, with tappable
