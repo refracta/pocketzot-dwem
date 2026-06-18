@@ -3163,25 +3163,14 @@ export function buildGameView(
       e.stopPropagation()
       if (e.key === 'Enter') {
         e.preventDefault()
-        // Submit the line as ONE "input" message (written straight to the game
-        // pty), not "text_input". "text_input" is a control message added in
-        // 0.34; every engine before it (verified absent from 0.11 through 0.33,
-        // point releases included) silently drops it, so on those servers this
-        // prompt never receives the typed line — Ctrl-F stash search just hangs
-        // until you blind-type raw keys. "input" is understood by every version
-        // (upstream keeps it unchanged for back-compat) and pre-0.34 webtiles
-        // used it here too.
-        //
-        // The server's resumable_line_reader still holds any prefill (e.g. the
-        // old ally name) with the cursor at its end, so we first wipe it with
-        // Ctrl-U (kill-to-start, 0x15) + Ctrl-K (kill-to-end, 0x0b). Those go
-        // INSIDE the same input message rather than as separate "key" messages:
-        // "key" rides the control socket while "input" rides the pty, and the
-        // engine drains the pty first, so a split submit can apply the text
-        // before the clears and wipe everything — the very reordering this
-        // dodges is what text_input was introduced to fix (crawl 9e21798). One
-        // atomic pty write keeps clear→type→Enter ordered. "repeat" carries no
-        // prefill, so it skips the clear.
+        // Submit via "input" (pty), not the 0.34+ "text_input" control message
+        // pre-0.34 engines silently drop. Any prefill (e.g. the old ally name)
+        // is still in the server's line reader with the cursor at its end, so
+        // we prepend Ctrl-U + Ctrl-K (kill-to-start 0x15, kill-to-end 0x0b) to
+        // wipe it. These ride INSIDE the same input message, not as separate
+        // "key" messages: "key" goes over the control socket and "input" over
+        // the pty, and a split submit could apply the text before the clears
+        // and wipe it. "repeat" has no prefill, so it skips the clear.
         const text = (tag !== 'repeat' ? '\x15\x0b' : '') + input.value + '\r'
         removeTextInput()
         conn.send({ msg: 'input', text })
