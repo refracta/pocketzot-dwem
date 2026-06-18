@@ -11,10 +11,9 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-06-17
 
-- Stash search (`Ctrl-F`) and other text prompts (level annotations, renaming
-  allies, etc.) now work on pre-0.34 DCSS versions, where typing and pressing
-  Enter previously did nothing. Note that older versions are not officially
-  supported.
+- Stash search (`Ctrl-F`) and similar text fields now work properly on
+  pre-0.34 DCSS versions. (Note that pre-0.34 versions are not officially
+  supported at this time.)
 
 ## 2026-06-12
 
