@@ -81,6 +81,35 @@ html, body {
   letter-spacing: 0.1em;
 }
 
+/* Decorated wordmark (src/logo.ts). Each letter is its own span: it inherits the
+   title's accent colour until a roll adds an `fgN` class, then `transition`
+   fades to the DCSS colour. No base `color` here, so inheritance holds pre-roll. */
+.login-title .logo-ch {
+  display: inline-block;
+  transition: color 0.7s ease;
+}
+/* Lookalike-glyph swaps (○ • ☼ © φ ß § † …): normalise size/baseline so they sit
+   on the line like the letters rather than ballooning in fallback fonts. */
+.login-title .logo-ch--swap {
+  font-size: 0.9em;
+  vertical-align: baseline;
+  line-height: 1;
+}
+/* One-shot reveal pop as each letter morphs in (skipped under reduced motion —
+   logo.ts applies the roll without re-triggering this animation). */
+.login-title .logo-ch--lit {
+  animation: logo-reveal 0.5s ease both;
+}
+@keyframes logo-reveal {
+  0%   { opacity: 0.3; transform: translateY(-0.12em) scale(0.8); }
+  55%  { transform: translateY(0) scale(1.14); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-title .logo-ch { transition: none; }
+  .login-title .logo-ch--lit { animation: none; }
+}
+
 .login-section { margin-bottom: 1.5rem; }
 .login-spectate-section { margin-bottom: 0; }
 

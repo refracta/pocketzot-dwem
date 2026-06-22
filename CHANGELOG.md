@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-22
+
+- Added over 600 billion new PocketZot logos. Each one is procedurally generated
+  from actual ASCII-mode glyphs.
+
 ## 2026-06-17
 
 - Stash search (`Ctrl-F`) and similar text fields now work properly on
