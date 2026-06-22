@@ -13,7 +13,7 @@
 // classes in style.css, so a roll of N just sets class `fgN`.
 
 export const LOGO_CONFIG = {
-  pDecorate: 0.33,     // probability of decorating at all
+  pDecorate: 0.30,     // probability of decorating at all
   pGlyphShift: 0.20,   // per-character chance of a lookalike glyph swap
   revealDelayMs: 1500, // normal logo holds this long, then morphs
   staggerMs: 150,      // per-character delay across the reveal
@@ -107,10 +107,15 @@ function applyRoll(span: HTMLElement, letter: string, animate: boolean): void {
   span.classList.add('logo-ch--lit')
 }
 
+// Each decorated title's tap handler, so re-decorating the same element removes
+// the stale listener instead of stacking a second one.
+const tapHandlers = new WeakMap<HTMLElement, () => void>()
+
 // Build the per-character spans and, behind the pDecorate gate, morph them into a
 // DCSS-flavoured roll. Decorates only the literal LOGO_WORD substring, leaving any
 // fork chrome before or after it (a custom suffix or build tag) as untouched plain
-// text. Idempotent: rebuilds the title's contents each call.
+// text. Tapping the title forces a fresh roll (bypassing the gate and the reveal
+// delay — a tap is intent). Idempotent: rebuilds the title's contents each call.
 export function decorateLogo(titleEl: HTMLElement): void {
   const full = titleEl.textContent ?? LOGO_WORD
   const at = full.indexOf(LOGO_WORD)
@@ -130,18 +135,35 @@ export function decorateLogo(titleEl: HTMLElement): void {
   })
   if (tail) titleEl.appendChild(document.createTextNode(tail))
 
-  // Gate: with probability (1 - pDecorate) the logo just stays normal.
-  if (Math.random() >= LOGO_CONFIG.pDecorate) return
-
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
-  const reveal = (): void => {
+  // Re-roll every span. `delayMs` defers the whole morph (the on-load "don't look
+  // broken" pause); a tap passes 0 for an immediate reveal. Each call first cancels
+  // the previous roll's pending timers, so a tap can't be overwritten by an earlier
+  // delayed reveal and rapid taps don't pile up. Reduced motion settles instantly,
+  // ignoring delayMs and the per-character stagger.
+  let timers: number[] = []
+  const roll = (delayMs: number): void => {
+    timers.forEach(clearTimeout)
+    timers = []
     letters.forEach((letter, i) => {
       if (reduceMotion) { applyRoll(spans[i], letter, false); return }
-      window.setTimeout(() => applyRoll(spans[i], letter, true), i * LOGO_CONFIG.staggerMs)
+      timers.push(window.setTimeout(() => applyRoll(spans[i], letter, true),
+                                    delayMs + i * LOGO_CONFIG.staggerMs))
     })
   }
 
-  if (reduceMotion) reveal()
-  else window.setTimeout(reveal, LOGO_CONFIG.revealDelayMs)
+  // Tap the title to force a fresh roll — always decorates (ignores the gate) and
+  // skips the reveal delay. Re-decorating the same element swaps this listener out
+  // rather than stacking another; otherwise it's GC'd with the view on teardown.
+  titleEl.classList.add('logo-tappable')
+  const prevTap = tapHandlers.get(titleEl)
+  if (prevTap) titleEl.removeEventListener('click', prevTap)
+  const onTap = (): void => roll(0)
+  tapHandlers.set(titleEl, onTap)
+  titleEl.addEventListener('click', onTap)
+
+  // Initial on-load decoration: gated, and delayed (the delay is a no-op under
+  // reduced motion). A plain result can still be woken by tapping.
+  if (Math.random() < LOGO_CONFIG.pDecorate) roll(LOGO_CONFIG.revealDelayMs)
 }

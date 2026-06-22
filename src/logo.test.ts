@@ -7,7 +7,7 @@
 // LOGO_WORD characters and leave any fork chrome before/after it (a custom suffix
 // or build tag) as untouched plain text.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { decorateLogo, rollLogoChar, LOGO_WORD, LOGO_CONFIG } from './logo'
 
 // Letters that have NO lookalike swap (must never change glyph), vs. the rest.
@@ -69,10 +69,10 @@ describe('rollLogoChar', () => {
   })
 })
 
-describe('decorateLogo substring split', () => {
-  // pDecorate = 0 makes the morph gate return right after the spans are built, so
-  // the split structure is realised synchronously with no reveal timer scheduled —
-  // the split happens above the gate, so the gate value doesn't affect it.
+describe('decorateLogo', () => {
+  // pDecorate = 0 suppresses the on-load decoration so each test controls when the
+  // roll happens: the split tests get a synchronous plain structure, and the tap
+  // test can prove the tap (not the gate) is what lights the wordmark.
   const savedDecorate = LOGO_CONFIG.pDecorate
   beforeEach(() => { LOGO_CONFIG.pDecorate = 0 })
   afterEach(() => { LOGO_CONFIG.pDecorate = savedDecorate })
@@ -130,5 +130,45 @@ describe('decorateLogo substring split', () => {
     decorateLogo(el)
     expect(wordmarkSpans(el)).toHaveLength(LOGO_WORD.length)
     expect(el.textContent).toBe('PocketZot (fork)')
+  })
+
+  it('tapping forces a fresh roll even when the pDecorate gate is off', () => {
+    // Force reduced motion so the tap's roll applies synchronously (no stagger
+    // timers); decorateLogo reads matchMedia at call time, so mock it first.
+    const savedMM = window.matchMedia
+    window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia
+    try {
+      const el = makeTitle(LOGO_WORD)
+      decorateLogo(el) // pDecorate = 0 → no on-load decoration
+      const lit = (s: Element) => [...s.classList].some((c) => /^fg\d+$/.test(c))
+      expect(el.classList.contains('logo-tappable')).toBe(true)
+      expect([...wordmarkSpans(el)].some(lit)).toBe(false) // plain before the tap
+      el.click()
+      expect([...wordmarkSpans(el)].every(lit)).toBe(true)  // every letter lit after
+    } finally {
+      window.matchMedia = savedMM
+    }
+  })
+
+  it('a tap cancels the pending on-load reveal instead of stacking timers', () => {
+    // Motion on (matches:false) so the on-load reveal is delayed via timers; fake
+    // timers let us count what's pending without waiting.
+    const savedMM = window.matchMedia
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+    vi.useFakeTimers()
+    try {
+      LOGO_CONFIG.pDecorate = 1                          // force the delayed on-load decoration
+      const el = makeTitle(LOGO_WORD)
+      decorateLogo(el)
+      expect(vi.getTimerCount()).toBe(LOGO_WORD.length)  // on-load reveal pending, one timer/char
+      el.click()                                         // tap re-roll
+      expect(vi.getTimerCount()).toBe(LOGO_WORD.length)  // cancelled + rescheduled, NOT doubled
+      vi.runAllTimers()                                  // tap reveal completes; no stale on-load fire
+      const lit = (s: Element) => [...s.classList].some((c) => /^fg\d+$/.test(c))
+      expect([...wordmarkSpans(el)].every(lit)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+      window.matchMedia = savedMM
+    }
   })
 })

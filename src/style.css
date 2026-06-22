@@ -81,6 +81,21 @@ html, body {
   letter-spacing: 0.1em;
 }
 
+/* Tap-to-reroll affordance (class added by decorateLogo). pointer is the desktop
+   hint; touch-action/user-select kill the iOS double-tap zoom, tap delay, and
+   text selection so a tap on the wordmark just re-rolls it. fit-content shrinks
+   the block's box (and thus the hit area) to the wordmark itself rather than the
+   full card width; margin-inline:auto re-centers the now-narrow box. */
+.logo-tappable {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  width: -webkit-fit-content;
+  width: fit-content;
+  margin-inline: auto;
+}
+
 /* Decorated wordmark (src/logo.ts). Each letter is its own span: it inherits the
    title's accent colour until a roll adds an `fgN` class, then `transition`
    fades to the DCSS colour. No base `color` here, so inheritance holds pre-roll. */
