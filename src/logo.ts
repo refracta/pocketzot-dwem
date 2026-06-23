@@ -44,21 +44,23 @@ const GLYPHS: Record<string, Glyph> = {
        subs: [{ ch: 'Þ', colors: [7, 14, 4, 10] }] },                 // trunk sphinx (thorn reads as P; ß dropped)
   o: { colors: [2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15],
        subs: [{ ch: '○', cloud: true }, { ch: '•', cloud: true }, { ch: '☼', cloud: true },
-              { ch: '©', colors: [5, 9] },                            // teleporter (transloc = magenta)
               { ch: 'φ', colors: [14, 10, 11, 13, 12, 15] },          // rune (bright)
               { ch: '¤', colors: [13, 9, 5, 1] },                     // trunk battlesphere (etc_magic)
               { ch: 'ö', colors: PALETTE },                           // trunk orc-apostle (colour_undef → any)
               { ch: '●', colors: [6, 4, 12, 15, 13] }] },             // trunk orb/boulder (filled circle)
   c: { colors: [2, 4, 5, 6, 10, 12, 14],
-       subs: [{ ch: '©', colors: [5, 9] }] },                         // teleporter — contains a 'c'
+       subs: [{ ch: '©', colors: [5, 9] },                            // teleporter — contains a 'c'
+              { ch: 'Č', colors: [15, 1] }] },                        // trunk giants (antaeus/chuck white, polyphemus blue) — literal C-shape
   k: { colors: [1, 6, 7, 10, 12, 13, 15], subs: [] },
   e: { colors: [1, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15],
-       subs: [{ ch: 'Σ', colors: [11, 6, 9, 7, 4, 5, 1] }] },         // trunk elemental (angular E)
+       subs: [{ ch: 'Σ', colors: [11, 6, 9, 7, 4, 5, 1] },            // trunk elemental (angular E)
+              { ch: 'ξ', cloud: true }] },                            // trunk weak-cloud glyph — Greek squiggle rhyming with Σ (curvier, has a descender)
   t: { colors: [2, 7, 10, 12, 14, 15],
        subs: [{ ch: '†', colors: [6, 4] },                            // corpse
               { ch: '‡', colors: [15, 12, 9, 5, 11] }] },             // trunk turret/cannon (double dagger)
   Z: { colors: [2, 6, 7, 9, 10, 11, 12, 14, 15],
-       subs: [{ ch: 'ζ', cloud: true }] },                           // trunk fading-cloud glyph (zeta ↔ Z); § dropped — ζ reads as Z far better
+       subs: [{ ch: 'ζ', cloud: true },                              // trunk fading-cloud glyph (zeta ↔ Z); § dropped — ζ reads as Z far better
+              { ch: 'ž', colors: [13, 12, 5, 9] }] },                // trunk floating skulls (curse/laughing/weeping, murray) — undead, like Z's derived undead
 }
 
 function pick<T>(arr: T[]): T {
