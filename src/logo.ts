@@ -47,7 +47,8 @@ const GLYPHS: Record<string, Glyph> = {
               { ch: 'φ', colors: [14, 10, 11, 13, 12, 15] },          // rune (bright)
               { ch: '¤', colors: [13, 9, 5, 1] },                     // trunk battlesphere (etc_magic)
               { ch: 'ö', colors: PALETTE },                           // trunk orc-apostle (colour_undef → any)
-              { ch: '●', colors: [6, 4, 12, 15, 13] }] },             // trunk orb/boulder (filled circle)
+              { ch: '●', colors: [6, 4, 12, 15, 13] },                // trunk orb/boulder (filled circle)
+              { ch: '◊', colors: PALETTE }] },                        // trunk plant glyph (plants migrated P→◊) — round, so it reads as o; colour follows the glyph (plant palette: demonic-plant etc_random / toadstool colour_undef → any)
   c: { colors: [2, 4, 5, 6, 10, 12, 14],
        subs: [{ ch: '©', colors: [5, 9] },                            // teleporter — contains a 'c'
               { ch: 'Č', colors: [15, 1] }] },                        // trunk giants (antaeus/chuck white, polyphemus blue) — literal C-shape
