@@ -5,6 +5,7 @@ import { cncUserinfo } from '../dwem/cnc-userinfo'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
+import { decorateLogo } from '../logo'
 
 export interface LoginResult {
   conn: WsConnection
@@ -102,6 +103,8 @@ export function buildLoginView(
   const errorEl = view.querySelector<HTMLElement>('#login-error')!
   const spectateErrorEl = view.querySelector<HTMLElement>('#spectate-error')!
   const btn = view.querySelector<HTMLButtonElement>('#login-btn')!
+
+  decorateLogo(view.querySelector<HTMLElement>('.login-title')!)
 
   for (const s of KNOWN_SERVERS) {
     const o1 = document.createElement('option')

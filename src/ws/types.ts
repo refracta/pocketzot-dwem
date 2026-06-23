@@ -238,7 +238,6 @@ export type ClientMsg =
   | { msg: 'get_rc'; game_id: string }
   | { msg: 'go_lobby' }
   | { msg: 'input'; text: string }
-  | { msg: 'text_input'; text: string }
   | { msg: 'key'; keycode: number }
   | { msg: 'chat_msg'; text: string }
   | { msg: 'pong' }

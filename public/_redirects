@@ -1,10 +1,19 @@
-# Order matters — first match wins. Real files in /public and /dist are served
-# before _redirects fires, so these rules only run for paths that don't exist
-# on disk. The asset-prefix and SW-name rules fail loud (404) when a hashed
-# bundle or service-worker script is missing, instead of silently falling
-# through to index.html — that masked a pre-release SW issue where the
-# browser's SW update check kept getting HTML where JS was expected.
-/sw.js          /index.html  404
-/workbox-*.js   /index.html  404
-/assets/*       /index.html  404
-/*              /index.html  200
+# Intentionally no rules. Cloudflare Pages serves real files in this deploy
+# directly; anything not on disk falls through to Pages' native 404.
+#
+# Do NOT add a catch-all SPA rewrite (`/* /index.html 200`). This app has no
+# client-side router — `/` is the only HTML entry, and about.html / changelog.html
+# / support.html are real files — so a path that isn't on disk genuinely doesn't
+# exist and should 404. A catch-all is actively harmful here: when an installed
+# PWA still points at an old /assets/index-<oldhash>.js after a redeploy (the
+# hash rotates every build), the catch-all answers that dead URL with index.html
+# as text/html + HTTP 200. The browser then tries to evaluate HTML as an ES
+# module, fails to parse, and renders a blank white page — turning a recoverable
+# "stale asset, reload me" into a silent brick.
+#
+# A previous version tried to force misses to 404 with lines like
+# `/assets/* /index.html 404`. Cloudflare Pages only honours 200/301/302/303/
+# 307/308 statuses in _redirects, so those 404 rules were silently dropped and
+# every miss fell through to the catch-all anyway. Removing the catch-all lets
+# Pages' built-in 404 handle misses correctly (a real 404, so a stale-asset
+# request fails loudly instead of being fed HTML).

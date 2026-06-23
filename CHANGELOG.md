@@ -9,6 +9,17 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-22
+
+- Added 1.96 trillion new PocketZot logos. Each is procedurally generated
+  from actual ASCII-mode glyphs. At one a day, enough to outlast the Sun.
+
+## 2026-06-17
+
+- Stash search (`Ctrl-F`) and similar text fields now work properly on
+  pre-0.34 DCSS versions. (Note that pre-0.34 versions are not officially
+  supported at this time.)
+
 ## 2026-06-12
 
 - Spellcasters now get a quick-cast row below the message log, with tappable

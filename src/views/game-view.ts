@@ -350,17 +350,6 @@ export function buildGameView(
   const view = document.createElement('div')
   view.id = 'game-view'
 
-  // Timestamp of the last touch contact anywhere in the view. The spell
-  // buttons' click handlers consult this to reject iOS's compatibility
-  // mouse events: WebKit fires them at the LIFT point of a touch that
-  // nothing scrolled, so a drag from the log onto the rail lands a `click`
-  // on a button the finger never started on. Tracked on the view (not
-  // document) so the listeners die with it on rebuild.
-  let lastViewTouchTs = -Infinity
-  const noteViewTouch = () => { lastViewTouchTs = performance.now() }
-  view.addEventListener('touchstart', noteViewTouch, { capture: true, passive: true })
-  view.addEventListener('touchend', noteViewTouch, { capture: true, passive: true })
-
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
   uiOverlay.style.display = 'none'
@@ -1107,10 +1096,6 @@ export function buildGameView(
           if (prevInputMode !== 1) markLastMsg('cmd')
           maybeAutoHarvest()  // populate the spell rail on first entry to play
           reharvestIfDirty()  // refresh after a `=` reassign (or a deferred memorise/forget)
-          // After the harvest hooks: if one just claimed the channel, the
-          // flush's guard drops the queued tap instead of injecting `z` into
-          // the probe's menu.
-          flushPendingCast()
         }
         // YESNO prompts fire inside any menu that calls yesno() while open:
         // shop purchase (shopping.cc), acquirement (acquire.cc), Nemelex
@@ -1417,7 +1402,7 @@ export function buildGameView(
       // describe.cc:4001) — render it as-is, preserving the source's
       // original line structure (dialogue, stage directions, attribution).
       const extra: string[] = []
-      if (msg.status) extra.push(`<lightblue>Status:</lightblue>\n${msg.status}`)
+      if (msg.status) extra.push(`<lightblue>Status:</lightblue>\n${joinIndentedRuns(msg.status)}`)
       if (msg.quote) extra.push(`<lightblue>Quote:</lightblue>\n${msg.quote}`)
       if (extra.length) rawBody = (rawBody ? rawBody + '\n\n' : '') + extra.join('\n\n')
     }
@@ -1531,7 +1516,7 @@ export function buildGameView(
   // Menu filter (Ctrl-F → "Search for what? (regex)"). Reference webtiles
   // client (menu.js:668-740) inlines an input field into the menu title and
   // — unlike msgwin-get-line — does NOT echo characters to the server while
-  // typing; the whole string is sent as a single text_input on Enter.
+  // typing; the whole string is sent as a single `input` message on Enter.
   // Matching that here means we don't have to ferry per-key updates back to
   // the server's resumable_line_reader (whose init_input/close_input pair we
   // also suppress in the dispatcher above).
@@ -1554,7 +1539,10 @@ export function buildGameView(
       e.stopPropagation()
       if (e.key === 'Enter') {
         e.preventDefault()
-        conn.send({ msg: 'text_input', text: input.value + '\r' })
+        // Submit via "input" (pty), not the 0.34+ "text_input" control message
+        // pre-0.34 engines drop — see showTextInput. No prefill on a menu
+        // filter, so no Ctrl-U/Ctrl-K clear is needed.
+        conn.send({ msg: 'input', text: input.value + '\r' })
         closeTitlePrompt()
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -2430,49 +2418,31 @@ export function buildGameView(
     // the button doubles as a reminder of what tapping sends.
     lbl.textContent = `z${s.letter}`
     btn.appendChild(lbl)
-    // Touch taps are detected manually (touchstart records the contact,
-    // touchend casts if the finger didn't drift) rather than firing on raw
-    // touchstart like touch.ts buttons or trusting iOS click synthesis:
-    //  - raw touchstart casts the instant a drag CONTACTS the button — and a
-    //    drag aimed at the log above lands fat-finger contacts on the rail;
-    //  - iOS click synthesis both drops fast second taps (the original
-    //    dropped-cast bug) and conjures clicks at the LIFT point of a drag
-    //    that nothing scrolled (see the click gate below).
-    // Firing on our own touchend keeps double-taps reliable (no browser
-    // heuristics) at the cost of finger-up rather than finger-down timing.
-    // preventDefault on touchstart suppresses the tap's own synthetic click.
-    let tapX = 0, tapY = 0, tapMoved = false
+    // Fire on click (the browser's synthesized tap-click, and real mouse
+    // clicks), but cancel the cast if the finger dragged off first. Touch
+    // events capture to their start element, so a finger that presses this
+    // button, drags far, and lifts elsewhere still gets a synthesized click
+    // HERE — which would cast without the drift check below. We don't need the
+    // old click gate: the synthesized click targets the touchstart element,
+    // not the lift point, so a drag that merely ENDS over a button (having
+    // started on the log or the map) never fires it.
+    let tapX = 0, tapY = 0, tapDrifted = false
     btn.addEventListener('touchstart', e => {
-      e.preventDefault()
       const t = e.touches?.[0]
       tapX = t?.clientX ?? 0
       tapY = t?.clientY ?? 0
-      tapMoved = false
-    }, { passive: false })
+      tapDrifted = false
+    }, { passive: true })
     btn.addEventListener('touchmove', e => {
       const t = e.touches?.[0]
-      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > TAP_SLOP_PX) tapMoved = true
-    })
-    btn.addEventListener('touchend', () => { if (!tapMoved) castSpellLetter(s.letter) })
-    // Mouse/desktop path. Gated on recent touch activity in the view: iOS
-    // dispatches its compatibility mouse events (incl. click) at the lift
-    // point of an unconsumed drag, so a finger that lands on the floating
-    // log and lifts over the rail "clicks" a button it never touched. Real
-    // touch taps cast via their own touchend above, so any click inside a
-    // touch session is synthetic or stray; mouse clicks have no preceding
-    // touch and pass.
-    btn.addEventListener('click', e => {
-      // Modern engines deliver click as a PointerEvent: a click that
-      // self-identifies as a genuine mouse (hybrid devices — iPad +
-      // trackpad, touchscreen laptops) bypasses the touch-recency gate,
-      // which would otherwise eat a real mouse click landing within 700ms
-      // of unrelated touch activity. Only 'mouse' bypasses: a pen tap also
-      // fires touch events (and casts via touchend above), and where
-      // pointerType is absent the timestamp heuristic decides.
-      if ((e as PointerEvent).pointerType !== 'mouse'
-        && performance.now() - lastViewTouchTs < SYNTH_CLICK_SUPPRESS_MS) return
-      castSpellLetter(s.letter)
-    })
+      if (t && Math.hypot(t.clientX - tapX, t.clientY - tapY) > 12) tapDrifted = true // px: drag, not a tap
+    }, { passive: true })
+    // Reset tapDrifted after each click so the flag is one-shot. Without this a
+    // drag-off (which leaves tapDrifted true and is never followed by a fresh
+    // touchstart that resets it) would suppress the NEXT genuine mouse click on
+    // this button — clicks have no preceding touchstart on hybrid devices
+    // (iPad + trackpad, touchscreen laptops), so they'd inherit the stale flag.
+    btn.addEventListener('click', () => { if (!tapDrifted) castSpellLetter(s.letter); tapDrifted = false })
     return btn
   }
 
@@ -2490,27 +2460,14 @@ export function buildGameView(
   // spells just fire. Guarded to a clean command-mode state — the rail is always
   // visible, so a stray tap during a menu/X-mode/overlay must be a no-op.
   //
-  // A guarded-out tap is queued (1-deep) when the blocker is our own
-  // just-sent cast: the engine answers the `z` by flushing
-  // input_mode:PROMPT plus the channel-2 "Cast which spell?" line (which the
-  // log renders as a prompt row → activePromptEl) BEFORE the letter resolves
-  // the cast, so the second tap of a quick double-tap lands inside that
-  // round-trip and used to vanish silently — while typing `zaza` on a
-  // keyboard queues server-side and casts twice. The pending tap fires on
-  // the input_mode→1 that ends the round-trip; PENDING_CAST_TTL_MS bounds
-  // both queueing and firing so a tap can't resurface as a surprise cast
-  // long after (e.g. the first cast was targeted and the player sat in the
-  // targeter).
-  const PENDING_CAST_TTL_MS = 1000
-  // Finger drift beyond this is a drag, not a tap — the touchend won't cast.
-  const TAP_SLOP_PX = 12
-  // A click this soon after touch activity is iOS's synthesized
-  // compatibility click (or a stray), never a real mouse press.
-  const SYNTH_CLICK_SUPPRESS_MS = 700
-  let lastCastSentAt = -Infinity
-  let pendingCastLetter: string | null = null
-  let pendingCastUntil = 0
-
+  // Simplified from 88c8379/b23b85b after device testing: a tap fires on the
+  // button's `click`, cancelled if the finger drifted (see makeSpellButton) —
+  // but WITHOUT the synthetic-click gate (the lift-point phantom it guarded
+  // against doesn't occur here; the synthesized click targets the touchstart
+  // element) and WITHOUT the pending-cast queue (the single-message dispatch
+  // below shrinks the cast round-trip enough that fast double-taps survive).
+  // A tap blocked by the guard below is simply dropped. Git holds the fuller
+  // versions (click gate at 88c8379, pending-cast queue at b23b85b) if needed.
   function castSpellLetter(letter: string): void {
     // `currentInputMode === 1` additionally rejects active targeting (a prior
     // targeted spell left the server in a target loop with a map cursor but no
@@ -2519,46 +2476,13 @@ export function buildGameView(
     // mode, so it needs its own gate: in landscape the rail stays visible in
     // the sidebar beside the panel, and a tap here bypasses the touch-input
     // swallow (the rail sends via conn.send, not that callback).
-    if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) {
-      // Queue only when our own cast is plausibly still in flight and the
-      // player isn't in a real context (menu/overlay/X-mode/panel) — there a
-      // deferred cast would be the exact stray the guard exists to stop.
-      const ownCastInFlight = performance.now() - lastCastSentAt < PENDING_CAST_TTL_MS
-      const inForeignContext = monsterPanelOpen || inXMode || crtActive || dialogActive
-        || uiStack.length > 0 || activeMenu !== null
-      if (ownCastInFlight && !inForeignContext) {
-        pendingCastLetter = letter  // latest tap wins
-        pendingCastUntil = performance.now() + PENDING_CAST_TTL_MS
-      }
-      return
-    }
-    sendCast(letter)
-  }
-
-  function sendCast(letter: string): void {
-    // One message, not two: the Python server writes each input message's
-    // text to the game pty in a single write (process_handler.handle_input),
-    // so "z"+letter arrive in the engine's buffer together and it never
-    // blocks (flushing the cast prompt and waiting on the socket) between
-    // them — the way it can when two messages land as two pty writes. This
-    // shrinks the prompt round-trip the pending-cast queue exists to cover.
-    conn.send({ msg: 'input', text: `z${letter}` })
-    lastCastSentAt = performance.now()
-  }
-
-  // Fire the queued double-tap cast now that input_mode→1 says the command
-  // channel is open again. Clears the queue before re-running the full tap
-  // guard: by this point the mode-1 handler has already hidden the more
-  // button and disabled the prompt row, but anything else still blocking
-  // (a menu that raced in, a reharvestIfDirty probe that just claimed the
-  // channel) means the tap is stale — dropped, not re-queued.
-  function flushPendingCast(): void {
-    if (pendingCastLetter === null) return
-    const letter = pendingCastLetter
-    pendingCastLetter = null
-    if (performance.now() > pendingCastUntil) return
     if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) return
-    sendCast(letter)
+    // One message, not two: the Python server writes each input message's text
+    // to the game pty in a single write (process_handler.handle_input), so
+    // "z"+letter arrive in the engine's buffer together and it never blocks
+    // (flushing the cast prompt and waiting on the socket) between them — the
+    // way it can when two messages land as two pty writes.
+    conn.send({ msg: 'input', text: `z${letter}` })
   }
 
   // Render the persistent quick-cast rail from spellCache. Hidden when there are
@@ -3240,19 +3164,17 @@ export function buildGameView(
       e.stopPropagation()
       if (e.key === 'Enter') {
         e.preventDefault()
-        const text = input.value + '\r'
+        // Submit via "input" (pty), not the 0.34+ "text_input" control message
+        // pre-0.34 engines silently drop. Any prefill (e.g. the old ally name)
+        // is still in the server's line reader with the cursor at its end, so
+        // we prepend Ctrl-U + Ctrl-K (kill-to-start 0x15, kill-to-end 0x0b) to
+        // wipe it. These ride INSIDE the same input message, not as separate
+        // "key" messages: "key" goes over the control socket and "input" over
+        // the pty, and a split submit could apply the text before the clears
+        // and wipe it. "repeat" has no prefill, so it skips the clear.
+        const text = (tag !== 'repeat' ? '\x15\x0b' : '') + input.value + '\r'
         removeTextInput()
-        // The server's resumable_line_reader still holds the prefill (e.g. the
-        // old ally name) with the cursor at its end, so a bare text_input gets
-        // appended to it ("OldnameNewname"). Wipe the buffer first with Ctrl-U
-        // (kill-to-start, 21) + Ctrl-K (kill-to-end, 11), matching the
-        // reference client (textinput.js send_input_line). The "repeat" count
-        // prompt is excluded there and here — it doesn't carry a prefill.
-        if (tag !== 'repeat') {
-          conn.send({ msg: 'key', keycode: 21 })
-          conn.send({ msg: 'key', keycode: 11 })
-        }
-        conn.send({ msg: 'text_input', text })
+        conn.send({ msg: 'input', text })
         view.focus({ preventScroll: true })
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -3570,6 +3492,35 @@ export function unwrapHangingIndents(body: string): string {
   return out.join('\n')
 }
 
+// Monster status descriptions arrive pre-wrapped at 77 columns and indented
+// 3 spaces per line (describe.cc _get_monster_status_descriptions:
+// `linebreak_string(lookup, 77)` then a 3-space indent on every line). At
+// phone width those hard 77-col breaks survive as hard line breaks
+// mid-sentence (e.g. "...other monsters) will" / "deal increased damage."),
+// because renderBodyLines hangs each wire line on its own. Each indented block
+// is a single wrapped paragraph, so join every run of consecutive same-indent
+// lines back into one logical line; the hanging-indent treatment then reflows
+// it to the actual width. A blank/short line, a flush-left label line, or a
+// differently-indented line ends the run, so paragraph breaks and the
+// `<w>Label:</w>` headers survive. Scope this to the status field only —
+// elsewhere (weapon skill sub-items) equally-indented lines are distinct
+// statements that must NOT be merged.
+export function joinIndentedRuns(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^( {2,})\S/.exec(lines[i])
+    if (!m) { out.push(lines[i]); continue }
+    const cont = new RegExp(`^${m[1]}(?=\\S)`)
+    const run = [lines[i]]
+    let j = i + 1
+    while (j < lines.length && cont.test(lines[j])) { run.push(lines[j].slice(m[1].length)); j++ }
+    out.push(run.join(' '))
+    i = j - 1
+  }
+  return out.join('\n')
+}
+
 // `terminal` renders the body as one fixed-width block: every line is nowrap
 // and the stat-row/per-line-tabular reformatting is skipped, so the caller can
 // scale the whole block to fit (see fitTerminalBody). Used for the game-over
@@ -3591,7 +3542,15 @@ function renderBodyLines(rawBody: string, highlight: string, terminal = false): 
       line = line.replace(HANG_MARK, '')
       const pm = line.match(/^[^\s<][^<]*?:( +)(?=\S)/)
       const col = pm ? pm[0].length : 0
-      if (pm && pm[1].length >= 2 && col <= 18) hangStyle = ` style="--hang-col:${col}ch"`
+      // Hang wrapped text at the description column so the block stays aligned.
+      // Exception: the mundane-ego run-in form `'Of X': ` hangs at a compact
+      // 2ch default (its column is its full natural width, too deep on a
+      // phone). Don't gate on the padding-space count — a column-aligned
+      // artprop label whose name exactly fills the column has only ONE trailing
+      // space (e.g. `Corpsefed: `, padded to 11), and must still hang at its
+      // column to line up with its 2+-space siblings (`rMiasma:`, `^Drain:`).
+      // The quote prefix is what marks the run-in form, not the space count.
+      if (pm && col <= 18 && !line.startsWith("'")) hangStyle = ` style="--hang-col:${col}ch"`
     }
     if (!terminal && !hang) {
       const stat = tryStatRow(line)
@@ -3609,13 +3568,25 @@ function renderBodyLines(rawBody: string, highlight: string, terminal = false): 
         : 'overlay-line'
     // Indented prose sub-items ("    Your skill: 3.6", "    At 100%
     // training you would reach 18.0 in about 9.3 XLs." — describe.cc
-    // emits these with a 4-space indent): wrap with a hanging indent at
-    // the line's own depth so continuations stay aligned under the
-    // sub-item instead of falling flush-left. The leading spaces render
-    // on line 1 as-is; the negative text-indent/padding pair only moves
-    // the wrapped lines. Deeply indented lines (>18) are left alone.
+    // emits these with a 4-space indent; monster-status descriptions with a
+    // 3-space indent): wrap with a hanging indent at the line's own depth so
+    // continuations stay aligned under the sub-item instead of falling
+    // flush-left. The leading spaces render on line 1 as-is; the negative
+    // text-indent/padding pair only moves the wrapped lines. Deeply indented
+    // lines (>18) are left alone. Skip past any leading colour-markup tags:
+    // opens-only bodies (formatted_string::to_colour_string, e.g. msg.status)
+    // get reopened tags prepended at each line start by
+    // balanceColorTagsAcrossLines, so the indent no longer sits at column 0 —
+    // the tags are zero-width spans, so the literal-space hang still lines up.
+    // Darkgrey is the one exception: it is the quote/verse convention (see
+    // unwrapHangingIndents), never reflowed, so a darkgrey-led line stays flush.
+    // The remainder after the indent must hold real text — a paragraph-break
+    // line is `<colour>   </colour>` after balancing, all tags and spaces, and
+    // must not be hung.
     if (cls === 'overlay-line' && !hang) {
-      const ind = /^( {2,})\S/.exec(line)?.[1].length ?? 0
+      const m = /^((?:<[^>]+>)*)( {2,})(.*)$/.exec(line)
+      const hasText = !!m && m[3].replace(/<[^>]+>/g, '').trim() !== ''
+      const ind = m && hasText && !/<\/?darkgrey>/.test(m[1]) ? m[2].length : 0
       if (ind > 0 && ind <= 18) {
         cls += ' overlay-line--hang'
         hangStyle = ` style="--hang-col:${ind}ch"`
