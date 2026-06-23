@@ -12,8 +12,7 @@ Notable changes to PocketZot, newest first.
 ## 2026-06-22
 
 - Added 1.96 trillion new PocketZot logos. Each is procedurally generated
-  from actual ASCII-mode glyphs. At one per day, see them all in
-  5.4 billion years.
+  from actual ASCII-mode glyphs. At one a day, enough to outlast the Sun.
 
 ## 2026-06-17
 
