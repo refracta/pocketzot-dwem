@@ -86,9 +86,9 @@ const TAB_BUTTONS: Record<Exclude<TabKey, 'spells'>, TabButtonDef[][]> = {
     ],
     [
       { label: 'a',   title: 'Use ability',           text: 'a' },
-      { label: 'z',   title: 'Cast spell',            text: 'z' },
       { label: 'x',   title: 'Examine surroundings',  text: 'x' },
       { label: ',',   title: 'Pick up item',          text: ',' },
+      { label: 'p',   title: 'Trigger quivered at nearest', text: 'p' },
     ],
   ],
   macro: [
