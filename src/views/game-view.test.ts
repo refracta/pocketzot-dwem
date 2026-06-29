@@ -1010,3 +1010,61 @@ describe('spell harvest (silent I → Esc) + preface parsing', () => {
     })
   })
 })
+
+// Tapping a monster-panel row sends a describe click_cell; on a multi-occupant
+// tile the server answers with a selection menu, not a describe ui-push. The
+// menu handler must clear monsterPanelOpen so the Esc guard hands off to the
+// menu-close path — else the first Esc closes the panel locally (sending
+// nothing) and activeMenu blocks re-opening the list until a second Esc.
+describe('monster panel → server selection menu hand-off', () => {
+  const monsterList = (h: Harness) => h.view.querySelector<HTMLElement>('#monster-list')!
+  const panelRow = (h: Harness) => h.view.querySelector<HTMLElement>('.mp-row')
+  const escKeydown = () => document.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true } as KeyboardEventInit))
+  // Multi-occupant examine menu: no arrow-select flags, so it routes through
+  // showMenu and the Esc guard rather than menu-nav.
+  const examineMenu = {
+    msg: 'menu', title: { text: 'Examine which?' },
+    items: [{ text: 'an orc', hotkeys: [97] }, { text: 'a stone wall', hotkeys: [98] }],
+  }
+  const openPanelAndTapRow = (h: Harness) => {
+    // One hostile populates the list and panel (name + no no_exp passes the
+    // display filter); merge runs monsterListView.update on every map msg.
+    h.dispatch({ msg: 'map', cells: [{ x: 5, y: 5, g: 'o', col: 7, mon: { id: 1, name: 'orc', att: 1, type: 1 } }] })
+    monsterList(h).click()  // tap-anywhere opens the client-side panel
+    panelRow(h)!.click()    // tap a row → describe click_cell
+  }
+
+  it('tapping a panel row sends a describe click_cell', () => {
+    const h = setup()
+    openPanelAndTapRow(h)
+    expect(sent(h)).toContainEqual({ msg: 'click_cell', x: 5, y: 5, button: 3 })
+  })
+
+  it('forwards the first Esc to the server once a selection menu supersedes the panel', () => {
+    const h = setup()
+    openPanelAndTapRow(h)
+    h.dispatch(examineMenu)  // server answers the multi-occupant tile with a menu
+    h.send.mockClear()
+    escKeydown()
+    // Esc reaches the server — the panel flag was handed off. Pre-fix it was
+    // swallowed locally and nothing was sent.
+    expect(sent(h)).toContainEqual({ msg: 'key', keycode: 27 })
+  })
+
+  it('keeps the menu up on the single Esc, then re-opens the list once it closes', () => {
+    const h = setup()
+    openPanelAndTapRow(h)
+    h.dispatch(examineMenu)
+    escKeydown()
+    // Overlay stays on the menu until the server responds. Pre-fix the first
+    // Esc tore the panel down locally here.
+    expect(isHidden(overlay(h))).toBe(false)
+    expect(overlay(h).querySelector('.overlay-list')).not.toBeNull()
+    h.dispatch({ msg: 'close_menu' })  // server tears the menu down in response
+    expect(isHidden(overlay(h))).toBe(true)
+    monsterList(h).click()  // the list is responsive again on the first tap
+    expect(isHidden(overlay(h))).toBe(false)
+    expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
+  })
+})

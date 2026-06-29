@@ -1013,6 +1013,13 @@ export function buildGameView(
         // vs "(describe)" etc. Flag the rail stale; it re-harvests once the
         // player finishes and we're back at a command prompt (input_mode→1).
         if (m.tag === 'spell' && /\(adjust\)/i.test(titlePlain)) spellsDirty = true
+        // Like the ui-push case, a server menu supersedes the client panel. A
+        // panel-row tap sends a describe click_cell; on a multi-occupant tile
+        // the server answers with a selection menu, not a describe ui-push.
+        // Clear the flag so the Esc guard hands off to the menu-close path —
+        // else the first Esc closes the panel locally (never reaching the
+        // server) and the live menu blocks re-opening the list until a 2nd Esc.
+        monsterPanelOpen = false
         if (m.type === 'crt') showCrt(m.tag)
         else {
           if (m.replace) menuStack.pop()
