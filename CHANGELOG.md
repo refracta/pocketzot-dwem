@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-06-29
+
+- Fixed the monster list sometimes requiring a double-Escape to clear it.
+- Replaced 'z' since the quick-cast buttons make it obsolete.
+
 ## 2026-06-22
 
 - Added 1.96 trillion new PocketZot logos. Each is procedurally generated
