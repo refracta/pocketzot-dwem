@@ -63,14 +63,14 @@ export interface TileinfoModule {
 // cache, while different versions get fully isolated instances.
 const loaders = new Map<string, TileLoader>()
 
-// Tileinfo script loads in flight, keyed `${base}/${name}`, so the AMD shim
-// can route a define() back to the instance that appended the script tag even
-// if that instance has been evicted from `loaders` in the meantime (e.g. the
-// crypt painting more distinct versions than MAX_LOADERS). Without this the
-// evicted instance's module promise never settles — ensureLoaded hangs
-// silently. Entries are short-lived: added when the <script> is appended,
-// removed when it settles (define fired or onerror).
-const pendingTileinfo = new Map<string, TileLoader>()
+// Module script loads in flight (tileinfo-* and enums), keyed `${base}/${name}`,
+// so the AMD shim can route a define() back to the instance that appended the
+// script tag even if that instance has been evicted from `loaders` in the
+// meantime (e.g. the crypt painting more distinct versions than MAX_LOADERS).
+// Without this the evicted instance's module promise never settles —
+// ensureLoaded hangs silently. Entries are short-lived: added when the
+// <script> is appended, removed when it settles (define fired or onerror).
+const pendingModules = new Map<string, TileLoader>()
 
 // Bounds how many version-distinct atlas sets we keep resident (each holds a
 // few MB of decoded PNGs). A session realistically touches 1–3 versions; the
@@ -129,6 +129,16 @@ export class TileLoader {
   // can read named tile-id constants (e.g. mod.UNAWARE) for status overlays.
   getModule(name: string): Promise<TileinfoModule> {
     return this.loadTileinfo(name)
+  }
+
+  // Loads this version's enums.js — the server's own tile-flag layout tables
+  // (prepare_fg_flags / prepare_bg_flags), plus assorted protocol enums. Same
+  // AMD script-tag mechanism as tileinfo (memoized under module name 'enums');
+  // enums.js is dependency-free so it needs nothing beyond the shim. The
+  // return type is structural — the caller (flag-decode.ts setEnumsModule)
+  // validates the prepare_* exports before trusting it.
+  loadEnums(): Promise<{ [k: string]: unknown }> {
+    return this.loadModule('enums', 'enums.js')
   }
 
   async getAsync(tex: number, tileId: number): Promise<TileSprite> {
@@ -222,17 +232,24 @@ export class TileLoader {
   }
 
   private loadTileinfo(name: string): Promise<TileinfoModule> {
+    return this.loadModule(name, `tileinfo-${name}.js`)
+  }
+
+  // Shared AMD script-tag loader behind loadTileinfo and loadEnums: `name` is
+  // the module key (must match what the shim parses out of the script src),
+  // `file` the filename under this loader's gamedata base.
+  private loadModule(name: string, file: string): Promise<TileinfoModule> {
     const cached = this.modules.get(name)
     if (cached) return cached
     const p = new Promise<TileinfoModule>((resolve, reject) => {
       this.moduleResolvers.set(name, resolve)
-      pendingTileinfo.set(`${this.base}/${name}`, this)
+      pendingModules.set(`${this.base}/${name}`, this)
       const s = document.createElement('script')
-      s.src = `${this.base}/tileinfo-${name}.js`
+      s.src = `${this.base}/${file}`
       s.onerror = () => {
-        pendingTileinfo.delete(`${this.base}/${name}`)
+        pendingModules.delete(`${this.base}/${name}`)
         this.moduleResolvers.delete(name)
-        reject(new Error(`failed to load tileinfo-${name}.js`))
+        reject(new Error(`failed to load ${file}`))
       }
       document.head.appendChild(s)
     })
@@ -288,11 +305,17 @@ function installShim(): void {
       if (!cond) throw new Error(msg || 'assert failed')
     }
   }
-  const define = (deps: string[], factory: (...args: unknown[]) => TileinfoModule) => {
-    // `${base}/tileinfo-<name>.js` — base identifies the instance, name the
-    // module. Splitting on the last `/tileinfo-` segment yields both.
+  type Factory = (...args: unknown[]) => TileinfoModule
+  const define = (depsOrFactory: string[] | Factory, maybeFactory?: Factory) => {
+    // tileinfo-*.js calls `define(deps, factory)`; enums.js calls the one-arg
+    // `define(factory)` form (no dependencies). Normalize to (deps, factory).
+    const deps = typeof depsOrFactory === 'function' ? [] : depsOrFactory
+    const factory = typeof depsOrFactory === 'function' ? depsOrFactory : maybeFactory
+    if (!factory) return
+    // `${base}/tileinfo-<name>.js` or `${base}/enums.js` — base identifies
+    // the instance, name the module (enums.js registers as 'enums').
     const src = (document.currentScript as HTMLScriptElement | null)?.src ?? ''
-    const m = src.match(/^(.*)\/tileinfo-([a-z]+)\.js/)
+    const m = src.match(/^(.*)\/tileinfo-([a-z]+)\.js/) ?? src.match(/^(.*)\/(enums)\.js/)
     if (!m) return
     const base = m[1]
     const name = m[2]
@@ -301,8 +324,8 @@ function installShim(): void {
     // and routing only via `loaders` would strand its module promise. Fall
     // back to the registry for safety.
     const key = `${base}/${name}`
-    const loader = pendingTileinfo.get(key) ?? loaders.get(base)
-    pendingTileinfo.delete(key)
+    const loader = pendingModules.get(key) ?? loaders.get(base)
+    pendingModules.delete(key)
     if (!loader) return  // instance torn down while its script loaded
     Promise.all(deps.map((d) => loader.loadDep(d)))
       .then((args) => {

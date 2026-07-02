@@ -8,6 +8,7 @@ import { fitToWidth } from './fit-terminal'
 import { openAboutDoc, openChangelogDoc } from './docs'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
 import { classifyTransition } from '../ws/transition'
+import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 
 export function buildLobbyView(
   conn: WsConnection,
@@ -314,6 +315,15 @@ export function buildLobbyView(
       moreList.className = 'lobby-more-games-list'
       for (const g of otherGames) moreList.appendChild(makeGameBtn(g, 'lobby-btn-secondary'))
       details.appendChild(moreList)
+      // Advisory footnote, only when this server actually offers pre-cutoff
+      // versions (the parse fails open, so fork-only lists show nothing).
+      // Informs at the moment of intent; nothing is hidden or blocked.
+      if (otherGames.some(g => isBelowSupportCutoff(parseDcssVersion(g.gameId)))) {
+        const note = document.createElement('p')
+        note.className = 'lobby-more-games-note'
+        note.textContent = 'Versions before 0.24 predate PocketZot’s supported range — starting a new character there usually won’t work.'
+        details.appendChild(note)
+      }
       gamesEl.appendChild(details)
     }
   }

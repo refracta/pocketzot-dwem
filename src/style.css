@@ -566,6 +566,15 @@ html, body {
 .lobby-more-games > summary::before { content: "▸ "; }
 .lobby-more-games[open] > summary::before { content: "▾ "; }
 
+/* Advisory line under the expanded version list — only rendered when the
+   server offers pre-cutoff versions (see renderGameButtons in lobby.ts). */
+.lobby-more-games-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
 .lobby-section-title {
   font-size: 0.8rem;
   color: var(--text-dim);
@@ -849,6 +858,28 @@ html, body {
     "menu";
   overflow: hidden;
   outline: none;
+}
+
+/* Old-version advisory banner (maybeShowVersionNotice in game-view.ts):
+   floats over the map's top edge, tap-to-dismiss, auto-removed after a
+   few seconds. z-index above the floating log/rail tier (≤5), below
+   nothing that matters — server overlays replace the map wholesale. */
+.version-notice {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(92%, 30rem);
+  padding: 0.45rem 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-align: center;
+  cursor: pointer;
 }
 
 /* Map wrapper */

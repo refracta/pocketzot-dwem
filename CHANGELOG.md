@@ -9,6 +9,16 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-02
+
+- Monster markers in tile mode — status icons (asleep, poisoned, caught…),
+  threat and ally highlights, damage indicators — now display correctly on
+  older DCSS versions and forks, and automatically keep up with future trunk
+  changes.
+- The lobby's full version list now notes the 0.24 support cutoff, and
+  starting or watching a game on an older version shows a brief heads-up
+  with a way back to the lobby if character creation doesn't appear.
+
 ## 2026-07-01
 
 - Switching away from the app mid-game no longer lands you back on the login
@@ -31,8 +41,7 @@ Notable changes to PocketZot, newest first.
 ## 2026-06-17
 
 - Stash search (`Ctrl-F`) and similar text fields now work properly on
-  pre-0.34 DCSS versions. (Note that pre-0.34 versions are not officially
-  supported at this time.)
+  pre-0.34 DCSS versions.
 
 ## 2026-06-12
 

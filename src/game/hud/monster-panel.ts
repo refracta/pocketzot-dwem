@@ -1,6 +1,6 @@
 import type { MapStore, MonsterCell } from '../map/map-store'
 import { decodeColor } from '../map/colors'
-import { bgLo } from '../map/cell-flags'
+import { bgFlags } from '../map/flag-decode'
 import { appendTiles, appendIconOverlays, monsterTileSpec, prependDngnIndex, prependDngnLayer } from '../tiles/tile-view'
 import type { TileLoader } from '../tiles/tile-loader'
 import {
@@ -89,7 +89,7 @@ export class MonsterPanelView {
     // last) ends up at the bottom of the DOM stack, halo above it, threat
     // wash above that, summoner ring above that, sprite on top — same
     // bottom-up order as the map.
-    if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, tileEl, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
+    if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, tileEl, bgFlags(cell.t_bg).value, TILE_SCALE)
 
     const mdam = decodeMdam(cell?.fg)
     const tier = mdamTier(mdam)

@@ -17,7 +17,7 @@ import {
   prependDngnIndex, prependDngnLayer,
 } from '../tiles/tile-view'
 import type { TileLoader } from '../tiles/tile-loader'
-import { bgLo } from '../map/cell-flags'
+import { bgFlags } from '../map/flag-decode'
 import { getPref, setPref } from '../../prefs'
 
 // Up to MAX_ROWS top-sorted groups are listed. When more groups exist, the
@@ -390,7 +390,7 @@ export class MonsterListView {
       if (threat) prependDngnLayer(this.loader, stack, threat, TILE_SCALE)
       const halo = fgHaloDngnName(cell?.fg)
       if (halo) prependDngnLayer(this.loader, stack, halo, TILE_SCALE)
-      if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgLo(cell.t_bg) & 0xFFFF, TILE_SCALE)
+      if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgFlags(cell.t_bg).value, TILE_SCALE)
 
       // Damage shows as the ml-hp bar (rowData), so no MDAM overlay here.
       appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE)

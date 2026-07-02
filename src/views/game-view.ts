@@ -19,6 +19,8 @@ import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
 import { reflowSkillCrt } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
+import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
+import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { saveAvatar } from '../avatars'
 import { getPref, setPref } from '../prefs'
@@ -226,12 +228,30 @@ export function buildGameView(
   const monsterListView = new MonsterListView(store)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
+  // Fetch this version's enums.js flag tables and install them as the flag-
+  // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
+  // because the monster list/panel style attitude+threat from fg flags in
+  // ASCII mode too. The loader-identity guard drops a stale resolve if a
+  // mid-game version switch adopted a different loader while this one's
+  // script was still in flight. On failure, warn and stay on the bundled
+  // 0.34 fallback layout.
+  const adoptEnums = (l: TileLoader): void => {
+    void l.loadEnums()
+      .then((mod) => { if (loader === l) setEnumsModule(mod) })
+      .catch((err) => console.warn('enums.js unavailable; using bundled 0.34 flag layout', err))
+  }
+  // Fresh game: decode via the bundled fallback until this game's own enums.js
+  // lands. Also clears a previous game's module — the facade is app-global
+  // state, and this view (not app.ts) is the only place that knows game
+  // lifecycle, so reset-at-mount stands in for clear-at-exit.
+  setEnumsModule(null)
   // When the loader is already known at mount (handed up from the lobby as
   // initialLoader), wire it to the panels now so the persisted-pref tile swap
   // below paints sprites immediately. Otherwise the game_client handler does it.
   if (loader) {
     monsterListView.setLoader(loader)
     monsterPanel.setLoader(loader)
+    adoptEnums(loader)
   }
 
   const uiStack: UiPushMsg[] = []
@@ -362,6 +382,76 @@ export function buildGameView(
 
   const view = document.createElement('div')
   view.id = 'game-view'
+
+  // --- Old-version advisory (see dev-material/old-version-support.md) ---
+  // Below the 0.24 support cutoff we inform, never block: a dismissible
+  // banner on any parsed-old game, plus — for a *played* game only — a
+  // back-to-lobby door if NOTHING renders within the timeout (below 0.24
+  // the server has no newgame-choice; a fresh game can sit on a black
+  // screen). Any rendered content disarms it: the first `map` (resumed
+  // save), a txt/CRT screen (0.23 creation can arrive this way and is
+  // driveable from the virtual keyboard), a menu, or a ui-push. Version
+  // detection fails open (trunk/forks/hash dirs parse null → no notice),
+  // so this never touches modern games.
+  let versionNoticeShown = false
+  let creationGuardTimer: ReturnType<typeof setTimeout> | undefined
+  let mapSeen = false
+  const CREATION_GUARD_MS = 6000
+
+  function maybeShowVersionNotice(...candidates: Array<string | undefined>): void {
+    if (versionNoticeShown) return
+    const ver = parseDcssVersion(...candidates)
+    if (!isBelowSupportCutoff(ver)) return
+    versionNoticeShown = true
+
+    const banner = document.createElement('div')
+    banner.className = 'version-notice'
+    banner.textContent = `DCSS ${formatDcssVersion(ver!)} is older than PocketZot supports — expect rough edges. Tap to dismiss.`
+    banner.addEventListener('click', () => banner.remove())
+    setTimeout(() => banner.remove(), 15000)
+    view.appendChild(banner)
+
+    if (!spectating && creationGuardTimer === undefined) {
+      creationGuardTimer = setTimeout(() => {
+        creationGuardTimer = undefined
+        if (mapSeen) return
+        banner.remove()  // the dialog says it all; don't stack notices
+        renderOverlay('Unsupported version', () => {
+          const body = document.createElement('div')
+          body.className = 'dialog-body'
+          const p = document.createElement('p')
+          p.textContent = `Character creation on DCSS ${formatDcssVersion(ver!)} isn’t supported by PocketZot (versions before 0.24 predate the character-creation menus it supports).`
+          const btnRow = document.createElement('div')
+          btnRow.className = 'dialog-buttons'
+          const btn = document.createElement('button')
+          // 'button' class = the shared server-dialog button styling
+          // (.dialog-body .button in style.css).
+          btn.className = 'button'
+          btn.textContent = 'Back to lobby'
+          btn.addEventListener('click', () => {
+            conn.send({ msg: 'go_lobby' })
+            onLobby()
+          })
+          btnRow.appendChild(btn)
+          body.append(p, btnRow)
+          uiOverlay.appendChild(body)
+        })
+      }, CREATION_GUARD_MS)
+    }
+  }
+
+  function disarmCreationGuard(): void {
+    if (creationGuardTimer !== undefined) {
+      clearTimeout(creationGuardTimer)
+      creationGuardTimer = undefined
+    }
+  }
+
+  // Mount-time check covers games whose id already tells the story (the play
+  // button's game_id, e.g. "dcss-0.23") and the lobby-resolved loader; the
+  // game_client handler re-checks with the server's gamedata version for
+  // servers where neither is known yet at mount.
+  maybeShowVersionNotice(gameId, loader?.version)
 
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
@@ -696,6 +786,9 @@ export function buildGameView(
     // Spell harvest: __dcssHarvestSpells() fires a silent `I` and fills
     // __dcssSpellCache with the parsed memorised spells.
     ;(window as unknown as { __dcssHarvestSpells: () => void }).__dcssHarvestSpells = harvestSpells
+    // __dcssEnums() — the active server-loaded enums.js module driving flag
+    // decoding, or null while on the bundled 0.34 fallback (flag-decode.ts).
+    ;(window as unknown as { __dcssEnums: () => unknown }).__dcssEnums = activeEnumsModule
     // __dcssFakeSpells(n) — layout aid: pad the cache to n fake spells (cloning
     // the real harvested tiles so the icons still render, with distinct letters)
     // to eyeball rail/grid overflow + scrolling. Tapping a fake casts a bogus
@@ -828,6 +921,8 @@ export function buildGameView(
           loader = getTileLoader(conn.httpBase, msg.version)
           monsterListView.setLoader(loader)
           monsterPanel.setLoader(loader)
+          adoptEnums(loader)
+          maybeShowVersionNotice(gameId, msg.version)
           if (renderMode === 'tiles') {
             void (mapView as TileMapView).preloadAtlases(loader)
             monsterListView.update(store.getMonsters())
@@ -837,6 +932,10 @@ export function buildGameView(
       }
 
       case 'map': {
+        // A map frame means we're in (or resumed) a real game — the old-
+        // version creation guard's "nothing rendered" case can't apply.
+        mapSeen = true
+        disarmCreationGuard()
         if (msg.clear) store.clear()
         // vgrdc is resent on every map message even when it equals the
         // current view center; setViewCenter returns true only on a real
@@ -896,6 +995,11 @@ export function buildGameView(
       }
 
       case 'txt': {
+        // Renders a CRT screen / txt page / message — visible content, so the
+        // old-version creation guard's "nothing rendered" case can't apply
+        // (0.23 char creation arrives as a CRT text screen, driveable from
+        // the virtual keyboard).
+        disarmCreationGuard()
         const raw = msg as unknown as Record<string, unknown>
         const lines = raw['lines']
         if (raw['id'] && lines && typeof lines === 'object' && !Array.isArray(lines)) {
@@ -909,6 +1013,7 @@ export function buildGameView(
       }
 
       case 'ui-push': {
+        disarmCreationGuard()  // an overlay rendered — see the 'txt' case
         const pushMsg = msg as unknown as UiPushMsg
         // A server overlay supersedes our client-side monster panel; clear the
         // flag so subsequent map updates don't rewrite the overlay body.
@@ -1022,6 +1127,7 @@ export function buildGameView(
       }
 
       case 'menu': {
+        disarmCreationGuard()  // a menu rendered — see the 'txt' case
         const m = msg as unknown as MenuMsg
         const titlePlain = stripDcss(m.title?.text ?? '')
         // Silent spell harvest: capture the menu's default columns, then
@@ -1320,12 +1426,14 @@ export function buildGameView(
       case 'go_lobby':
       case 'close':
         resetHarvest()
+        disarmCreationGuard()
         autoHarvestedThisGame = false  // re-harvest for the next game
         spellsDirty = false  // no pending re-harvest carries into the next game
         onLobby()
         break
 
       case 'game_ended':
+        disarmCreationGuard()
         // Forward exit details so the lobby renders the exit dialog after the
         // layer switch. The trailing go_lobby + lobby list (often batched with
         // this) land on the lobby's message handler, not ours.

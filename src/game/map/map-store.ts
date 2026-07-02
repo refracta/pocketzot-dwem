@@ -1,11 +1,12 @@
 import type { CellUpdate, MonsterInfo } from '../../ws/types'
-import { bgLo } from './cell-flags'
+import { bgFlags } from './flag-decode'
 
 export interface Cell {
   g: string   // glyph
   col: number // packed color byte
-  // tile background; bits MM_UNSEEN=0x20000 / UNSEEN=0x40000 (lo word) indicate
-  // out-of-FOV. Same [lo, hi] encoding as `fg` — see TileInfo.bg / cell-flags.ts.
+  // tile background; the MM_UNSEEN / UNSEEN flags indicate out-of-FOV. Same
+  // [lo, hi] encoding as `fg`; stored raw and decoded by name at read time
+  // via flag-decode.ts (see TileInfo.bg).
   t_bg?: number | number[]
   // Tile foreground + overlays. Carried per cell (not just per monster) so
   // TileMapView can render items, clouds, ground icons, and the player avatar
@@ -61,10 +62,6 @@ export interface MonsterCell {
   x: number
   y: number
 }
-
-// From reference enums.js: MM_UNSEEN=0x00020000, UNSEEN=0x00040000.
-// When either is set, the cell has been explored but is not in the player's current FOV.
-const UNSEEN_MASK = 0x00060000
 
 // Cell-store key format: "x,y". The dirty Set returned by merge() holds these
 // keys and renderers decode them back to coords via parseCellKey — so the
@@ -167,10 +164,12 @@ export class MapStore {
       dirty.add(key)
 
       const existingMonCell = this.monsterMap.get(key)
-      // A cell is out of FOV when its t.bg has the UNSEEN or MM_UNSEEN bit set.
-      // Only treat as out-of-FOV when we have definitive t_bg evidence; if unknown, assume visible.
-      // UNSEEN/MM_UNSEEN live in the lo word — bgLo handles the [lo, hi] form.
-      const outOfFov = cell.t_bg !== undefined && (bgLo(cell.t_bg) & UNSEEN_MASK) !== 0
+      // A cell is out of FOV when its t.bg has the UNSEEN or MM_UNSEEN flag.
+      // Decoded by name via the flag facade so the bit positions follow the
+      // game version's own enums.js when loaded. An undefined t_bg decodes as
+      // 0 → both flags false — i.e. without definitive evidence, assume visible.
+      const bgf = bgFlags(cell.t_bg)
+      const outOfFov = !!(bgf.UNSEEN || bgf.MM_UNSEEN)
 
       // Track monster presence. 'mon' in u distinguishes explicit null from absent.
       if ('mon' in u) {
