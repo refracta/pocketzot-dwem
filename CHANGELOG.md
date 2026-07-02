@@ -14,7 +14,9 @@ Notable changes to PocketZot, newest first.
 - Switching away from the app mid-game no longer lands you back on the login
   screen: PocketZot now reconnects and resumes your game (or the game you were
   spectating) automatically when you switch back, even if the app was
-  reloaded in the meantime.
+  reloaded.
+- The login screen now shows your recently played characters, as they were
+  last seen. Tap to view the full gallery.
 
 ## 2026-06-29
 
