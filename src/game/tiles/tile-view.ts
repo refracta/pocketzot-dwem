@@ -23,7 +23,16 @@ export interface TileRef {
   // to the body sprite.
   xofs?: number
   yofs?: number
+  // Optional cell-relative y-clip (atlas px, 0 = none): crops the bottom of a
+  // doll part flagged TILEP_FLAG_CUT_BOTTOM (naga/armataur/merfolk/djinni torsos
+  // etc.). Mirrors the canvas renderer's drawSprite ymax; honored by paintSprite
+  // by shrinking the tile's height. Carried by dollTileSpec, unused by monsters.
+  ymax?: number
 }
+
+// Doll/mcache tile ids carry flag bits in the high word; the atlas index is the
+// low 16 bits (matches tile-map-view's TILE_ID_MASK).
+const TILE_ID_MASK = 0xffff
 
 // `expand`: grow the wrap on async sprite paint so larger-than-cell sprites
 // (huge monsters in describe popups: Serpent of Hell, dragons, ...) reserve
@@ -39,55 +48,76 @@ export function renderTiles(loader: TileLoader | null, tiles: TileRef[], scale =
   return wrap
 }
 
-// Builds a base-sprite tile list for a monster *or the player character*,
-// matching crawl-ref/.../cell_renderer.js draw_dolls. Inputs come from
-// either ui-push fields (msg.doll / msg.mcache / msg.fg_idx) or the cell
-// update fields (t.doll / t.mcache / low 16 bits of t.fg).
-//
-// Layering, in order:
+// Shared doll→mcache layering for both the monster panel (monsterTileSpec) and
+// the login-screen avatar strip (dollTileSpec), matching cell_renderer.js
+// draw_dolls. Order:
 //   1. doll parts (PLAYER atlas), each picking up per-part xofs/yofs from
-//      mcache when a matching part_id appears in both lists. doll's second
-//      tuple slot (ymax) is dropped here — it's the y-clip line that
-//      `TilesFramework::send_doll` in tileweb.cc sets to 18 for
-//      TILEP_FLAG_CUT_BOTTOM parts (naga / armataur / merfolk-water / djinni
-//      torsos, and some helms), and is honored by the in-game canvas renderer
-//      (tile-map-view.ts paintTile). Replicating it on this DOM-tile path
-//      would need a per-part CSS height crop; not done because nagas etc. in
-//      the monster panel are a polish issue, not a correctness one.
+//      mcache when a matching part_id appears in both lists.
 //   2. mcache parts (PLAYER atlas), drawn at their own xofs/yofs.
-//   3. fg_idx as a single MAIN tile, only when doll *and* mcache are both
-//      empty (small natural monsters that ship a single MAIN sprite id).
 //
-// Hostile monsters in practice carry only mcache (humanoid+equipment) or
-// only fg_idx (small natural). The doll branch is wired up so a future
-// player-avatar HUD/panel can reuse this helper with the player's doll
-// payload — the reference player render path is exactly this composition.
-export function monsterTileSpec(opts: {
-  fg_idx?: number
-  doll?: Array<[number, number]>
-  mcache?: Array<[number, number, number]> | null
-}): TileRef[] {
-  const { doll, mcache } = opts
+// The two callers differ only in two knobs:
+//   - `mask`: AND the low 16 bits off each id (TILE_ID_MASK). The player doll's
+//     ids carry CUT_BOTTOM/flip flags in the high word that must be stripped
+//     before indexing the atlas; monster doll ids don't, so monsters leave it off.
+//   - `keepYmax`: honor the doll part's `ymax` y-clip — the line that
+//     `TilesFramework::send_doll` in tileweb.cc sets to 18 for TILEP_FLAG_CUT_BOTTOM
+//     parts (naga / armataur / merfolk-water / djinni torsos, and some helms), so
+//     the torso doesn't double up over the species base. The login strip wants the
+//     exact in-game crop; the monster panel deliberately drops it (a polish-only
+//     difference there — a per-part CSS height crop wasn't worth it for the panel).
+function dollLayers(
+  doll: Array<[number, number]> | null | undefined,
+  mcache: Array<[number, number, number]> | null | undefined,
+  opts: { mask?: boolean; keepYmax?: boolean } = {},
+): TileRef[] {
   const out: TileRef[] = []
+  const idOf = opts.mask ? (id: number) => id & TILE_ID_MASK : (id: number) => id
 
   const offsetMap = mcache && mcache.length > 0
     ? new Map<number, [number, number]>(mcache.map(([t, x, y]) => [t, [x, y]]))
     : undefined
 
   if (doll && doll.length > 0) {
-    for (const [t] of doll) {
+    for (const [t, ymax] of doll) {
       const off = offsetMap?.get(t)
-      out.push({ t, tex: TEX.PLAYER, xofs: off?.[0], yofs: off?.[1] })
+      out.push({ t: idOf(t), tex: TEX.PLAYER, xofs: off?.[0], yofs: off?.[1], ymax: opts.keepYmax ? ymax : undefined })
     }
   }
   if (mcache && mcache.length > 0) {
     for (const [t, xofs, yofs] of mcache) {
-      out.push({ t, tex: TEX.PLAYER, xofs, yofs })
+      out.push({ t: idOf(t), tex: TEX.PLAYER, xofs, yofs })
     }
   }
+  return out
+}
+
+// Builds a base-sprite tile list for a monster. Inputs come from either ui-push
+// fields (msg.doll / msg.mcache / msg.fg_idx) or the cell update fields (t.doll /
+// t.mcache / low 16 bits of t.fg). doll/mcache layer via dollLayers; otherwise
+// fg_idx is drawn as a single MAIN tile (small natural monsters that ship one
+// sprite id). Hostile monsters in practice carry only mcache (humanoid+equipment)
+// or only fg_idx (small natural).
+export function monsterTileSpec(opts: {
+  fg_idx?: number
+  doll?: Array<[number, number]>
+  mcache?: Array<[number, number, number]> | null
+}): TileRef[] {
+  const out = dollLayers(opts.doll, opts.mcache)
   if (out.length > 0) return out
   if (opts.fg_idx && opts.fg_idx > 0) return [{ t: opts.fg_idx, tex: TEX.MAIN }]
   return []
+}
+
+// Builds the tile-stack spec for the *player's own doll* (login-screen avatar
+// strip). Same layering as the monster path but with both dollLayers knobs on:
+// it masks the high flag bits off each id and preserves the `ymax` CUT_BOTTOM
+// clip, reproducing tile-map-view's drawCell on the DOM-tile substrate so the
+// saved-character thumbnails match the in-game look.
+export function dollTileSpec(opts: {
+  doll?: Array<[number, number]> | null
+  mcache?: Array<[number, number, number]> | null
+}): TileRef[] {
+  return dollLayers(opts.doll, opts.mcache, { mask: true, keepYmax: true })
 }
 
 // Memoized id→width table for cell.icons stacking, rebuilt only when the
@@ -141,7 +171,7 @@ export function appendTiles(loader: TileLoader | null, wrap: HTMLElement, tiles:
     const child = document.createElement('div')
     child.className = 'tile'
     wrap.appendChild(child)
-    paintSprite(loader, child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0)
+    paintSprite(loader, child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0, t.ymax ?? 0)
   }
 }
 
@@ -177,12 +207,22 @@ export function prependDngnIndex(loader: TileLoader | null, wrap: HTMLElement, d
   }).catch((err) => console.warn('dngn tile load failed:', err))
 }
 
-function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number): void {
+function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number, ymax = 0): void {
   loader.getAsync(tex, id).then((s) => {
+    // ymax (atlas px from the cell top) crops the bottom of CUT_BOTTOM doll
+    // parts: take only the top `ymax - dyTop` rows of the sprite by shrinking
+    // the tile's height, matching tile-map-view's drawSprite. dyTop is where
+    // this sprite starts; a clip at or above it hides the part entirely.
+    const dyTop = s.oy + yofs
+    let srcH = s.h
+    if (ymax > 0 && ymax < dyTop + s.h) {
+      if (ymax <= dyTop) return  // fully clipped — leave the empty placeholder
+      srcH = ymax - dyTop
+    }
     const w = s.w * scale
-    const h = s.h * scale
+    const h = srcH * scale
     const left = (s.ox + xofs) * scale
-    const top = (s.oy + yofs) * scale
+    const top = dyTop * scale
     child.style.width = `${w}px`
     child.style.height = `${h}px`
     child.style.left = `${left}px`

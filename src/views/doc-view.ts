@@ -1,4 +1,5 @@
 import { renderMarkdown, type MdOptions } from '../util/markdown'
+import { mountOverlay } from './overlay'
 
 // A self-contained, full-screen modal that renders a markdown document. Mounted
 // on document.body so it floats above whichever view is active (login, lobby),
@@ -15,16 +16,7 @@ export function openDocView(title: string, markdown: string, opts?: MdOptions): 
       <div class="doc-body">${renderMarkdown(markdown, opts)}</div>
     </div>
   `
-  document.body.appendChild(backdrop)
-
-  function close(): void {
-    backdrop.remove()
-    document.removeEventListener('keydown', onKey)
-  }
-  function onKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') close()
-  }
-  document.addEventListener('keydown', onKey)
+  const close = mountOverlay(backdrop) // body-mount + Escape-to-close
   backdrop.querySelector('.doc-close')!.addEventListener('click', close)
   // Tapping the dimmed area outside the card dismisses it.
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })

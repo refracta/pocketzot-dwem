@@ -173,6 +173,10 @@ export interface ResumeSuccess {
   outcome: 'game' | 'lobby'
   spectating?: SpectateTarget
   loader?: TileLoader
+  // game_id of the replayed play (absent for watch resumes) — forwarded to the
+  // rebuilt game view so the login-doll shelf keeps capturing after a resume;
+  // without it maybeSaveAvatar stays disabled for the rest of the session.
+  gameId?: string
   // Present when the lobby outcome came from game_ended (the replayed play
   // crashed on startup, or the spectated game ended mid-resume): the lobby
   // renders its exit dialog from this, same as the normal in-game path —
@@ -283,7 +287,12 @@ export function resumeOnConn(
         if (transition.type === 'capture-loader') {
           loader = getTileLoader(conn.httpBase, transition.version)
         } else {
-          done({ outcome: 'game', spectating: transition.spectating, loader })
+          done({
+            outcome: 'game',
+            spectating: transition.spectating,
+            loader,
+            gameId: ctx.kind === 'play' ? ctx.gameId : undefined,
+          })
         }
         return
       }
@@ -383,7 +392,7 @@ export interface AttemptResumeOpts {
   guest: boolean
   // Resume landed back in the game: adopt the new connection, then mount the
   // game view. attemptResume flushes buffered messages after this returns.
-  onGame: (conn: WsConnection, spectating?: SpectateTarget, loader?: TileLoader) => void
+  onGame: (conn: WsConnection, spectating?: SpectateTarget, loader?: TileLoader, gameId?: string) => void
   // Server routed us to the lobby instead (play refused/aborted, or the game
   // ended mid-resume — `exit` carries the game_ended details in that case).
   onLobby: (conn: WsConnection, exit?: GameExit) => void
@@ -453,7 +462,7 @@ export function attemptResume(opts: AttemptResumeOpts): void {
         // This disconnection is resolved — drop its stamp before handing over
         // (onGame may immediately mark a fresh one if we're hidden again).
         clearProactiveClose()
-        if (r.outcome === 'game') opts.onGame(conn, r.spectating, r.loader)
+        if (r.outcome === 'game') opts.onGame(conn, r.spectating, r.loader, r.gameId)
         else opts.onLobby(conn, r.exit)
         r.flush()
         return

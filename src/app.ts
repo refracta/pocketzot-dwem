@@ -72,19 +72,21 @@ function showLobby(username: string, guest: boolean, exit?: GameExit): void {
     conn!,
     username,
     guest,
-    (spectating, loader) => showGame(spectating, loader),
+    (spectating, loader, gameId) => showGame(spectating, loader, gameId),
     () => showLogin(),
     exit,
   ))
 }
 
-function showGame(spectating?: SpectateTarget, loader?: TileLoader): void {
+function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
   state = 'game'
   setView(buildGameView(
     conn!,
     (exit) => showLobby(currentUsername, currentIsGuest, exit),
     spectating,
     loader,
+    currentUsername,
+    gameId,
   ))
 }
 
@@ -116,7 +118,7 @@ function startResume(wsUrl: string): void {
     wsUrl,
     username: currentUsername,
     guest: currentIsGuest,
-    onGame: (newConn, spectating, loader) => {
+    onGame: (newConn, spectating, loader, gameId) => {
       resumeActive = false
       adoptConn(newConn)
       // iOS grants a brief JS window after backgrounding, so an in-flight
@@ -128,7 +130,7 @@ function startResume(wsUrl: string): void {
         markProactiveClose()
         newConn.close()
       }
-      showGame(spectating, loader)
+      showGame(spectating, loader, gameId)
     },
     onLobby: (newConn, exit) => {
       resumeActive = false

@@ -125,6 +125,83 @@ html, body {
   .login-title .logo-ch--lit { animation: none; }
 }
 
+/* Recently-played character dolls (see src/avatars.ts): a bare, centered row of
+   doll sprites under the title, painted as DOM tile-stacks (.tile-stack). No
+   frame/label — just the cutouts. :empty collapses it so it takes no space
+   until login.ts appends the first doll whose atlas loaded. Every doll is a
+   uniform 32px-cell stack (64px at 2x); the species base part is grid-anchored
+   feet-at-floor by its authored offset (CUT_BOTTOM only clips the overlapping
+   torso, never the base — tilepick-p.cc), so dolls already share a floor line.
+   align-items:flex-end then aligns the (equal-height) box bottoms — a no-op
+   today, kept so the row stays floor-aligned if a box height ever varied. */
+.login-avatars {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  min-height: 64px;
+  cursor: pointer;            /* the row taps through to the crypt (full history) */
+  touch-action: manipulation; /* no iOS double-tap zoom on the tap target */
+}
+.login-avatars:empty { display: none; }
+
+/* Full-screen "crypt": the complete retained character history (src/avatars.ts),
+   a vertical-scrolling 4-wide grid of doll sprites. Opened by tapping the login
+   doll strip; mounted on body above the login view (doc-overlay z-index tier). */
+.crypt-view {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.crypt-header {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+           0.5rem max(1rem, env(safe-area-inset-left));
+}
+/* Mirrors .lobby-header's bar (1rem container padding + 36px centered row) so the
+   "← Back" button lands in the same spot as the lobby/spectate back button. The
+   margin-bottom separates the nav button from the heading so they don't cluster. */
+.crypt-topbar {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  margin-bottom: 1.25rem;
+}
+/* Rotating thematic line (src/views/crypt-flavor.ts): prose, clearly smaller than
+   the logo wordmark. The crypt's sole heading. */
+.crypt-flavor {
+  margin: 0.4rem 0 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+.crypt-flavor:empty { display: none; }
+/* Centered wrapping rows rather than a fixed 4-column grid: a lone character sits
+   centered (reads as intentional, not stranded top-left), full rows center, and the
+   last row of many centers too. align-content:flex-start keeps rows packed at the
+   top (room to grow below); align-items:flex-end floor-aligns dolls within a row. */
+.crypt-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  align-items: flex-end;
+  gap: 1rem 0.5rem;
+  padding: 1rem max(1rem, env(safe-area-inset-right))
+           max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
 .login-section { margin-bottom: 1.5rem; }
 .login-spectate-section { margin-bottom: 0; }
 

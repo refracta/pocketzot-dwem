@@ -96,6 +96,9 @@ describe('resumeOnConn — played game', () => {
     const r = await p
     expect(r.outcome).toBe('game')
     expect(r.spectating).toBeUndefined()
+    // Forwarded to the rebuilt game view so the login-doll shelf keeps
+    // capturing after a resume (it needs the game_id as its identity key).
+    expect(r.gameId).toBe('dcss-0.34')
   })
 
   it('captures a pre-transition game_client loader (CPO ordering)', async () => {
@@ -328,6 +331,7 @@ describe('resumeOnConn — spectating', () => {
     const r = await p
     expect(r.outcome).toBe('game')
     expect(r.spectating).toEqual({ username: 'bob' })
+    expect(r.gameId).toBeUndefined() // no doll capture for spectated games
   })
 
   it('marks a game_ended mid-resume as spectated (watched game finished)', async () => {

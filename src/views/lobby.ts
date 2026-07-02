@@ -13,10 +13,18 @@ export function buildLobbyView(
   conn: WsConnection,
   username: string,
   guest: boolean,
-  onGameStart: (spectating?: SpectateTarget, loader?: TileLoader) => void,
+  onGameStart: (spectating?: SpectateTarget, loader?: TileLoader, gameId?: string) => void,
   onDisconnect: () => void,
   exit?: GameExit,
 ): HTMLElement {
+  // game_id of the version line the user clicked Play on, captured at click time
+  // and forwarded to the game view (for the login-screen doll shelf's identity
+  // key). Always set before a lobby→game transition: on every DGL server (i.e.
+  // all public servers) entering a game requires a `play` request, which only
+  // the Play button sends — the server never auto-resumes a running game on
+  // login (it always returns to the lobby). Empty only for spectated games,
+  // which the shelf ignores anyway.
+  let playedGameId = ''
   const games = new Map<string, LobbyEntry>()
   // Wall-clock timestamp at which each idle game first went idle. Server only
   // emits idle_time on the toggle, not continuously, so we interpolate locally
@@ -152,7 +160,11 @@ export function buildLobbyView(
         // own handler resolves the loader instead.
         activeLoader = getTileLoader(conn.httpBase, transition.version)
       } else {
-        onGameStart(transition.spectating, activeLoader ?? undefined)
+        // playedGameId is only set by the play button (makeGameBtn); a watch
+        // transition carries transition.spectating instead, and the game view
+        // ignores gameId when spectating (it saves avatars only for your own
+        // played chars), so forwarding it unconditionally is safe.
+        onGameStart(transition.spectating, activeLoader ?? undefined, playedGameId)
       }
       return
     }
@@ -318,6 +330,9 @@ export function buildLobbyView(
         { kind: 'play', gameId: g.gameId },
         { wsUrl: conn.wsUrl, username, guest },
       )
+      // Also stashed for the avatar shelf: forwarded to the game view at the
+      // transition so a played char's doll can be saved under its game_id.
+      playedGameId = g.gameId
       conn.send({ msg: 'play', game_id: g.gameId })
     })
     return btn

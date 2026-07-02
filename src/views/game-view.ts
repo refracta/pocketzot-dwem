@@ -20,6 +20,7 @@ import { extractSkillHotkeys } from './skill-hotkeys'
 import { reflowSkillCrt } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { saveAvatar } from '../avatars'
 import { getPref, setPref } from '../prefs'
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
@@ -177,6 +178,8 @@ export function buildGameView(
   onLobby: (exit?: GameExit) => void,
   spectating?: SpectateTarget,
   initialLoader?: TileLoader,
+  username = '',
+  gameId = '',
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
@@ -206,6 +209,17 @@ export function buildGameView(
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
   // created view, which otherwise starts at zero until the next player message.
   const playerStats: { hp?: number; hp_max?: number; mp?: number; mp_max?: number } = {}
+  // Login-screen character-doll shelf (see ../avatars + maybeSaveAvatar). The
+  // character name (from player) is needed to store a recipe; lastDollSig dedups
+  // unchanged appearances. The gamedata version is read off `loader` (above) at
+  // save time, so it's available whether game_client arrived in the lobby (CPO)
+  // or in-view (CDI). Both reset per game (fresh closure).
+  let charName = ''
+  let lastDollSig = ''
+  // Most recent player.turn, handed to saveAvatar so the shelf can tell a reroll
+  // from the same character continuing (the turn count resets for a new char — see
+  // ../avatars). Delta-encoded after the game-start snapshot, so hold the last seen.
+  let lastTurn: number | undefined
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
@@ -638,6 +652,40 @@ export function buildGameView(
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
   }
 
+  // Save the player's current doll as a login-screen avatar recipe when their
+  // appearance changes. Render-mode-independent: the doll/mcache layers ride in
+  // the player's map cell whatever we render (ASCII or tiles), and we store only
+  // the tile ids + gamedata location — the ~1 MB atlas is fetched later, on the
+  // login screen, never here. Skips spectated games (the shelf is *your* chars)
+  // and the pre-name character-creation screens (charName still empty). Called
+  // only from the 'map' handler (the one path that carries the doll); `player`
+  // messages never do. The server re-sends the doll on every *move* (not just on
+  // change), so the lastDollSig check is what filters those down to genuine
+  // appearance changes — it short-circuits the common case before any write.
+  function maybeSaveAvatar(): void {
+    // Need the identity (gameId, the dedup key) and the gamedata loader (whose
+    // version is the saved atlas URL) before storing. gameId comes from the
+    // lobby at mount; the loader is seeded from game_client whether it arrived
+    // in the lobby (CPO) or in-view (CDI); name from the first player snapshot —
+    // all land early in a played game. charName gates out the pre-name
+    // character-creation screens.
+    if (spectating || !charName || !gameId || !loader) return
+    const cell = store.get(store.playerPos.x, store.playerPos.y)
+    if (!cell) return
+    const doll = cell.doll ?? null
+    const mcache = cell.mcache ?? null
+    if (!doll?.length && !mcache?.length) return
+    const sig = JSON.stringify([doll, mcache])
+    if (sig === lastDollSig) return
+    lastDollSig = sig
+    // The turn count is the new-character signal: ../avatars appends when it drops
+    // below the slot's current entry (a fresh char reset it to 0), else upserts.
+    saveAvatar({
+      wsUrl: conn.wsUrl, username, gameId, charName,
+      httpBase: conn.httpBase, version: loader.version, doll, mcache,
+    }, { turn: lastTurn })
+  }
+
   // Dev-only console hook so the tile mode (otherwise only a hidden
   // two-finger long-press) can be toggled from desktop Safari, which has
   // no TouchEvent constructor to synthesize the gesture.
@@ -799,10 +847,13 @@ export function buildGameView(
         else mapView.render(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
+        maybeSaveAvatar()
         break
       }
 
       case 'player': {
+        if (msg.name) charName = msg.name
+        if (msg.turn !== undefined) lastTurn = msg.turn // for the avatar shelf; see lastTurn decl
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
           // setViewCenter reports whether the center actually moved; reuse that

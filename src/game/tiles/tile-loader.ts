@@ -63,6 +63,15 @@ export interface TileinfoModule {
 // cache, while different versions get fully isolated instances.
 const loaders = new Map<string, TileLoader>()
 
+// Tileinfo script loads in flight, keyed `${base}/${name}`, so the AMD shim
+// can route a define() back to the instance that appended the script tag even
+// if that instance has been evicted from `loaders` in the meantime (e.g. the
+// crypt painting more distinct versions than MAX_LOADERS). Without this the
+// evicted instance's module promise never settles — ensureLoaded hangs
+// silently. Entries are short-lived: added when the <script> is appended,
+// removed when it settles (define fired or onerror).
+const pendingTileinfo = new Map<string, TileLoader>()
+
 // Bounds how many version-distinct atlas sets we keep resident (each holds a
 // few MB of decoded PNGs). A session realistically touches 1–3 versions; the
 // cap is a leak backstop, not a tuning knob. Evicting a base only drops it
@@ -80,7 +89,7 @@ export function getTileLoader(httpBase: string, version: string): TileLoader {
     return existing
   }
   installShim()
-  const loader = new TileLoader(base)
+  const loader = new TileLoader(base, version)
   loaders.set(base, loader)
   while (loaders.size > MAX_LOADERS) {
     const oldest = loaders.keys().next().value as string | undefined
@@ -94,6 +103,11 @@ export class TileLoader {
   // Public so the routing shim and callers can identify this instance; never
   // mutated after construction.
   readonly base: string
+  // The gamedata version dir this loader is pinned to (the `${version}` in
+  // `base`). Exposed so callers needing the version — e.g. the login doll shelf
+  // storing a recipe's atlas location — can read it off the loader they already
+  // hold, rather than tracking a parallel copy that can fall out of sync.
+  readonly version: string
   private atlases = new Map<string, Promise<HTMLImageElement>>()
   private modules = new Map<string, Promise<TileinfoModule>>()
   private moduleResolvers = new Map<string, (m: TileinfoModule) => void>()
@@ -106,8 +120,9 @@ export class TileLoader {
 
   // Use getTileLoader() rather than `new TileLoader()` directly so instances
   // are registry-memoized (and reachable by the routing shim).
-  constructor(base: string) {
+  constructor(base: string, version: string) {
     this.base = base
+    this.version = version
   }
 
   // Returns a tileinfo module by texture name (e.g. 'icons') so callers
@@ -211,9 +226,11 @@ export class TileLoader {
     if (cached) return cached
     const p = new Promise<TileinfoModule>((resolve, reject) => {
       this.moduleResolvers.set(name, resolve)
+      pendingTileinfo.set(`${this.base}/${name}`, this)
       const s = document.createElement('script')
       s.src = `${this.base}/tileinfo-${name}.js`
       s.onerror = () => {
+        pendingTileinfo.delete(`${this.base}/${name}`)
         this.moduleResolvers.delete(name)
         reject(new Error(`failed to load tileinfo-${name}.js`))
       }
@@ -279,8 +296,14 @@ function installShim(): void {
     if (!m) return
     const base = m[1]
     const name = m[2]
-    const loader = loaders.get(base)
-    if (!loader) return  // instance evicted/torn down while its script loaded
+    // Prefer the instance that appended this script tag (tracked while the
+    // load is in flight) — it may have been evicted from the registry since,
+    // and routing only via `loaders` would strand its module promise. Fall
+    // back to the registry for safety.
+    const key = `${base}/${name}`
+    const loader = pendingTileinfo.get(key) ?? loaders.get(base)
+    pendingTileinfo.delete(key)
+    if (!loader) return  // instance torn down while its script loaded
     Promise.all(deps.map((d) => loader.loadDep(d)))
       .then((args) => {
         const mod = factory(...args)

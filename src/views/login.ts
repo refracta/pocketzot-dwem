@@ -6,6 +6,9 @@ import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../server
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
 import { decorateLogo } from '../logo'
+import { listAvatars } from '../avatars'
+import { paintAvatars } from './avatar-tiles'
+import { openCrypt } from './crypt-view'
 
 export interface LoginResult {
   conn: WsConnection
@@ -76,6 +79,7 @@ export function buildLoginView(
   view.innerHTML = `
     <div class="login-card">
       <h1 class="login-title">PocketZot</h1>
+      <div id="login-avatars" class="login-avatars"></div>
 
       ${hasSessions ? `
       <section id="resume-section" class="login-section">
@@ -150,6 +154,28 @@ export function buildLoginView(
   })
 
   renderResumeButtons()
+  renderAvatars()
+
+  // Shelf of your recently-played character dolls (see ../avatars + ./avatar-tiles),
+  // newest at the left. One newest-first order is shared with the crypt grid (newest
+  // top-left), so the visible row reads as the crypt's top row — the head you see
+  // here is the same dolls in the same order that lead the full grid. Tapping the
+  // row opens the crypt (the full history). The strip stays collapsed (`:empty`)
+  // until at least one doll's atlas resolves, so the tap target only exists when
+  // there's something to show.
+  function renderAvatars(): void {
+    const strip = view.querySelector<HTMLElement>('#login-avatars')
+    if (!strip) return
+    void paintAvatars(strip, listAvatars(), 2, 'login-avatar')
+    strip.setAttribute('role', 'button')
+    strip.setAttribute('tabindex', '0')
+    strip.setAttribute('aria-label', 'View all characters')
+    const open = (): void => { if (strip.childElementCount) openCrypt() }
+    strip.addEventListener('click', open)
+    strip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() }
+    })
+  }
 
   function renderResumeButtons(): void {
     const section = view.querySelector<HTMLElement>('#resume-section')
