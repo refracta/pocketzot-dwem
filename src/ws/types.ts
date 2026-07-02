@@ -128,6 +128,16 @@ export type ServerMsg =
   | { msg: 'hide_dialog' }
   | { msg: 'game_started' }
   | { msg: 'watching_started'; username: string }
+  // Sent in response to `play` when a previous crawl process for this user
+  // still holds the dgamelaunch lockfile (common after an iOS app-swap: the
+  // zombie socket hasn't timed out server-side yet). The server waits
+  // `timeout` seconds, SIGHUPs the old process so it saves, then proceeds to
+  // game_started; hide_dialog follows when the wait resolves.
+  | { msg: 'stale_processes'; timeout: number; game: string }
+  // Sent if the SIGHUP above didn't kill the stale process within ~10s more.
+  // The client must answer with {msg:'force_terminate', answer:boolean};
+  // true = SIGABRT the old process (skips saving), false = abort the play.
+  | { msg: 'force_terminate?' }
   | { msg: 'game_ended'; reason: string; message?: string; dump?: string }
   | { msg: 'go_lobby' }
   | { msg: 'lobby_entry' } & LobbyEntry
@@ -233,6 +243,7 @@ export type ClientMsg =
   | { msg: 'register'; username: string; password: string; email?: string }
   | { msg: 'play'; game_id: string }
   | { msg: 'watch'; username: string }
+  | { msg: 'force_terminate'; answer: boolean }
   | { msg: 'go_lobby' }
   | { msg: 'input'; text: string }
   | { msg: 'key'; keycode: number }

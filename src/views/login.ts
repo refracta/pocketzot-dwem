@@ -1,6 +1,7 @@
 import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
-import { clearSession, listSessions, saveSession, type StoredSession } from '../auth/session'
+import { listSessions, saveSession, type StoredSession } from '../auth/session'
+import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
@@ -13,7 +14,10 @@ export interface LoginResult {
 }
 
 export function buildLoginView(
-  onLogin: (result: LoginResult) => void
+  onLogin: (result: LoginResult) => void,
+  // Shown in the error slot on mount — how the app explains an involuntary
+  // trip back here (connection lost, auto-resume gave up).
+  notice?: string,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
@@ -105,6 +109,11 @@ export function buildLoginView(
 
   decorateLogo(view.querySelector<HTMLElement>('.login-title')!)
 
+  if (notice) {
+    errorEl.textContent = notice
+    errorEl.style.display = ''
+  }
+
   for (const s of KNOWN_SERVERS) {
     const o1 = document.createElement('option')
     o1.value = s.wsUrl; o1.textContent = s.label
@@ -177,23 +186,18 @@ export function buildLoginView(
       return
     }
 
-    // Refresh the rotating cookie on every successful (re)login.
-    conn.onLoginCookie = (cookie, expiresDays) => {
-      saveSession(s.wsUrl, s.username, cookie, expiresDays)
-    }
-
-    conn.send({ msg: 'token_login', cookie: s.cookie })
-
-    listenOnce(conn, (msg) => {
-      if (msg.msg === 'login_success') {
-        conn.send({ msg: 'set_login_cookie' })
-        onLogin({ conn, username: msg.username })
-      } else if (msg.msg === 'login_fail') {
-        clearSession(s.wsUrl, s.username)
+    tokenLogin(conn, s, {
+      onSuccess: (username, flush) => {
+        // onLogin swaps in the lobby view, which takes over conn.onMessage;
+        // flush() then replays the pre-login lobby snapshot into it.
+        onLogin({ conn, username })
+        flush()
+      },
+      onFail: () => {
         conn.close()
-        showError('Saved session expired — please log in again.')
+        showError(SESSION_EXPIRED_NOTICE)
         renderResumeButtons()
-      }
+      },
     })
   }
 

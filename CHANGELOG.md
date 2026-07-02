@@ -9,6 +9,13 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-01
+
+- Switching away from the app mid-game no longer lands you back on the login
+  screen: PocketZot now reconnects and resumes your game (or the game you were
+  spectating) automatically when you switch back, even if the app was
+  reloaded in the meantime.
+
 ## 2026-06-29
 
 - Fixed the monster list sometimes requiring a double-Escape to clear it.

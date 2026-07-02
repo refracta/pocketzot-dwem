@@ -2873,3 +2873,85 @@ html, body {
   .login-account-tag { padding: 0.2rem 0.4rem; font-size: 0.72rem; }
   .login-footer { margin-top: 0.75rem; font-size: 0.75rem; }
 }
+
+/* ── Reconnect overlay (src/reconnect.ts) ───────────── */
+/* Floats over the frozen game view while auto-resume replays login + play
+   after an unexpected socket drop (iOS app-swap). Above the doc modal —
+   nothing should obscure connection status. */
+.reconnect-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+}
+.reconnect-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  max-width: 22rem;
+  background: var(--surface);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  padding: 1.5rem 1.75rem;
+  font-family: var(--font-mono);
+}
+.reconnect-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: reconnect-spin 0.9s linear infinite;
+}
+@keyframes reconnect-spin { to { transform: rotate(360deg); } }
+.reconnect-status {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.reconnect-question {
+  color: var(--warn);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.reconnect-actions { display: flex; gap: 0.75rem; }
+.reconnect-btn {
+  padding: 0.5rem 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.reconnect-btn:active { background: var(--surface2); }
+.reconnect-force-yes { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
+
+/* Yes/no row inside the lobby notice (force_terminate? on the manual path). */
+.lobby-notice-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.lobby-notice-actions button {
+  padding: 0.4rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lobby-notice-actions button:active { background: var(--surface2); }
