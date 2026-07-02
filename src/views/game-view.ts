@@ -207,6 +207,41 @@ export function buildGameView(
   // only paint once they're handed this loader.
   let loader: TileLoader | null = initialLoader ?? null
   let mapView: MapView | TileMapView = new MapView(store)
+  // Coalesced map rendering. A turn's `player` and `map` (plus any animation
+  // frames) usually arrive in one WS batch and dispatch within one task;
+  // rendering inside each handler meant the player-pan fullRender painted the
+  // *stale* store at the new center, then the map merge rendered again — all
+  // before the browser's next paint, so the first pass was pure wasted work.
+  // Handlers now schedule instead: store mutations stay synchronous, and one
+  // microtask flush (after the whole batch) paints the final state once. A
+  // pending full render subsumes any queued dirty set.
+  let pendingDirty: Set<string> | null = null
+  let pendingFull = false
+  let renderQueued = false
+  const scheduleRender = (dirty?: Set<string>): void => {
+    if (!dirty) {
+      pendingFull = true
+      pendingDirty = null
+    } else if (!pendingFull) {
+      // First dirty set of the flush window is adopted as-is (merge() returns
+      // a fresh Set per message); later ones union into it.
+      if (pendingDirty) for (const k of dirty) pendingDirty.add(k)
+      else pendingDirty = dirty
+    }
+    if (renderQueued) return
+    renderQueued = true
+    queueMicrotask(() => {
+      renderQueued = false
+      const full = pendingFull
+      const dirtySet = pendingDirty
+      pendingFull = false
+      pendingDirty = null
+      // Read `mapView` at flush time: a render-mode swap between schedule and
+      // flush should paint the live view, not the discarded one.
+      if (full) mapView.fullRender()
+      else if (dirtySet) mapView.render(dirtySet)
+    })
+  }
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
   // created view, which otherwise starts at zero until the next player message.
@@ -942,8 +977,8 @@ export function buildGameView(
         // pan, so we can keep the dirty-render path live in steady state.
         const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
         const dirty = store.merge(msg.cells ?? [])
-        if (msg.clear || panned) mapView.fullRender()
-        else mapView.render(dirty)
+        if (msg.clear || panned) scheduleRender()
+        else scheduleRender(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
         maybeSaveAvatar()
@@ -957,11 +992,13 @@ export function buildGameView(
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
           // setViewCenter reports whether the center actually moved; reuse that
           // instead of recomputing the prev/current comparison here. (Same gate
-          // as the 'map' case — full redraw only on a real pan.)
-          if (mapView.setViewCenter(store.playerPos)) mapView.fullRender()
+          // as the 'map' case — full redraw only on a real pan.) Scheduled, not
+          // rendered: the same batch's `map` message merges this turn's deltas
+          // before the flush, so the full render paints the fresh store once.
+          if (mapView.setViewCenter(store.playerPos)) scheduleRender()
         }
         // Feed HP/MP to the renderer (tile mode draws under-tile mini-bars).
-        // After any fullRender above, so the player cell repaints with fresh
+        // Runs before the scheduled flush, so a full render picks up the fresh
         // values; merged into playerStats so a later tile-mode swap can seed.
         if (msg.hp !== undefined) playerStats.hp = msg.hp
         if (msg.hp_max !== undefined) playerStats.hp_max = msg.hp_max

@@ -70,6 +70,13 @@ export class MonsterListView {
   // Why positional and not keyed by monster identity: two groups can sort
   // apart on a field outside the prior `att|type|name|clientid` cache key.
   private rows: RowCache[] = []
+  // ASCII-path equivalent of the tile path's per-row sig cache: the exact
+  // HTML string last assigned to element.innerHTML by renderAscii /
+  // renderCollapsed, or null whenever any other path owns the DOM. update()
+  // runs on every `map` message (dozens per action during animations), and
+  // the built HTML already encodes every visual input — identical string
+  // means the rebuild would be a no-op, so skip the innerHTML churn.
+  private lastHtml: string | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
   // Sticky across map updates, encounter cycles, empty-view intervals,
   // and page reloads (persisted via prefs.ts → localStorage). Only the
@@ -112,6 +119,7 @@ export class MonsterListView {
     if (mode === this.mode) return
     this.mode = mode
     this.rows.length = 0
+    this.lastHtml = null
     this.element.innerHTML = ''
     // Clear defensively — `update()` re-asserts this from groups when it
     // runs, but if lastMonsters is null (mode swap before any monsters
@@ -144,6 +152,7 @@ export class MonsterListView {
     if (this.compact === compact) return
     this.compact = compact
     this.rows.length = 0
+    this.lastHtml = null
     this.element.innerHTML = ''
     if (this.lastMonsters) this.update(this.lastMonsters)
   }
@@ -158,6 +167,7 @@ export class MonsterListView {
     // returns to whichever mode the user last selected.
     if (groups.length === 0) {
       this.rows.length = 0
+      this.lastHtml = null
       this.element.innerHTML = ''
       this.element.classList.remove('has-hostile')
       return
@@ -300,6 +310,15 @@ export class MonsterListView {
     for (let i = 0; i < rows; i++) {
       html += this.buildAsciiRow(groups[i], undefined, i === rows - 1 ? suffix : undefined)
     }
+    this.setHtml(html)
+  }
+
+  // Assign innerHTML through the lastHtml memo (see the field). Skipping when
+  // unchanged leaves the previous render's DOM — including the already-placed
+  // chevron — untouched; update()'s toggle re-insert is position-idempotent.
+  private setHtml(html: string): void {
+    if (html === this.lastHtml) return
+    this.lastHtml = html
     this.element.innerHTML = html
   }
 
@@ -319,14 +338,18 @@ export class MonsterListView {
 
     if (useTiles) {
       const row = this.buildTileRow({ ...this.rowData(top), extraClass: 'ml-collapsed', suffix })
+      this.lastHtml = null
       this.element.innerHTML = ''
       this.element.appendChild(row)
     } else {
-      this.element.innerHTML = this.buildAsciiRow(top, 'ml-collapsed', suffix)
+      this.setHtml(this.buildAsciiRow(top, 'ml-collapsed', suffix))
     }
   }
 
   private renderTiles(groups: MonsterCell[][], rows: number, suffix?: string): void {
+    // The tile path manages children incrementally via this.rows, so the
+    // ASCII HTML memo no longer describes the DOM.
+    this.lastHtml = null
     // Invariant: empty cache → fresh DOM. Without this wipe, transitioning
     // from collapsed (which leaves a single .ml-collapsed row) back to
     // expanded would stack the new tile rows below the stale collapsed

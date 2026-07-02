@@ -142,6 +142,19 @@ describe('map message → store merge', () => {
     h.dispatch({ msg: 'map', clear: true, cells: [] })
     expect(store.get(5, 6)).toBeUndefined()
   })
+
+  it('coalesces a batch\'s renders into one microtask flush', async () => {
+    const h = setup()
+    // player + map for the same turn, dispatched in one task like a WS batch:
+    // the handlers merge synchronously but only schedule the paint.
+    h.dispatch({ msg: 'player', pos: { x: 5, y: 6 } })
+    h.dispatch({ msg: 'map', cells: [{ x: 5, y: 6, g: '@', col: 7 }] })
+    const grid = h.view.querySelector<HTMLElement>('#map-grid')!
+    expect(grid.textContent).not.toContain('@')
+    // The flush microtask was queued before this await, so one hop suffices.
+    await Promise.resolve()
+    expect(grid.textContent).toContain('@')
+  })
 })
 
 describe('ui-push / ui-pop overlay stack', () => {

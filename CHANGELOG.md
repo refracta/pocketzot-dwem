@@ -11,6 +11,8 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-02
 
+- Map and monster-list rendering while moving is now ~3.5x faster in ASCII
+  mode and ~25% faster in tiles mode.
 - Monster markers in tile mode — status icons (asleep, poisoned, caught…),
   threat and ally highlights, damage indicators — now display correctly on
   older DCSS versions and forks, and automatically keep up with future trunk
@@ -21,12 +23,12 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-01
 
+- The login screen now shows your recently played characters, as they were
+  last seen. Tap to view the full gallery.
 - Switching away from the app mid-game no longer lands you back on the login
   screen: PocketZot now reconnects and resumes your game (or the game you were
   spectating) automatically when you switch back, even if the app was
   reloaded.
-- The login screen now shows your recently played characters, as they were
-  last seen. Tap to view the full gallery.
 
 ## 2026-06-29
 
