@@ -9,6 +9,10 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-03
+
+- Fixed the skill menu sometimes showing a mastered skill's line twice.
+
 ## 2026-07-02
 
 - Map and monster-list rendering while moving is now ~3.5x faster in ASCII

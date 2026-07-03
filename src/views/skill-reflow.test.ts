@@ -208,6 +208,30 @@ describe('reflowSkillCrt', () => {
     expect(out[0]).toBe('  Skill        Level') // header still deduped to one copy
   })
 
+  it('repeats only the header — not a mastered row above the grid — at the column break', () => {
+    // Real bug: a mastered skill (27) loses hotkey and sign, so its row can't
+    // anchor; sitting above the first lettered row (wire shape: header,
+    // Fighting, blank, grid) it was swept into `head` and duplicated when the
+    // head block was repeated before the right-column group.
+    const lines = [
+      '  Skill        Level      Skill        Level',
+      '    Fighting     27',
+      '',
+      `  ${'a - Maces       11.7'.padEnd(24)}${L('l - Evocations   7.0')}`,
+      `  ${'b - Axes        18.0'.padEnd(24)}${L('m - Shapeshift   0.0')}`,
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    expect(out.filter(t => /Fighting/.test(t))).toHaveLength(1)
+    // The mastered row still renders, in its original spot above the grid.
+    const fighting = out.findIndex(t => /Fighting/.test(t))
+    const aRow = out.findIndex(t => /Maces/.test(t))
+    expect(fighting).toBeGreaterThan(-1)
+    expect(fighting).toBeLessThan(aRow)
+    // The header itself is still repeated before the right-column group.
+    const lRow = out.findIndex(t => /Evocations/.test(t))
+    expect(out.slice(aRow + 1, lRow).some(t => /Skill\s+Level/.test(t))).toBe(true)
+  })
+
   it('does not split a prose footer that touches the right column (no blank above it)', () => {
     // Real bug: the two-column grid's last skill row is immediately followed by
     // the explanatory prose (no blank separator on the wire). The prose is long
