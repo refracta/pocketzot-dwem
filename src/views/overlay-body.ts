@@ -6,26 +6,15 @@
 // builders with no game-view state — game-view.ts calls them from
 // showUiPush/showMenu, and the sweep tests exercise the exported parsers
 // directly.
-import { dcssToHtml, uiColor, DCSS_COLOR_MAP } from '../game/dcss-colors'
+import { dcssToHtml, uiColor, stripDcss, DCSS_COLOR_MAP } from '../game/dcss-colors'
 import { TEX, type TileLoader } from '../game/tiles/tile-loader'
 import { renderTiles } from '../game/tiles/tile-view'
+import type { SpellEntry } from '../game/spell-harvest'
 
-export interface SpellEntry {
-  title: string
-  letter: string
-  tile: number
-  colour?: number
-  // `effect` / `range_string` are the server's spellset wire fields, present
-  // only on describe-monster/item spell lists (the spell's damage effect and
-  // range). The player's own memorised-spell list has neither — its harvest
-  // parser (parseSpellItem in game-view.ts) fills `fail`/`schools`/`level`
-  // from the menu's default columns.
-  effect?: string
-  range_string?: string
-  fail?: string
-  schools?: string
-  level?: number
-}
+// Existing importers reach these through this module; the definitions live
+// with the rest of the DCSS-markup / spell-model code.
+export { stripDcss }
+export type { SpellEntry }
 
 export interface SpellBook {
   label: string
@@ -427,10 +416,6 @@ function applyHighlight(html: string, pattern: string): string {
     const re = new RegExp(`[^\n]*(${pattern})[^\n]*\n?`, 'g')
     return html.replace(re, (line) => `<span class="crt-highlight">${line}</span>`)
   } catch { return html }
-}
-
-export function stripDcss(text: string): string {
-  return text.replace(/<[^>]+>/g, '')
 }
 
 export function formatMore(raw: string, scrollPos = 'top'): string {

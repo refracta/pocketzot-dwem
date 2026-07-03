@@ -44,6 +44,11 @@ export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// Strip DCSS colour markup (`<red>…`, `</lightgrey>`), leaving plain text.
+export function stripDcss(text: string): string {
+  return text.replace(/<[^>]+>/g, '')
+}
+
 // Convert DCSS colour markup (`<red>…</red>`, `<w>K</w>`) to safe HTML.
 // Mirrors the server client's formatted_string_to_html (webserver
 // game_data/static/util.js): only one span is open at a time, unterminated
