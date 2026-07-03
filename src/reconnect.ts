@@ -397,7 +397,8 @@ export interface AttemptResumeOpts {
   // ended mid-resume — `exit` carries the game_ended details in that case).
   onLobby: (conn: WsConnection, exit?: GameExit) => void
   // Gave up (cancel, fatal error, retries exhausted). `notice` is a
-  // user-facing reason for the login screen; undefined on user cancel.
+  // user-facing reason for the login screen; undefined on user cancel and
+  // on the silent age-cutoff give-up.
   onGiveUp: (notice?: string) => void
 }
 
@@ -412,6 +413,16 @@ export function attemptResume(opts: AttemptResumeOpts): void {
   // MAX_RESUME_AGE_MS). Without a pending proactive close (live network
   // drop, eviction-reload boot) the loop does start at disconnect time.
   const disconnectedAt = proactiveCloseAtMs > 0 ? proactiveCloseAtMs : Date.now()
+
+  // Already past the age cutoff (foregrounded hours after the proactive
+  // close): land on the login/home screen with no overlay and no notice —
+  // returning after a long absence is routine, nothing failed, and the game
+  // was saved at swap-away time. Same silent treatment as the cold-boot path
+  // (loadPersistedResume discarding a stale record).
+  if (Date.now() - disconnectedAt > MAX_RESUME_AGE_MS) {
+    opts.onGiveUp()
+    return
+  }
 
   const overlay = buildOverlay(() => {
     cancelled = true
@@ -433,7 +444,7 @@ export function attemptResume(opts: AttemptResumeOpts): void {
       // resumed elsewhere (see MAX_RESUME_AGE_MS) — give up instead.
       if (Date.now() - disconnectedAt > MAX_RESUME_AGE_MS) {
         overlay.remove()
-        opts.onGiveUp('Too much time has passed to reconnect automatically — please sign in again.')
+        opts.onGiveUp()
         return
       }
 
