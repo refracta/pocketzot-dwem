@@ -13,7 +13,7 @@
 // classes in style.css, so a roll of N just sets class `fgN`.
 
 export const LOGO_CONFIG = {
-  pDecorate: 0.30,     // probability of decorating at all
+  pDecorate: 0.20,     // probability of decorating at all
   pGlyphShift: 0.20,   // per-character chance of a lookalike glyph swap
   revealDelayMs: 1500, // normal logo holds this long, then morphs
   staggerMs: 150,      // per-character delay across the reveal
