@@ -22,7 +22,7 @@ import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
-import { saveAvatar } from '../avatars'
+import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
 import { getPref, setPref } from '../prefs'
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
@@ -247,12 +247,17 @@ export function buildGameView(
   // created view, which otherwise starts at zero until the next player message.
   const playerStats: { hp?: number; hp_max?: number; mp?: number; mp_max?: number } = {}
   // Login-screen character-doll shelf (see ../avatars + maybeSaveAvatar). The
-  // character name (from player) is needed to store a recipe; lastDollSig dedups
-  // unchanged appearances. The gamedata version is read off `loader` (above) at
+  // character name (from player) is needed to store a recipe; lastAvatarSig dedups
+  // unchanged captures. The gamedata version is read off `loader` (above) at
   // save time, so it's available whether game_client arrived in the lobby (CPO)
   // or in-view (CDI). Both reset per game (fresh closure).
   let charName = ''
-  let lastDollSig = ''
+  let lastAvatarSig = ''
+  // Rolling identity/progress snapshot (species, god, XL, place, …) merged from
+  // the delta-encoded player messages, persisted with the avatar recipe so the
+  // crypt can label entries. Also merged at game_ended so the stamped outcome
+  // carries the *final* XL/place, not those of the last capture.
+  const charMeta: AvatarMeta = {}
   // Most recent player.turn, handed to saveAvatar so the shelf can tell a reroll
   // from the same character continuing (the turn count resets for a new char — see
   // ../avatars). Delta-encoded after the game-start snapshot, so hold the last seen.
@@ -785,7 +790,7 @@ export function buildGameView(
   // and the pre-name character-creation screens (charName still empty). Called
   // only from the 'map' handler (the one path that carries the doll); `player`
   // messages never do. The server re-sends the doll on every *move* (not just on
-  // change), so the lastDollSig check is what filters those down to genuine
+  // change), so the lastAvatarSig check is what filters those down to genuine
   // appearance changes — it short-circuits the common case before any write.
   function maybeSaveAvatar(): void {
     // Need the identity (gameId, the dedup key) and the gamedata loader (whose
@@ -800,14 +805,20 @@ export function buildGameView(
     const doll = cell.doll ?? null
     const mcache = cell.mcache ?? null
     if (!doll?.length && !mcache?.length) return
-    const sig = JSON.stringify([doll, mcache])
-    if (sig === lastDollSig) return
-    lastDollSig = sig
+    // The sig includes charMeta so progress changes (level-up, floor change,
+    // conversion) refresh the stored entry too, not just appearance changes —
+    // still a handful of writes per game, vs one per move without the gate.
+    // (charMeta is one object mutated in place, so its key order — and thus
+    // the sig — is stable within this game's closure.)
+    const sig = JSON.stringify([doll, mcache, charMeta])
+    if (sig === lastAvatarSig) return
+    lastAvatarSig = sig
     // The turn count is the new-character signal: ../avatars appends when it drops
     // below the slot's current entry (a fresh char reset it to 0), else upserts.
     saveAvatar({
       wsUrl: conn.wsUrl, username, gameId, charName,
       httpBase: conn.httpBase, version: loader.version, doll, mcache,
+      ...charMeta,
     }, { turn: lastTurn })
   }
 
@@ -988,6 +999,13 @@ export function buildGameView(
       case 'player': {
         if (msg.name) charName = msg.name
         if (msg.turn !== undefined) lastTurn = msg.turn // for the avatar shelf; see lastTurn decl
+        // Merge the avatar-shelf identity/progress snapshot; see charMeta decl.
+        if (msg.species !== undefined) charMeta.species = msg.species
+        if (msg.title !== undefined) charMeta.title = msg.title
+        if (msg.god !== undefined) charMeta.god = msg.god
+        if (msg.xl !== undefined) charMeta.xl = msg.xl
+        if (msg.place !== undefined) charMeta.place = msg.place
+        if (msg.depth !== undefined) charMeta.depth = msg.depth
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
           // setViewCenter reports whether the center actually moved; reuse that
@@ -1469,8 +1487,23 @@ export function buildGameView(
         onLobby()
         break
 
-      case 'game_ended':
+      case 'game_ended': {
         disarmCreationGuard()
+        // Stamp terminal outcomes onto the character's crypt entry (see
+        // ../avatars recordAvatarOutcome). The excluded reasons either leave a
+        // resumable save ('saved', 'disconnect', 'crash', 'error') or never had
+        // a character ('cancel', a creation abort). charName doubles as the
+        // this-session-played-a-character guard, so an exit with no character
+        // can't stamp the slot's previous entry.
+        const terminal = msg.reason === 'dead' || msg.reason === 'won'
+          || msg.reason === 'quit' || msg.reason === 'bailed out'
+        if (terminal && !spectating && charName && gameId) {
+          recordAvatarOutcome(
+            { wsUrl: conn.wsUrl, username, gameId },
+            { reason: msg.reason, message: msg.message, dump: msg.dump },
+            charMeta,
+          )
+        }
         // Forward exit details so the lobby renders the exit dialog after the
         // layer switch. The trailing go_lobby + lobby list (often batched with
         // this) land on the lobby's message handler, not ours.
@@ -1482,6 +1515,7 @@ export function buildGameView(
           spectatedName: spectating?.username,
         })
         break
+      }
     }
   }
 

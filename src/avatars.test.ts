@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { listAllAvatars, listAvatars, saveAvatar, type Avatar } from './avatars'
+import { listAllAvatars, listAvatars, recordAvatarOutcome, saveAvatar, type Avatar } from './avatars'
 
 // avatars.ts reads the global `localStorage`. This env's built-in one (Node's
 // experimental impl, enabled without a valid file) is unusable — and avatars.ts
@@ -24,8 +24,10 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllGlobals() })
 
+type AvatarInput = Omit<Avatar, 'turn' | 'seenAt' | 'outcome'>
+
 // Minimal recipe; the doll content is opaque to the store (it's just persisted).
-function rec(over: Partial<Omit<Avatar, 'turn'>> = {}): Omit<Avatar, 'turn'> {
+function rec(over: Partial<AvatarInput> = {}): AvatarInput {
   return {
     wsUrl: 'wss://crawl.dcss.io/socket',
     username: 'tdpma',
@@ -144,5 +146,83 @@ describe('avatars store', () => {
     saveAvatar(rec({ gameId: 'dcss-0.32' }))
     saveAvatar(rec({ gameId: 'dcss-0.31' })) // touch the older one again
     expect(listAvatars().map((a) => a.gameId)).toEqual(['dcss-0.31', 'dcss-0.32'])
+  })
+})
+
+// The slot key of rec()'s defaults, for stamping outcomes.
+const SLOT = {
+  wsUrl: 'wss://crawl.dcss.io/socket',
+  username: 'tdpma',
+  gameId: 'dcss-0.34',
+}
+
+describe('avatar metadata and outcomes', () => {
+  it('persists the identity snapshot and stamps seenAt', () => {
+    saveAvatar(rec({ species: 'Minotaur', title: 'Chopper', god: 'Trog', xl: 4, place: 'Dungeon', depth: 3 }))
+    const a = listAllAvatars()[0]
+    expect(a.species).toBe('Minotaur')
+    expect(a.god).toBe('Trog')
+    expect(a.xl).toBe(4)
+    expect(a.place).toBe('Dungeon')
+    expect(typeof a.seenAt).toBe('number')
+  })
+
+  it('upsert refreshes the metadata in place (level-up, no new entry)', () => {
+    saveAvatar(rec({ xl: 3, place: 'Dungeon', depth: 2 }), { turn: 100 })
+    saveAvatar(rec({ xl: 5, place: 'Dungeon', depth: 4 }), { turn: 300 })
+    const list = listAllAvatars()
+    expect(list).toHaveLength(1)
+    expect(list[0].xl).toBe(5)
+    expect(list[0].depth).toBe(4)
+  })
+
+  it('stamps a terminal outcome onto the slot, merging the final snapshot', () => {
+    saveAvatar(rec({ xl: 3, place: 'Dungeon' }), { turn: 100 })
+    recordAvatarOutcome(
+      SLOT,
+      { reason: 'dead', message: 'Slain by an orc', dump: 'https://crawl.dcss.io/morgue/tdpma/x' },
+      { xl: 7, place: 'Orc' }, // death-turn snapshot, fresher than the last capture
+    )
+    const a = listAllAvatars()[0]
+    expect(a.outcome?.reason).toBe('dead')
+    expect(a.outcome?.dump).toBe('https://crawl.dcss.io/morgue/tdpma/x')
+    expect(typeof a.outcome?.endedAt).toBe('number')
+    expect(a.xl).toBe(7)
+    expect(a.place).toBe('Orc')
+  })
+
+  it('never overwrites an existing outcome (one-shot)', () => {
+    saveAvatar(rec(), { turn: 100 })
+    recordAvatarOutcome(SLOT, { reason: 'dead', message: 'Slain by an orc' })
+    recordAvatarOutcome(SLOT, { reason: 'quit' })
+    expect(listAllAvatars()[0].outcome?.reason).toBe('dead')
+  })
+
+  it('no-ops on a slot with no entry', () => {
+    recordAvatarOutcome(SLOT, { reason: 'dead' })
+    expect(listAllAvatars()).toEqual([])
+  })
+
+  it('stamps only the slot addressed, not other slots', () => {
+    saveAvatar(rec({ gameId: 'dcss-git', doll: [[1, 32]] }))
+    saveAvatar(rec({ doll: [[2, 32]] }))
+    recordAvatarOutcome(SLOT, { reason: 'won' })
+    const list = listAllAvatars()
+    expect(list.find((a) => a.gameId === 'dcss-0.34')?.outcome?.reason).toBe('won')
+    expect(list.find((a) => a.gameId === 'dcss-git')?.outcome).toBeUndefined()
+  })
+
+  // Turn info is missing on both sides here — the upsert fallback would replace
+  // the entry. The outcome stamp closes it, so the next capture must append and
+  // the fallen character survives.
+  it('never upserts onto a closed (outcome-stamped) entry', () => {
+    saveAvatar(rec({ doll: [[1, 32]] }))
+    recordAvatarOutcome(SLOT, { reason: 'dead' })
+    saveAvatar(rec({ doll: [[2, 32]] }))
+    const list = listAllAvatars()
+    expect(list).toHaveLength(2)
+    expect(list[0].doll).toEqual([[2, 32]])          // the new character
+    expect(list[0].outcome).toBeUndefined()
+    expect(list[1].outcome?.reason).toBe('dead')     // the fallen one, retained
   })
 })
