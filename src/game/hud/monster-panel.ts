@@ -62,10 +62,12 @@ export class MonsterPanelView {
 
     const glyphEl = document.createElement('div')
     glyphEl.className = 'mp-glyph'
-    glyphEl.textContent = mc.g || ' '
-    // col read live from the cell, not snapshotted on MonsterCell: mon-less
-    // cell deltas (e.g. sleep→wake) won't refresh MonsterCell, so a snapshot
-    // would keep stale status backgrounds after the monster activated.
+    // Glyph and col read live from the cell, not snapshotted on MonsterCell:
+    // mon-less cell deltas (sleep→wake col changes, post-animation glyph
+    // restores) never refresh MonsterCell, so a snapshot would keep a stale
+    // status background — or a beam glyph ('*') captured when the monster
+    // arrived mid-animation (see monster-list.ts buildAsciiRow).
+    glyphEl.textContent = cell?.g || mc.g || ' '
     const c = decodeColor(cell?.col ?? 7)
     glyphEl.style.color = c.fg
     if (c.bg) glyphEl.style.background = c.bg

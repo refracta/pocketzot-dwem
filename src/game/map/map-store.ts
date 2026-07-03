@@ -54,8 +54,12 @@ export interface Cell {
 // shadow would go stale across the memorize → re-FOV transition, and
 // (the bug this comment was written for) `col` changes on mon-less cell
 // deltas like sleep→wake would never propagate to the monster list.
-// `g` is the *canonical* glyph (first-sighting), distinct from Cell.g
-// which can flip briefly for spell animations.
+// `g` is the glyph captured when the monster was last merged, kept only as
+// a FALLBACK — renderers read the live Cell.g (like col/fg) and fall back
+// to this when the cell is missing. It cannot be trusted as canonical: the
+// server writes `mon` and `g` into one cell update independently, so a
+// monster first sent during a beam-animation redraw is captured with the
+// beam glyph ('*'), and the g-only restore frame never refreshes it.
 export interface MonsterCell {
   mon: MonsterInfo
   g: string

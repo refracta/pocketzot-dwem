@@ -192,6 +192,29 @@ describe('MonsterListView.renderTiles', () => {
     expect(more?.parentElement).toBe(rows[4])
   })
 
+  it('renders the live cell glyph, not the arrival-time snapshot', () => {
+    // Regression: tileweb.cc writes `mon` and `g` into one cell update
+    // independently, so a monster whose first send coincides with a beam
+    // animation frame arrives as {mon, g:'*'} — the beam glyph, not the
+    // monster's. The restore frame that repaints the real glyph is g-only
+    // (no mon), which must win: the list mirrors the map, not the snapshot.
+    const store = new MapStore()
+    store.merge([
+      // Recalled vault guard materialises under a bolt animation frame.
+      { x: 5, y: 5, g: '*', mon: {
+        id: 1, name: 'tengu reaver', att: 0, type: 9,
+        typedata: { avghp: 85 },
+      } },
+    ])
+    // Animation over; the engine redraws the cell with the monster's glyph.
+    store.merge([{ x: 5, y: 5, g: 'Q' }])
+
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    expect(view.element.querySelector('.ml-glyph')?.textContent).toBe('Q')
+  })
+
   it('trims rows when groups shrink between renders', () => {
     // Renders with three groups, then with one, asserts the DOM is trimmed
     // to one row. Catches a regression where the position-indexed array

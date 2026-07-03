@@ -279,10 +279,16 @@ export class MonsterListView {
 
     const glyphSpans: string[] = []
     for (let g = 0; g < d.memberCells.length; g++) {
-      const col = d.memberCells[g]?.col ?? 7
-      const dec = decodeColor(col)
+      const cell = d.memberCells[g]
+      const dec = decodeColor(cell?.col ?? 7)
       const style = dec.bg ? `background:${dec.bg};color:${dec.fg}` : `color:${dec.fg}`
-      glyphSpans.push(`<span class="ml-glyph" style="${style}">${escHtml(group[g].g)}</span>`)
+      // Glyph read LIVE from the cell (like col), not from the MonsterCell
+      // snapshot: the server sends `mon` and `g` independently per cell, so a
+      // monster arriving mid-beam-animation is snapshotted with the beam
+      // glyph ('*'), and the g-only restore frame never refreshes the
+      // snapshot. The live cell always matches the map (reference
+      // monster_list.js renders the map cell directly).
+      glyphSpans.push(`<span class="ml-glyph" style="${style}">${escHtml(cell?.g ?? group[g].g)}</span>`)
     }
     const glyphsHtml = `<span class="ml-glyphs">${glyphSpans.join('')}</span>`
 
