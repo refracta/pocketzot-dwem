@@ -14,7 +14,7 @@ import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
-import { uiColor, escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../game/dcss-colors'
+import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
 import { reflowSkillCrt } from './skill-reflow'
@@ -24,112 +24,21 @@ import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../ut
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
 import { getPref, setPref } from '../prefs'
+import {
+  renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
+  renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
+  type SpellEntry,
+} from './overlay-body'
+import {
+  showInputDialog, showNewgameChoice, showRandomCombo, showSeedSelection,
+  type OverlayScreenCtx, type UiPushMsg,
+} from './game-overlays'
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
 // for the duration of the y/N read, regardless of whether a menu is open.
 const MOUSE_MODE_YESNO = 8
 
 // --- local protocol interfaces ---
-
-interface NewgameButton {
-  hotkey?: string | number
-  label?: string
-  labels?: string[]
-  x?: number
-  y?: number
-  description?: string
-  highlight_colour?: number
-  tile?: Array<{t: number; tex: number}>
-}
-
-interface NewgameGridLabel {
-  x: number
-  y: number
-  label: string
-}
-
-interface NewgameItems {
-  buttons?: NewgameButton[]
-  labels?: NewgameGridLabel[]
-  width?: number
-  height?: number
-}
-
-interface SpellEntry {
-  title: string
-  letter: string
-  tile: number
-  colour?: number
-  // `effect` / `range_string` are the server's spellset wire fields, present
-  // only on describe-monster/item spell lists (the spell's damage effect and
-  // range). The player's own memorised-spell list has neither — its harvest
-  // parser fills `fail`/`schools`/`level` from the menu's default columns.
-  effect?: string
-  range_string?: string
-  fail?: string
-  schools?: string
-  level?: number
-}
-
-interface SpellBook {
-  label: string
-  spells: SpellEntry[]
-}
-
-interface UiPushMsg {
-  type: string
-  title?: string
-  prompt?: string
-  body?: string
-  text?: string
-  desc?: string
-  tile?: { t: number; tex: number } | Array<{ t: number; tex: number }>
-  tiles?: Array<{ t: number; tex: number }>
-  highlight?: string
-  information?: string
-  features?: string
-  changes?: string
-  actions?: string
-  feats?: Array<{ title?: string; body?: string; quote?: string; tile?: { t: number; tex: number } }>
-  fg_idx?: number  // describe-monster: monster's primary tile id (texture inferred)
-  doll?: Array<[number, number]>  // describe-monster: player-doll part [tile_id, ymax] entries
-  mcache?: Array<[number, number, number]> | null  // describe-monster: humanoid+equipment [tile_id, xofs, yofs]
-  flag?: number | number[]  // describe-monster: status overlay bitmask (attitude, behavior, …); [lo, hi] when MDAM/threat bits overflow 32 bits
-  icons?: number[]  // describe-monster: pre-decoded extra icon tile ids
-  // describe-monster / describe-item: spell list rendered where SPELLSET_PLACEHOLDER
-  // appears in the body. Each book has a header label and a list of spells.
-  spellset?: SpellBook[]
-  // describe-monster: optional pane fields (cycled via `!` in reference client).
-  quote?: string
-  status?: string
-  // describe-god fields
-  name?: string
-  colour?: number
-  is_altar?: boolean
-  description?: string
-  favour?: string
-  powers_list?: string
-  powers?: string
-  wrath?: string
-  extra?: string
-  service_fee?: string
-  'main-items'?: NewgameItems
-  'sub-items'?: NewgameItems
-  // seed-selection: explanatory paragraph rendered below the body, above
-  // the pregenerate checkbox; show_pregen_toggle hides the checkbox on
-  // dgamelaunch builds (server config), preserving Begin/Clear/Daily.
-  footer?: string
-  show_pregen_toggle?: boolean
-  // msgwin-get-line: stamped by the server; required so our ui_state_sync
-  // echoes back the same id (server drops mismatched syncs).
-  generation_id?: number
-  // formatted-scroller (message log, lookup help, morgue, …): server-side
-  // FS_START_AT_END flag (scroller.cc emits it alongside the push). The push
-  // is followed by ui-state scroll=INT32_MAX, but those may arrive in a
-  // separate WS frame — honoring this flag during the initial render
-  // guarantees the first paint is at the bottom even when they don't batch.
-  start_at_end?: boolean
-}
 
 interface MenuItem {
   level: number
@@ -1360,7 +1269,7 @@ export function buildGameView(
         }
         // Other `type:"generic"` tags are dropped — none are known to fire
         // in normal play. `type:"seed-selection"` uses ui-state-sync widgets,
-        // not init_input (see showSeedSelection).
+        // not init_input (see showSeedSelection in game-overlays.ts).
         break
       }
 
@@ -1594,10 +1503,21 @@ export function buildGameView(
   }
 
   function showUiPush(msg: UiPushMsg): void {
-    if (msg.type === 'newgame-choice') { showNewgameChoice(msg); return }
-    if (msg.type === 'newgame-random-combo') { showRandomCombo(msg); return }
-    if (msg.type === 'msgwin-get-line') { showInputDialog(msg); return }
-    if (msg.type === 'seed-selection') { showSeedSelection(msg); return }
+    // Standalone screens (game-overlays.ts) own their ui-push type wholesale;
+    // everything after this block shares the title/body/actions frame below.
+    if (msg.type === 'newgame-choice') {
+      showNewgameChoice(overlayCtx, msg)
+      // The creation grid hides the touch controls; played games get the
+      // menu-controls bar (Esc) in their place. Spectators get neither.
+      if (!spectating) {
+        buildMenuControls()
+        menuControls.style.display = ''
+      }
+      return
+    }
+    if (msg.type === 'newgame-random-combo') { showRandomCombo(overlayCtx, msg); return }
+    if (msg.type === 'msgwin-get-line') { showInputDialog(overlayCtx, msg); return }
+    if (msg.type === 'seed-selection') { showSeedSelection(overlayCtx, msg); return }
 
     let titleSrc = msg.title ?? msg.prompt ?? ''
     let rawBody = msg.text ?? msg.body ?? msg.desc ?? ''
@@ -1686,7 +1606,8 @@ export function buildGameView(
         // The end-of-game screen (the "Goodbye, …" character summary + the
         // server's high-score table) is a single fixed-width terminal block,
         // not a prose panel: every line shares one 80-column coordinate
-        // system. renderBodyLines' per-line isTabularLine heuristic shreds it
+        // system. renderBodyLines' per-line isTabularLine heuristic
+        // (overlay-body.ts) shreds it
         // — score rows with short names get multi-space padding (nowrap) while
         // long-name rows wrap — so render it as one nowrap block and scale the
         // font so the widest line fits the viewport (mirrors the morgue / the
@@ -1804,379 +1725,6 @@ export function buildGameView(
     }
   }
 
-  // ?-/ search prompts ("Describe what?", "Find what?", level travel, ...)
-  // arrive as ui-push msgwin-get-line. The server drives the field via
-  // ui-state-sync (widget_id "input") and we echo each edit back, so
-  // generation_id must match.
-  function showInputDialog(msg: UiPushMsg): void {
-    const genId = msg.generation_id
-    uiOverlay.innerHTML = ''
-    uiOverlay.style.display = ''
-    mapView.element.style.display = 'none'
-    msgLog.style.display = 'none'
-    hud.style.display = 'none'
-    // Leave touchControls visible — the kbd-overlay is a fixed-position
-    // child of it, and `display:none` on the parent would hide the keyboard
-    // too. The keyboard covers the d-pad anyway when open.
-    touchControls.element.style.display = ''
-    menuControls.style.display = 'none'
-    menuControls.innerHTML = ''
-
-    const wrap = document.createElement('div')
-    wrap.className = 'input-dialog'
-
-    if (msg.prompt) {
-      const promptEl = document.createElement('div')
-      promptEl.className = 'input-dialog-prompt'
-      promptEl.innerHTML = dcssToHtml(msg.prompt)
-      wrap.appendChild(promptEl)
-    }
-
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.className = 'input-dialog-field'
-    input.autocomplete = 'off'
-    input.autocapitalize = 'off'
-    input.spellcheck = false
-    input.inputMode = 'none'
-
-    input.addEventListener('input', () => {
-      if (genId === undefined) return
-      conn.send({
-        msg: 'ui_state_sync',
-        widget_id: 'input',
-        text: input.value,
-        cursor: input.selectionStart ?? input.value.length,
-        generation_id: genId,
-      })
-    })
-
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation()
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        conn.send({ msg: 'key', keycode: 13 })
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        conn.send({ msg: 'key', keycode: 27 })
-      }
-    })
-
-    wrap.appendChild(input)
-    uiOverlay.appendChild(wrap)
-    autoOpenKbd()
-    requestAnimationFrame(() => input.focus())
-  }
-
-  // Custom-seed entry on newgame. The server pushes title/body/footer text
-  // and a show_pregen_toggle flag, then drives the seed input and pregen
-  // checkbox via ui-state-sync (widget_id "seed" / "pregenerate"). Buttons
-  // use hotkeys: Enter=Begin, '-'=Clear, 'd'=Daily — the server's button
-  // handlers update the seed input server-side and echo back via sync.
-  function showSeedSelection(msg: UiPushMsg): void {
-    const genId = msg.generation_id
-    uiOverlay.innerHTML = ''
-    uiOverlay.style.display = ''
-    mapView.element.style.display = 'none'
-    msgLog.style.display = 'none'
-    hud.style.display = 'none'
-    // Keep touchControls visible so the kbd-overlay child stays mounted (see
-    // showInputDialog for the same reason).
-    touchControls.element.style.display = ''
-    menuControls.style.display = 'none'
-    menuControls.innerHTML = ''
-
-    const wrap = document.createElement('div')
-    wrap.className = 'seed-selection'
-
-    if (msg.title) {
-      const header = document.createElement('div')
-      header.className = 'seed-header'
-      header.innerHTML = dcssToHtml(msg.title)
-      wrap.appendChild(header)
-    }
-
-    if (msg.body) {
-      const bodyText = document.createElement('div')
-      bodyText.className = 'seed-body-text fg7'
-      bodyText.innerHTML = dcssToHtml(msg.body)
-      wrap.appendChild(bodyText)
-    }
-
-    const row = document.createElement('div')
-    row.className = 'seed-input-row'
-    const label = document.createElement('span')
-    label.className = 'seed-input-label'
-    label.textContent = 'Seed:'
-    row.appendChild(label)
-
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.className = 'seed-input-field'
-    input.autocomplete = 'off'
-    input.autocapitalize = 'off'
-    input.spellcheck = false
-    input.inputMode = 'numeric'
-    input.pattern = '\\d*'
-    // Revert non-digit input to the last valid value, matching the reference
-    // client's _keyfun_seed_input behaviour. Stored on dataset so the
-    // ui-state-sync handler can keep it in sync when the server pre-fills.
-    input.dataset.lastValid = ''
-    input.addEventListener('input', () => {
-      if (!/^\d*$/.test(input.value)) {
-        input.value = input.dataset.lastValid ?? ''
-        return
-      }
-      input.dataset.lastValid = input.value
-      if (genId === undefined) return
-      conn.send({
-        msg: 'ui_state_sync',
-        widget_id: 'seed',
-        text: input.value,
-        cursor: input.selectionStart ?? input.value.length,
-        generation_id: genId,
-      })
-    })
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation()
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        conn.send({ msg: 'key', keycode: 13 })
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        conn.send({ msg: 'key', keycode: 27 })
-      }
-    })
-    row.appendChild(input)
-
-    function makeHotkeyBtn(textHtml: string, keycode: number): HTMLButtonElement {
-      const btn = document.createElement('button')
-      btn.className = 'seed-btn'
-      btn.innerHTML = dcssToHtml(textHtml)
-      btn.addEventListener('click', () => {
-        conn.send({ msg: 'key', keycode })
-        requestAnimationFrame(() => input.focus())
-      })
-      return btn
-    }
-    row.appendChild(makeHotkeyBtn('<brown>[-] Clear</brown>', 45))
-    row.appendChild(makeHotkeyBtn('<brown>[d] Daily</brown>', 100))
-    wrap.appendChild(row)
-
-    if (msg.footer) {
-      const footer = document.createElement('div')
-      footer.className = 'seed-footer fg7'
-      footer.innerHTML = dcssToHtml(msg.footer)
-      wrap.appendChild(footer)
-    }
-
-    if (msg.show_pregen_toggle) {
-      const pregenLabel = document.createElement('label')
-      pregenLabel.className = 'seed-pregen'
-      const pregen = document.createElement('input')
-      pregen.type = 'checkbox'
-      pregen.className = 'seed-pregen-checkbox'
-      pregen.addEventListener('change', () => {
-        if (genId === undefined) return
-        conn.send({
-          msg: 'ui_state_sync',
-          widget_id: 'pregenerate',
-          checked: pregen.checked,
-          generation_id: genId,
-        })
-      })
-      const txt = document.createElement('span')
-      txt.textContent = 'Fully pregenerate the dungeon'
-      pregenLabel.append(pregen, txt)
-      wrap.appendChild(pregenLabel)
-    }
-
-    const bar = document.createElement('div')
-    bar.className = 'seed-button-bar'
-    const beginBtn = document.createElement('button')
-    beginBtn.className = 'seed-btn seed-btn-primary'
-    beginBtn.textContent = '[Enter] Begin!'
-    beginBtn.addEventListener('click', () => {
-      conn.send({ msg: 'key', keycode: 13 })
-    })
-    bar.appendChild(beginBtn)
-    wrap.appendChild(bar)
-
-    uiOverlay.appendChild(wrap)
-    autoOpenKbd()
-    requestAnimationFrame(() => input.focus())
-  }
-
-  function showRandomCombo(msg: UiPushMsg): void {
-    const title = stripDcss(msg.prompt ?? msg.title ?? '')
-    renderOverlay(title, () => {
-      const bodyEl = document.createElement('div')
-      bodyEl.className = 'overlay-body fg7'
-      bodyEl.textContent = 'Do you want to play this combination?'
-      uiOverlay.appendChild(bodyEl)
-
-      const bar = document.createElement('div')
-      bar.className = 'overlay-footer overlay-actions'
-      const choices: Array<{ key: string; label: string }> = [
-        { key: 'Y', label: 'Yes (Y)' },
-        { key: 'n', label: 'Reroll (n)' },
-        { key: 'q', label: 'Quit (q)' },
-      ]
-      for (const c of choices) {
-        const btn = document.createElement('button')
-        btn.className = 'action-btn'
-        btn.textContent = c.label
-        btn.addEventListener('click', () => {
-          conn.send({ msg: 'input', text: c.key })
-          view.focus({ preventScroll: true })
-        })
-        bar.appendChild(btn)
-      }
-      uiOverlay.appendChild(bar)
-    })
-  }
-
-  function showNewgameChoice(msg: UiPushMsg): void {
-    uiOverlay.innerHTML = ''
-    uiOverlay.style.display = ''
-    mapView.element.style.display = 'none'
-    msgLog.style.display = 'none'
-    hud.style.display = 'none'
-    touchControls.element.style.display = 'none'
-    if (spectating) {
-      menuControls.style.display = 'none'
-    } else {
-      buildMenuControls()
-      menuControls.style.display = ''
-    }
-
-    const wrap = document.createElement('div')
-    wrap.className = 'ngc-wrap'
-    uiOverlay.appendChild(wrap)
-
-    const titleHtml = msg.title ?? msg.prompt ?? ''
-    if (titleHtml) {
-      const titleEl = document.createElement('div')
-      titleEl.className = 'overlay-title'
-      titleEl.innerHTML = dcssToHtml(titleHtml)
-      wrap.appendChild(titleEl)
-    }
-
-    // Description panel updated on first tap; second tap on same item confirms
-    const descEl = document.createElement('div')
-    descEl.className = 'ngc-desc'
-    descEl.innerHTML = '<em>Tap to preview, tap again to confirm.</em>'
-    let pendingKey: string | null = null
-    let pendingBtn: HTMLButtonElement | null = null
-
-    function sendHotkey(hotkey: string | number | undefined): void {
-      if (typeof hotkey === 'number') {
-        // Non-printable (Bksp=8, Tab=9, Esc=27) must go via {key, keycode};
-        // {input, text} is for printable chars only.
-        if (hotkey < 32 || hotkey === 127) conn.send({ msg: 'key', keycode: hotkey })
-        else conn.send({ msg: 'input', text: String.fromCharCode(hotkey) })
-      } else if (hotkey) {
-        conn.send({ msg: 'input', text: String(hotkey) })
-      }
-    }
-
-    function makeBtnHandler(btn: NewgameButton, btnEl: HTMLButtonElement): () => void {
-      const keyChar = typeof btn.hotkey === 'number' ? String.fromCharCode(btn.hotkey) : String(btn.hotkey ?? '')
-      return () => {
-        if (pendingKey === keyChar && pendingBtn === btnEl) {
-          sendHotkey(btn.hotkey)
-          view.focus({ preventScroll: true })
-        } else {
-          pendingBtn?.classList.remove('ngc-selected')
-          pendingKey = keyChar
-          pendingBtn = btnEl
-          btnEl.classList.add('ngc-selected')
-          const plain = stripDcss(String(btn.labels?.[0] ?? btn.label ?? '')).trim()
-          const dashIdx = plain.indexOf(' - ')
-          const name = dashIdx >= 0 ? plain.slice(dashIdx + 3) : plain
-          const desc = btn.description ?? ''
-          descEl.innerHTML =
-            `<strong>${escHtml(name)}</strong>${desc ? `<br><span class="ngc-desc-text">${escHtml(desc)}</span>` : ''}<br><em class="ngc-confirm-hint">Tap again to confirm.</em>`
-        }
-        view.focus({ preventScroll: true })
-      }
-    }
-
-    function buildGrid(items: NewgameItems, extraClass?: string): HTMLElement {
-      const cols = items.width ?? 1
-      const buttons = items.buttons ?? []
-      const colLabels = items.labels ?? []
-
-      const gridEl = document.createElement('div')
-      gridEl.className = extraClass ? `ngc-grid ${extraClass}` : 'ngc-grid'
-      gridEl.style.setProperty('--ngc-cols', String(cols))
-
-      // Column header row (y:0 labels)
-      if (colLabels.length > 0) {
-        for (let c = 0; c < cols; c++) {
-          const lbl = colLabels.find(l => l.x === c && l.y === 0)
-          const hdr = document.createElement('div')
-          hdr.className = 'ngc-col-header'
-          if (lbl) hdr.innerHTML = dcssToHtml(lbl.label)
-          gridEl.appendChild(hdr)
-        }
-      }
-
-      // Sort buttons by row then column; fill gaps with empty divs
-      const sorted = [...buttons].sort((a, b) => ((a.y ?? 0) - (b.y ?? 0)) || ((a.x ?? 0) - (b.x ?? 0)))
-      let curRow = -1
-      let curCol = 0
-
-      for (const btn of sorted) {
-        const bx = btn.x ?? 0
-        const by = btn.y ?? 0
-        if (by !== curRow) {
-          // Pad rest of previous row
-          while (curRow >= 0 && curCol < cols) { gridEl.appendChild(document.createElement('div')); curCol++ }
-          curRow = by; curCol = 0
-        }
-        // Pad columns before this button
-        while (curCol < bx) { gridEl.appendChild(document.createElement('div')); curCol++ }
-
-        const labels = btn.labels ?? (btn.label !== undefined ? [btn.label] : [])
-        const main = String(labels[0] ?? '').trim()
-        const suffix = labels.length >= 2 ? String(labels[1]).trim() : ''
-        const btnEl = document.createElement('button')
-        btnEl.className = 'ngc-btn'
-        if (suffix) {
-          // Weapon menu: main label + apt suffix as right-aligned column
-          const mainSpan = document.createElement('span')
-          mainSpan.className = 'ngc-btn-main'
-          mainSpan.innerHTML = dcssToHtml(main)
-          const suffixSpan = document.createElement('span')
-          suffixSpan.className = 'ngc-btn-suffix'
-          suffixSpan.innerHTML = dcssToHtml(suffix)
-          btnEl.append(mainSpan, suffixSpan)
-        } else {
-          btnEl.innerHTML = dcssToHtml(main)
-        }
-        btnEl.addEventListener('click', makeBtnHandler(btn, btnEl))
-        gridEl.appendChild(btnEl)
-        curCol++
-      }
-      return gridEl
-    }
-
-    const mainItems = msg['main-items']
-    if (mainItems?.buttons?.length) {
-      wrap.appendChild(buildGrid(mainItems))
-    }
-
-    wrap.appendChild(descEl)
-
-    const subItems = msg['sub-items']
-    if (subItems?.buttons?.length) {
-      wrap.appendChild(buildGrid(subItems, 'ngc-sub-grid'))
-    }
-
-    view.focus({ preventScroll: true })
-  }
-
   // --- CRT handler ---
 
   function showCrt(tag?: string): void {
@@ -2202,13 +1750,7 @@ export function buildGameView(
 
   function mountCrtEl(): void {
     autoCloseKbdIfOurs()
-    uiOverlay.innerHTML = ''
-    uiOverlay.style.display = ''
-    mapView.element.style.display = 'none'
-    msgLog.style.display = 'none'
-    hud.style.display = 'none'
-    touchControls.element.style.display = 'none'
-    menuControls.style.display = 'none'
+    enterOverlayLayout({ touch: false })
     const el = document.createElement('div')
     el.id = 'crt-display'
     // Skills CRT is reflowed to one column, so it no longer needs to pan; let
@@ -3080,16 +2622,38 @@ export function buildGameView(
 
   // --- shared overlay helpers ---
 
-  function renderOverlay(title: string, buildBody: () => void): void {
-    autoCloseKbdIfOurs()
+  // Swap the screen from map/HUD/log to overlay layout: clear + show
+  // #ui-overlay, hide everything else. The touch controls stay visible by
+  // default — the kbd-overlay is a fixed-position child of them, so hiding
+  // the parent would take an open virtual keyboard down with it (and the
+  // keyboard covers the d-pad anyway when open); screens with no use for
+  // the d-pad (newgame-choice, CRT) pass touch:false.
+  function enterOverlayLayout(opts?: { touch?: boolean }): void {
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
     mapView.element.style.display = 'none'
     msgLog.style.display = 'none'
     hud.style.display = 'none'
-    touchControls.element.style.display = ''
+    touchControls.element.style.display = opts?.touch === false ? 'none' : ''
     menuControls.style.display = 'none'
     menuControls.innerHTML = ''
+  }
+
+  // The game-view surface handed to the extracted overlay screens
+  // (game-overlays.ts). Callbacks close over the live view state, so the
+  // screens stay free of this closure.
+  const overlayCtx: OverlayScreenCtx = {
+    overlay: uiOverlay,
+    send: (msg) => conn.send(msg),
+    enterLayout: enterOverlayLayout,
+    renderOverlay,
+    autoOpenKbd,
+    focusView: () => view.focus({ preventScroll: true }),
+  }
+
+  function renderOverlay(title: string, buildBody: () => void): void {
+    autoCloseKbdIfOurs()
+    enterOverlayLayout()
 
     const headerEl = document.createElement('div')
     // fg15 (white) by default so unstyled titles read brighter than the
@@ -3541,420 +3105,3 @@ export function buildGameView(
 
   return view
 }
-
-// Render a single spellset book as DOM: an optional header line followed
-// by one row per spell with its tile, letter, name, damage effect, and
-// range string. Mirrors the reference client's _fmt_spells_list (see
-// crawl-ref/source/webserver/game_data/static/ui-layouts.js:33).
-function renderSpellbook(loader: TileLoader | null, book: SpellBook, colourSpells: boolean, onSelect: (letter: string) => void): HTMLElement {
-  const wrap = document.createElement('div')
-  wrap.className = 'overlay-spellbook'
-  if (book.label?.trim()) {
-    const label = document.createElement('div')
-    label.className = 'overlay-line'
-    label.innerHTML = dcssToHtml(book.label.replace(/^\n+/, ''))
-    wrap.appendChild(label)
-  }
-  const list = document.createElement('div')
-  list.className = 'overlay-spelllist'
-  for (const spell of book.spells) {
-    const item = document.createElement('button')
-    item.className = 'overlay-spell'
-    if (colourSpells && typeof spell.colour === 'number') {
-      item.style.color = uiColor(spell.colour)
-    }
-    item.appendChild(renderTiles(loader, [{ t: spell.tile, tex: TEX.GUI }], 1))
-    const text = document.createElement('span')
-    text.className = 'overlay-spell-name'
-    text.textContent = ` ${spell.letter} - ${spell.title}`
-    item.appendChild(text)
-    if (spell.effect) {
-      const eff = document.createElement('span')
-      eff.className = 'overlay-spell-effect'
-      eff.innerHTML = dcssToHtml(spell.effect)
-      item.appendChild(eff)
-    }
-    if (spell.range_string) {
-      const rng = document.createElement('span')
-      rng.className = 'overlay-spell-range'
-      rng.innerHTML = dcssToHtml(spell.range_string)
-      item.appendChild(rng)
-    }
-    item.addEventListener('click', () => onSelect(spell.letter))
-    list.appendChild(item)
-  }
-  wrap.appendChild(list)
-  return wrap
-}
-
-// DCSS describe-* bodies mix prose paragraphs with terminal-formatted tables
-// (skill grids, resistance rows). Wrap each line individually so prose lines
-// soft-wrap at the screen edge while tabular lines preserve their column
-// alignment and side-scroll via the body's overflow-x.
-// DCSS quotes (describe-spell, describe-feature, describe-item) are emitted
-// wrapped in <darkgrey>. The wire format from formatted_string::to_colour_string
-// uses opens-only color switches: `<darkgrey>line1\nline2\n...<lightgrey>`
-// with no paired close. Because renderBodyLines runs dcssToHtml per source
-// line with a fresh stack, only line 1 inherits the color; later lines fall
-// back to the default. Walk the body and prepend <darkgrey> to every line of
-// each block so per-line rendering colors them all. The next color tag (or
-// end of body) terminates the switch.
-//
-// Preserve original line breaks and indentation. DCSS quote blocks contain
-// both verse (poems with deliberately short uneven lines, where breaks carry
-// meaning) and prose (80-char hard-wrapped paragraphs). Reflowing one form
-// ruins the other, and the original wire layout is the simplest signal of
-// which is which — let the body's overflow-x handle the prose case rather
-// than guessing.
-//
-// balanceColorTagsAcrossLines won't do this job: opens-only bodies skip it
-// (re-emitting the stack at every newline would blow up the message-log
-// popup), and even on paired bodies it treats `<lightgrey>` as a nested push
-// rather than a color switch.
-function propagateDarkgreyColor(body: string): string {
-  let result = ''
-  let i = 0
-  const OPEN = '<darkgrey>'
-  const CLOSE = '</darkgrey>'
-  while (i < body.length) {
-    const start = body.indexOf(OPEN, i)
-    if (start === -1) { result += body.slice(i); break }
-    result += body.slice(i, start)
-    const innerStart = start + OPEN.length
-    // Terminator: explicit close (paired form, rarely seen in wire data) or
-    // the next color-tag open (opens-only color switch). Pick whichever
-    // comes first; if neither, the block runs to end of body.
-    const closeIdx = body.indexOf(CLOSE, innerStart)
-    const openMatch = body.slice(innerStart).match(/<\w+>/)
-    const nextOpenIdx = openMatch ? innerStart + openMatch.index! : -1
-    let innerEnd: number
-    let isPaired: boolean
-    if (closeIdx !== -1 && (nextOpenIdx === -1 || closeIdx < nextOpenIdx)) {
-      innerEnd = closeIdx; isPaired = true
-    } else if (nextOpenIdx !== -1) {
-      innerEnd = nextOpenIdx; isPaired = false
-    } else {
-      innerEnd = body.length; isPaired = false
-    }
-    const inner = body.slice(innerStart, innerEnd)
-    if (!inner.includes('\n')) {
-      result += isPaired ? `${OPEN}${inner}${CLOSE}` : `${OPEN}${inner}`
-      i = isPaired ? innerEnd + CLOSE.length : innerEnd
-      continue
-    }
-    const propagated = inner.split('\n').map(l => `${OPEN}${l}`).join('\n')
-    if (isPaired) {
-      result += `${propagated}${CLOSE}`
-      i = innerEnd + CLOSE.length
-    } else {
-      result += propagated
-      i = innerEnd
-    }
-  }
-  return result
-}
-
-// Ego/artprop descriptions arrive pre-formatted by the server's
-// _format_prop_desc (describe.cc): a `Label: ` prefix, the description
-// hard-wrapped at 80 columns, and every continuation line padded with
-// spaces to align under the description column. That layout assumes an
-// 80-char terminal — at phone width each source line soft-wraps again and
-// the block turns into a jagged staircase. Detect the shape precisely
-// (first line has `label:` + padding + text; following lines indented with
-// exactly that many spaces), join each block into one logical line with the
-// padding collapsed, and tag it with HANG_MARK so renderBodyLines reflows
-// it as prose with a compact CSS hanging indent. Collapsing the padding
-// also keeps isTabularLine from classifying the joined line as nowrap.
-// Verse/quote lines never carry the exact-column indent, so they pass
-// through untouched. Lines with markup tags before the colon (stat rows,
-// key-help rows) are skipped by the [^<] guard.
-export const HANG_MARK = '\u0001'
-
-export function unwrapHangingIndents(body: string): string {
-  const lines = body.split('\n')
-  const out: string[] = []
-  // Active opens-only color carried across lines. Quote blocks arrive as
-  // `<darkgrey>` on their first line only (formatted_string color switch),
-  // so later quote lines are raw text — dialogue-format quotes
-  // ("Buttercup:    “And to think…”") would otherwise match the label-row
-  // shape. Never mark inside a darkgrey block.
-  let activeColor = ''
-  const trackTags = (l: string): void => {
-    for (const t of l.matchAll(/<(\/?)(\w+)>/g)) {
-      if (t[1]) activeColor = ''
-      else if (t[2] in DCSS_COLOR_MAP) activeColor = t[2]
-    }
-  }
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const shielded = activeColor === 'darkgrey'
-    trackTags(line)
-    const m = shielded ? null : line.match(/^([^\s<][^<]*?:)( +)(?=\S)/)
-    if (m) {
-      const col = m[1].length + m[2].length
-      const contRe = new RegExp(`^ {${col}}(?=\\S)`)
-      let j = i + 1
-      while (j < lines.length && contRe.test(lines[j])) j++
-      if (j > i + 1) {
-        // Keep line 1 verbatim (label + original padding) — renderBodyLines
-        // re-derives the description column from it to set the hang width,
-        // so wrapped text aligns under the description column.
-        const joined = [line, ...lines.slice(i + 1, j).map(l => l.slice(col))].join(' ')
-        out.push(HANG_MARK + joined)
-        for (let k = i + 1; k < j; k++) trackTags(lines[k])
-        i = j - 1
-        continue
-      }
-      // Single-line padded-label row: same server formatter, but the
-      // description fit within one wire line so there's no continuation
-      // indent to validate against. At phone width these still misbehave:
-      // ≥3 padding spaces trips isTabularLine into nowrap (row pans
-      // offscreen), while a 2-space pad (9-char labels like "*Corrode:")
-      // soft-wraps flush-left. Mark them so they wrap within the
-      // description column like the joined blocks; rows that fit render
-      // pixel-identical to the nowrap form. Guards: padding ≥2 spaces (a
-      // single space is ordinary prose, e.g. "Mesmerism radius: 2"), short
-      // label, description column ≤18 (the widest real formatter column —
-      // excludes right-aligned-to-col-80 layouts like the god-powers
-      // "Granted powers:        (Cost)" header), and no multi-space runs in
-      // the remainder (multi-column rows keep their alignment).
-      if (m[2].length >= 2 && m[1].length <= 16 && col <= 18 && !/ {3,}/.test(line.slice(col))) {
-        out.push(HANG_MARK + line)
-        continue
-      }
-    }
-    out.push(line)
-  }
-  return out.join('\n')
-}
-
-// Monster status descriptions arrive pre-wrapped at 77 columns and indented
-// 3 spaces per line (describe.cc _get_monster_status_descriptions:
-// `linebreak_string(lookup, 77)` then a 3-space indent on every line). At
-// phone width those hard 77-col breaks survive as hard line breaks
-// mid-sentence (e.g. "...other monsters) will" / "deal increased damage."),
-// because renderBodyLines hangs each wire line on its own. Each indented block
-// is a single wrapped paragraph, so join every run of consecutive same-indent
-// lines back into one logical line; the hanging-indent treatment then reflows
-// it to the actual width. A blank/short line, a flush-left label line, or a
-// differently-indented line ends the run, so paragraph breaks and the
-// `<w>Label:</w>` headers survive. Scope this to the status field only —
-// elsewhere (weapon skill sub-items) equally-indented lines are distinct
-// statements that must NOT be merged.
-export function joinIndentedRuns(text: string): string {
-  const lines = text.split('\n')
-  const out: string[] = []
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^( {2,})\S/.exec(lines[i])
-    if (!m) { out.push(lines[i]); continue }
-    const cont = new RegExp(`^${m[1]}(?=\\S)`)
-    const run = [lines[i]]
-    let j = i + 1
-    while (j < lines.length && cont.test(lines[j])) { run.push(lines[j].slice(m[1].length)); j++ }
-    out.push(run.join(' '))
-    i = j - 1
-  }
-  return out.join('\n')
-}
-
-// `terminal` renders the body as one fixed-width block: every line is nowrap
-// and the stat-row/per-line-tabular reformatting is skipped, so the caller can
-// scale the whole block to fit (see fitTerminalBody). Used for the game-over
-// screen; the describe-* panels keep the per-line heuristic (terminal=false).
-function renderBodyLines(rawBody: string, highlight: string, terminal = false): string {
-  return balanceColorTagsAcrossLines(rawBody).split('\n').map(line => {
-    // Lines marked by unwrapHangingIndents wrap with a hanging indent.
-    // propagateDarkgreyColor may have prepended tags, so the mark isn't
-    // necessarily at index 0. The marked line keeps its original
-    // `label + padding` prefix; re-derive the description column from it so
-    // wrapped text aligns under the column (the body is monospace, so Nch
-    // matches N wire characters exactly). Padded columns are honored up to
-    // 18ch (the widest real DBRAND label, "Manifold Assault:") — beyond
-    // that, and for single-space run-in labels like `'Of mesmerism': `,
-    // fall back to a compact 2ch hang.
-    const hang = line.includes(HANG_MARK)
-    let hangStyle = ''
-    if (hang) {
-      line = line.replace(HANG_MARK, '')
-      const pm = line.match(/^[^\s<][^<]*?:( +)(?=\S)/)
-      const col = pm ? pm[0].length : 0
-      // Hang wrapped text at the description column so the block stays aligned.
-      // Exception: the mundane-ego run-in form `'Of X': ` hangs at a compact
-      // 2ch default (its column is its full natural width, too deep on a
-      // phone). Don't gate on the padding-space count — a column-aligned
-      // artprop label whose name exactly fills the column has only ONE trailing
-      // space (e.g. `Corpsefed: `, padded to 11), and must still hang at its
-      // column to line up with its 2+-space siblings (`rMiasma:`, `^Drain:`).
-      // The quote prefix is what marks the run-in form, not the space count.
-      if (pm && col <= 18 && !line.startsWith("'")) hangStyle = ` style="--hang-col:${col}ch"`
-    }
-    if (!terminal && !hang) {
-      const stat = tryStatRow(line)
-      if (stat) return stat
-      const plain = plainStatSegments(line)
-      if (plain) {
-        const chips = plain.map(s => `<span class="overlay-stat">${dcssToHtml(s)}</span>`).join('')
-        return `<div class="overlay-line overlay-stat-row">${chips}</div>`
-      }
-    }
-    let cls = hang
-      ? 'overlay-line overlay-line--hang'
-      : terminal || isTabularLine(line)
-        ? 'overlay-line overlay-line--nowrap'
-        : 'overlay-line'
-    // Indented prose sub-items ("    Your skill: 3.6", "    At 100%
-    // training you would reach 18.0 in about 9.3 XLs." — describe.cc
-    // emits these with a 4-space indent; monster-status descriptions with a
-    // 3-space indent): wrap with a hanging indent at the line's own depth so
-    // continuations stay aligned under the sub-item instead of falling
-    // flush-left. The leading spaces render on line 1 as-is; the negative
-    // text-indent/padding pair only moves the wrapped lines. Deeply indented
-    // lines (>18) are left alone. Skip past any leading colour-markup tags:
-    // opens-only bodies (formatted_string::to_colour_string, e.g. msg.status)
-    // get reopened tags prepended at each line start by
-    // balanceColorTagsAcrossLines, so the indent no longer sits at column 0 —
-    // the tags are zero-width spans, so the literal-space hang still lines up.
-    // Darkgrey is the one exception: it is the quote/verse convention (see
-    // unwrapHangingIndents), never reflowed, so a darkgrey-led line stays flush.
-    // The remainder after the indent must hold real text — a paragraph-break
-    // line is `<colour>   </colour>` after balancing, all tags and spaces, and
-    // must not be hung.
-    if (cls === 'overlay-line' && !hang) {
-      const m = /^((?:<[^>]+>)*)( {2,})(.*)$/.exec(line)
-      const hasText = !!m && m[3].replace(/<[^>]+>/g, '').trim() !== ''
-      const ind = m && hasText && !/<\/?darkgrey>/.test(m[1]) ? m[2].length : 0
-      if (ind > 0 && ind <= 18) {
-        cls += ' overlay-line--hang'
-        hangStyle = ` style="--hang-col:${ind}ch"`
-      }
-    }
-    const html = applyHighlight(dcssToHtml(line), highlight) || '&nbsp;'
-    return `<div class="${cls}"${hangStyle}>${html}</div>`
-  }).join('')
-}
-
-// renderBodyLines splits the body on `\n` and runs dcssToHtml per line with
-// a fresh stack — so a `<darkgrey>quote line 1\nquote line 2</darkgrey>` block
-// renders only line 1 in darkgrey, with subsequent lines defaulting. Walk the
-// body once and at each newline emit the current open-stack as closes (before
-// the \n) and reopens (after the \n), so each line is self-contained.
-//
-// Skip this for opens-only bodies: the wire format from
-// formatted_string::to_colour_string (format.cc:357) emits `<newcolor>` with
-// no closing tag — switching color is implicit replace, not nesting. The full
-// message-log popup is encoded this way, with ~1900 opens across ~440 lines.
-// Stacking those would emit the entire growing stack at every newline, blowing
-// up to hundreds of thousands of spans. Opens-only lines also each start with
-// an explicit color, so per-line rendering already gets the right color.
-function balanceColorTagsAcrossLines(body: string): string {
-  if (!body.includes('</')) return body
-  const stack: string[] = []
-  const out: string[] = []
-  for (const token of body.split(/(<\/?[a-zA-Z]+>|\n)/)) {
-    if (!token) continue
-    if (token === '\n') {
-      for (let i = stack.length - 1; i >= 0; i--) out.push(`</${stack[i]}>`)
-      out.push('\n')
-      for (const tag of stack) out.push(`<${tag}>`)
-      continue
-    }
-    const close = token.match(/^<\/([a-zA-Z]+)>$/)
-    const open = token.match(/^<([a-zA-Z]+)>$/)
-    if (close && stack.length > 0) stack.pop()
-    else if (open && open[1] in DCSS_COLOR_MAP) stack.push(open[1])
-    out.push(token)
-  }
-  return out.join('')
-}
-
-// Detect a stat-row line — one whose entire content is fixed-width
-// `<color>label: value   </color>` blocks with whitespace padding (the
-// "Max HP / Will / AC / EV" and "Class / Size / Int" rows in describe-
-// monster). Reformat as a flex row of compact chips so all stats fit on
-// a phone screen instead of overflowing the 80-char column layout.
-function tryStatRow(line: string): string | null {
-  const blocks: { color: string; text: string }[] = []
-  let lastEnd = 0
-  const re = /<(\w+)>([^<]*)<\/\1>/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(line)) !== null) {
-    if (line.slice(lastEnd, m.index).trim()) return null
-    const inner = m[2].trim()
-    if (!inner.includes(':')) return null
-    blocks.push({ color: m[1], text: inner })
-    lastEnd = m.index + m[0].length
-  }
-  if (line.slice(lastEnd).trim()) return null
-  if (blocks.length < 2) return null
-  const html = blocks
-    .map(b => `<span class="overlay-stat">${dcssToHtml(`<${b.color}>${b.text}</${b.color}>`)}</span>`)
-    .join('')
-  return `<div class="overlay-line overlay-stat-row">${html}</div>`
-}
-
-// Untagged multi-stat lines: `label: value` pairs separated by 2+ spaces,
-// all on one line. Real shapes: the weapon header "Base accuracy: -2  Base
-// damage: 13  Base attack delay: 1.6" (describe.cc:1577), the armour header
-// "Base armour rating: 5     Encumbrance rating: 2" (describe.cc:2288), the
-// spell header "Level: 5        Schools: Conjuration" (describe.cc:4218).
-// At phone width these soft-wrap mid-pair ("Base / attack delay: 1.6");
-// rendering them as the same chip row used for tagged stat rows lets pairs
-// wrap as units. Indented lines are sub-items, not stat headers — skip.
-export function plainStatSegments(line: string): string[] | null {
-  if (line.includes('<') || /^\s/.test(line)) return null
-  const segs = line.trim().split(/ {2,}/)
-  if (segs.length < 2) return null
-  for (const s of segs) {
-    if (!/^[^\s:][^:]{0,23}: \S/.test(s)) return null
-  }
-  return segs
-}
-
-function isTabularLine(line: string): boolean {
-  const stripped = line.replace(/<[^>]+>/g, '')
-  if (/^\s*-{3,}[\s-]*$/.test(stripped)) return true
-  if (/\S {3,}\S/.test(stripped)) return true
-  // Key-help row: line begins with a colour-wrapped key followed by " : "
-  // (e.g. "<white>Shift-Dir.<lightgrey> : Move the cursor..."). The intra-
-  // line gap can be just one space when the key string consumed its
-  // padding, so the \S {3,}\S check above misses it. DCSS's wire format
-  // uses opens-only color switches (not paired closes), so the second tag
-  // matches either form.
-  if (/^<\w+>[^<]+<\/?\w+>\s*:\s/.test(line)) return true
-  // Right-column-only continuation from column_composer: when the left
-  // column is empty the row is ~40-42 leading spaces + right-column content
-  // (column 0 width is 40 in targeting help, 42 in the main keyhelp). The
-  // threshold sits above the manual's deepest prose indent (28 leading
-  // spaces, the cover-page banner; species sub-bullets use 10) so prose
-  // paragraphs keep wrapping.
-  if (/^ {30,}\S/.test(stripped)) return true
-  return false
-}
-
-function applyHighlight(html: string, pattern: string): string {
-  if (!pattern) return html
-  try {
-    const re = new RegExp(`[^\n]*(${pattern})[^\n]*\n?`, 'g')
-    return html.replace(re, (line) => `<span class="crt-highlight">${line}</span>`)
-  } catch { return html }
-}
-
-function stripDcss(text: string): string {
-  return text.replace(/<[^>]+>/g, '')
-}
-
-function formatMore(raw: string, scrollPos = 'top'): string {
-  return stripDcss(raw).replace(/XXX/g, scrollPos).trim()
-}
-
-function formatMoreHtml(raw: string, scrollPos = 'top'): string {
-  return dcssToHtml(raw.replace(/XXX/g, scrollPos))
-}
-
-function computeScrollPos(el: HTMLElement): string {
-  const { scrollTop, scrollHeight, clientHeight } = el
-  if (scrollTop <= 0) return 'top'
-  if (scrollTop + clientHeight >= scrollHeight - 1) return 'bot'
-  return `${Math.round(scrollTop / (scrollHeight - clientHeight) * 100)}%`
-}
-

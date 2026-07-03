@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { unwrapHangingIndents, plainStatSegments, HANG_MARK } from './game-view'
+import { unwrapHangingIndents, plainStatSegments, HANG_MARK } from './overlay-body'
 
 const SRC = resolve(__dirname, '../../../crawl-0.34.1/crawl-ref/source')
 const hasRef = existsSync(SRC)
