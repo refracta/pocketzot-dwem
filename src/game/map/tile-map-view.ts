@@ -353,6 +353,12 @@ export class TileMapView {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }
 
+  // The viewport's footprint in dungeon coords (top-left + size), for the
+  // minimap's you-are-here rectangle.
+  viewRect(): { x: number; y: number; w: number; h: number } {
+    return { x: this.offX, y: this.offY, w: this.viewportW, h: this.viewportH }
+  }
+
   render(dirty?: Set<string>): void {
     const offX = this.offX
     const offY = this.offY

@@ -1569,6 +1569,42 @@ html, body {
 }
 .ml-tile { width: 20px; height: 20px; }
 
+/* Level minimap lens (opened from the HUD place chip): occludes only the
+   map area — HUD, floating log, and touch controls stay live, and movement
+   input passes through so you can walk by the overview. Child of #map-wrap
+   (position:relative), so inset:0 tracks the map region through rotations
+   and render-mode swaps. */
+.minimap-lens {
+  position: absolute;
+  inset: 0;
+  /* Above the map content; below the floating log / spell rail / --more--
+     tier (z ≥ 3), which stay readable over the lens. */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  /* Keep the canvas clear of the floating log along the map's bottom edge. */
+  padding-bottom: calc(var(--msglog-h) + 0.25rem);
+  background: rgba(0, 0, 0, 0.92);
+}
+/* With the spell rail up, the log floats a rail-height higher (same offset
+   pair as #more-btn) — keep the canvas clear of both. */
+#game-view.spell-row .minimap-lens {
+  padding-bottom: calc(var(--msglog-h) + var(--spell-rail-h) + 0.25rem);
+}
+.minimap-canvas {
+  /* The bitmap is integer device-px per cell; keep upscaling (if any)
+     hard-edged. Deliberately borderless: the explored region reads its own
+     extent against the black, as in the reference minimap. */
+  image-rendering: pixelated;
+  background: #000;
+}
+/* .hud-place-chip has no styling on purpose: like the message-log and
+   monster-list taps, the minimap toggle is an undecorated tap surface,
+   documented in ABOUT.md's Gestures. The class is StatsView's own tap-target
+   hook (its constructor delegates the tap; consumers use setOnPlaceTap). */
+
 /* Monster panel (full-screen takeover variant of #monster-list) */
 .mp-list {
   display: flex;

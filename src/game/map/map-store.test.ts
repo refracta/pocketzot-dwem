@@ -149,3 +149,57 @@ describe('MapStore.clear', () => {
     expect(store.getMonsters().size).toBe(0)
   })
 })
+
+describe('MapStore.merge — mf (minimap feature)', () => {
+  it('stores mf and carries it forward across mf-less deltas', () => {
+    const store = new MapStore()
+    store.merge([{ x: 3, y: 4, g: '#', mf: 2 }])
+    expect(store.get(3, 4)?.mf).toBe(2)
+    // glyph-only delta (animation etc.) must not drop the category
+    store.merge([{ x: 3, y: 4, g: '*' }])
+    expect(store.get(3, 4)?.mf).toBe(2)
+    // a new mf overwrites (wall dug out → floor)
+    store.merge([{ x: 3, y: 4, mf: 1 }])
+    expect(store.get(3, 4)?.mf).toBe(1)
+  })
+})
+
+describe('MapStore.forEachCell', () => {
+  it('visits every known cell with decoded coords', () => {
+    const store = new MapStore()
+    store.merge([
+      { x: 1, y: 2, g: '.', mf: 1 },
+      { g: '#', mf: 2 },          // (2,2) via x++
+      { x: -5, y: -7, g: '<', mf: 12 },  // negative coords survive key round-trip
+    ])
+    const seen = new Map<string, number | undefined>()
+    store.forEachCell((x, y, cell) => seen.set(`${x}|${y}`, cell.mf))
+    expect(seen.size).toBe(3)
+    expect(seen.get('1|2')).toBe(1)
+    expect(seen.get('2|2')).toBe(2)
+    expect(seen.get('-5|-7')).toBe(12)
+  })
+})
+
+describe('MapStore.mfBounds', () => {
+  it('spans mf cells across merges and resets on clear', () => {
+    const store = new MapStore()
+    expect(store.mfBounds()).toBeNull()
+    store.merge([{ x: 5, y: 5, g: '.', mf: 1 }])
+    store.merge([{ x: 2, y: 9, g: '#', mf: 2 }])
+    expect(store.mfBounds()).toEqual({ left: 2, top: 5, right: 5, bottom: 9 })
+    store.clear()
+    expect(store.mfBounds()).toBeNull()
+  })
+
+  it('excludes mf-less and MF_UNSEEN (mf:0) cells', () => {
+    const store = new MapStore()
+    store.merge([
+      { x: 10, y: 5, g: '.', mf: 1 },
+      { x: 30, y: 20, g: '#', mf: 2 },
+      { x: 50, y: 40, g: ' ', mf: 0 }, // MF_UNSEEN — excluded
+      { x: 60, y: 50, g: '?' },        // no mf — excluded
+    ])
+    expect(store.mfBounds()).toEqual({ left: 10, top: 5, right: 30, bottom: 20 })
+  })
+})

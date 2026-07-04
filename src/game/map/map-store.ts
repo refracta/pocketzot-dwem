@@ -4,6 +4,9 @@ import { bgFlags } from './flag-decode'
 export interface Cell {
   g: string   // glyph
   col: number // packed color byte
+  // Minimap feature category (map-feature.h `map_feature` value): wall /
+  // floor / stair / hostile-monster / … . Consumed only by MinimapView.
+  mf?: number
   // tile background; the MM_UNSEEN / UNSEEN flags indicate out-of-FOV. Same
   // [lo, hi] encoding as `fg`; stored raw and decoded by name at read time
   // via flag-decode.ts (see TileInfo.bg).
@@ -133,6 +136,7 @@ export class MapStore {
       const cell: Cell = {
         g: u.g ?? existing?.g ?? ' ',
         col: u.col ?? existing?.col ?? 7,
+        mf: u.mf ?? existing?.mf,
         flc: u.flc ?? existing?.flc,
         fla: u.fla ?? existing?.fla,
         t_bg: t && 'bg' in t ? t.bg : existing?.t_bg,
@@ -289,6 +293,36 @@ export class MapStore {
 
   get(x: number, y: number): Cell | undefined {
     return this.cells.get(cellKey(x, y))
+  }
+
+  // Iterate every known cell (minimap paint). Coords are decoded from the
+  // store key, so callers never touch the key format.
+  forEachCell(cb: (x: number, y: number, cell: Cell) => void): void {
+    for (const [key, cell] of this.cells) {
+      const { x, y } = parseCellKey(key)
+      cb(x, y, cell)
+    }
+  }
+
+  // Bounding box of minimap-worthy cells (mf > 0, so MF_UNSEEN and mf-less
+  // cells are excluded), or null before any are known. Computed on demand in
+  // one pass: only the minimap reads it, and it already re-scans the whole
+  // store to draw — so keeping merge (the hot path) free of per-cell bbox
+  // bookkeeping is the better trade.
+  mfBounds(): { left: number; top: number; right: number; bottom: number } | null {
+    let box: { left: number; top: number; right: number; bottom: number } | null = null
+    this.forEachCell((x, y, cell) => {
+      if (!cell.mf) return
+      if (!box) {
+        box = { left: x, top: y, right: x, bottom: y }
+      } else {
+        if (x < box.left) box.left = x
+        if (x > box.right) box.right = x
+        if (y < box.top) box.top = y
+        if (y > box.bottom) box.bottom = y
+      }
+    })
+    return box
   }
 
   getMonsters(): ReadonlyMap<string, MonsterCell> {

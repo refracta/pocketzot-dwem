@@ -30,11 +30,20 @@ export class StatsView {
   private oldMp: number | undefined
   private layout: 'compact' | 'square'
   private mql: MediaQueryList | null
+  private onPlaceTap: (() => void) | null = null
 
   constructor(inv: InventoryStore) {
     this.inv = inv
     this.el = document.createElement('div')
     this.el.id = 'hud-stats'
+    // The place chip's tap surface. Delegated on the stable root because
+    // render() rewrites the chip's markup each repaint — and kept HERE, next
+    // to the templates that emit .hud-place-chip, so the selector and the
+    // markup have a single owner (same principle as cellKey/parseCellKey in
+    // map-store). Consumers get a callback, not knowledge of our DOM.
+    this.el.addEventListener('click', (e) => {
+      if (this.onPlaceTap && (e.target as HTMLElement).closest?.('.hud-place-chip')) this.onPlaceTap()
+    })
     // Portrait gets the compact HUD (single nowrap rows); landscape gets the
     // square two-column HUD, which fits the 15rem sidebar without clipping.
     // Same query string as the style.css landscape block so JS and CSS can
@@ -49,6 +58,10 @@ export class StatsView {
 
   get element(): HTMLElement {
     return this.el
+  }
+
+  setOnPlaceTap(cb: () => void): void {
+    this.onPlaceTap = cb
   }
 
   // Swap templates on rotate and repaint from the accumulated state — render()
@@ -168,7 +181,7 @@ export class StatsView {
       // compact: XL/progress/place/gold composed onto one line
       let html = `<span class="hg-caption">XL</span><span>${escHtml(String(xl))}</span>`
       if (s.progress != null) html += ` ${escHtml(String(s.progress))}%`
-      if (placeStr) html += ` <span class="hg-caption">@</span><span>${escHtml(placeStr)}</span>`
+      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(placeStr)}</span></span>`
       if (god === 'Gozag' && s.gold != null) {
         const valClass = goldAura ? ' class="stat-boosted"' : ''
         html += ` <span class="hg-caption">$</span><span${valClass}>${escHtml(String(s.gold))}</span>`
@@ -491,7 +504,7 @@ export class StatsView {
         <span><span class="hg-caption">SH:</span><span id="hud-sh"></span></span>
         <span><span class="hg-caption">Dex:</span><span id="hud-dex"></span></span>
         <span><span class="hg-caption">XL:</span><span id="hud-xl"></span> <span class="hg-caption">Next:</span><span id="hud-prog"></span></span>
-        <span><span class="hg-caption">Place:</span><span id="hud-place"></span></span>
+        <span class="hud-place-chip"><span class="hg-caption">Place:</span><span id="hud-place"></span></span>
         <span class="hg-noise"><span class="hg-caption">Noise:</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
         <span class="hg-time"><span class="hg-caption">Time:</span><span id="hud-time-val"></span></span>
       </div>

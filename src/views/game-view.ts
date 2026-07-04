@@ -8,6 +8,7 @@ import { StatsView } from '../game/hud/stats-view'
 import { StatusView } from '../game/hud/status-view'
 import { MonsterListView } from '../game/hud/monster-list'
 import { MonsterPanelView } from '../game/hud/monster-panel'
+import { MinimapView } from '../game/map/minimap-view'
 import { fgHaloDngnName } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
@@ -177,6 +178,15 @@ export function buildGameView(
   const monsterListView = new MonsterListView(store)
   const monsterPanel = new MonsterPanelView(store)
   let monsterPanelOpen = false
+  const minimap = new MinimapView(store)
+  let minimapOpen = false
+  // Tap anywhere on the lens dismisses it (Esc and the place-chip toggle
+  // are the other exits — no × needed). A future pan gesture will claim
+  // drags on the canvas and leave taps as the dismissal.
+  minimap.element.addEventListener('click', () => closeMinimap())
+  // The place chip toggles the minimap. StatsView owns the chip's DOM and
+  // tap detection (see its constructor); we only supply the behavior.
+  statsView.setOnPlaceTap(() => minimapOpen ? closeMinimap() : openMinimap())
   // Fetch this version's enums.js flag tables and install them as the flag-
   // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
   // because the monster list/panel style attitude+threat from fg flags in
@@ -466,7 +476,9 @@ export function buildGameView(
   // chip clickable, and a re-open would rebuild the overlay and reset the
   // panel's scroll position.
   monsterListView.element.addEventListener('click', (e) => {
-    if (uiStack.length > 0 || crtActive || dialogActive || activeMenu || isHarvesting() || monsterPanelOpen) return
+    // (Not gated on minimapOpen: openMonsterPanel's enterOverlayLayout
+    // closes the lens, so the tap cleanly swaps lens → panel.)
+    if (serverPromptActive() || monsterPanelOpen) return
     if (monsterListView.element.childElementCount === 0) return
     e.stopPropagation()
     openMonsterPanel()
@@ -537,6 +549,11 @@ export function buildGameView(
     if (monsterPanelOpen) {
       if (msg.msg === 'key' && msg.keycode === 27) closeMonsterPanel()
       return
+    }
+    if (minimapOpen) {
+      // The lens is see-through to input: Esc closes it locally, everything
+      // else drives the game as normal (walk while watching the overview).
+      if (msg.msg === 'key' && msg.keycode === 27) { closeMinimap(); return }
     }
     if (msg.msg === 'key' && menuNavActive()) {
       if (msg.keycode === CK_DOWN) { cycleMenuHover(false); return }
@@ -739,6 +756,10 @@ export function buildGameView(
     // whole strip. Toggles; pass true/false to force.
     ;(window as unknown as { __dcssMsgPill: (on?: boolean) => void }).__dcssMsgPill =
       (on) => { view.classList.toggle('msg-pill', on) }
+    // __dcssMinimap() — open the level minimap overlay (same as tapping the
+    // HUD place chip), for driving with __dcssSimulateIn'd map frames.
+    ;(window as unknown as { __dcssMinimap: () => void }).__dcssMinimap =
+      () => openMinimap()
   }
 
   // Apply the persisted render-mode preference now that the map element,
@@ -764,6 +785,13 @@ export function buildGameView(
     if (monsterPanelOpen) {
       e.preventDefault()
       if (e.key === 'Escape') closeMonsterPanel()
+      return
+    }
+    // Minimap lens: only Escape is intercepted (close); all other keys fall
+    // through and play the game under the lens.
+    if (minimapOpen && e.key === 'Escape') {
+      e.preventDefault()
+      closeMinimap()
       return
     }
     if (handleMenuNavKey(e)) return
@@ -799,7 +827,7 @@ export function buildGameView(
       // actually sends.
       case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; monsterPanelOpen = false; harvester.reset(); hideOverlay() }
+        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; closeClientOverlays(); harvester.reset(); hideOverlay() }
         break
 
       // Raw-HTML modal pushed by the server (save-transfer prompt on trunk
@@ -875,6 +903,7 @@ export function buildGameView(
         else scheduleRender(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
+        scheduleMinimapRepaint()
         maybeSaveAvatar()
         break
       }
@@ -897,6 +926,7 @@ export function buildGameView(
           // rendered: the same batch's `map` message merges this turn's deltas
           // before the flush, so the full render paints the fresh store once.
           if (mapView.setViewCenter(store.playerPos)) scheduleRender()
+          scheduleMinimapRepaint()
         }
         // Feed HP/MP to the renderer (tile mode draws under-tile mini-bars).
         // Runs before the scheduled flush, so a full render picks up the fresh
@@ -953,9 +983,10 @@ export function buildGameView(
       case 'ui-push': {
         disarmCreationGuard()  // an overlay rendered — see the 'txt' case
         const pushMsg = msg as unknown as UiPushMsg
-        // A server overlay supersedes our client-side monster panel; clear the
-        // flag so subsequent map updates don't rewrite the overlay body.
-        monsterPanelOpen = false
+        // A server overlay supersedes our client-side monster panel and
+        // minimap lens; clear/close so subsequent map updates don't rewrite
+        // the overlay body or repaint a stale lens.
+        closeClientOverlays()
         // describe-* overlays hint "(press '!' for details)" inside the body,
         // not in the actions footer — promote it to a tappable button so it's
         // reachable on mobile. Mutating actions persists across ui-state body
@@ -1080,7 +1111,7 @@ export function buildGameView(
         // Clear the flag so the Esc guard hands off to the menu-close path —
         // else the first Esc closes the panel locally (never reaching the
         // server) and the live menu blocks re-opening the list until a 2nd Esc.
-        monsterPanelOpen = false
+        closeClientOverlays()
         if (m.type === 'crt') showCrt(m.tag)
         else {
           if (m.replace) menuStack.pop()
@@ -1293,7 +1324,7 @@ export function buildGameView(
         menuStack.length = 0
         activeMenu = null
         menuShift.reset()
-        monsterPanelOpen = false
+        closeClientOverlays()
         titlePromptInput = null
         harvester.reset()
         hideOverlay()
@@ -2407,6 +2438,70 @@ export function buildGameView(
     hideOverlay()  // restores map/hud/msglog/touch via standard restore path
   }
 
+  // --- Level minimap (map-area lens, opened from the HUD place chip) ---
+  //
+  // Deliberately NOT a renderOverlay screen: the lens occludes only
+  // #map-wrap, leaving the HUD, floating log, and touch controls live.
+  // Movement input passes straight through (see the minimapOpen branches in
+  // the touch handler and docKeyHandler), and the map/player repaints below
+  // keep the lens current — so the user can walk by the level overview.
+  // Tap, ×, Esc, or re-tapping the place chip dismisses; any server overlay
+  // closes it via enterOverlayLayout.
+
+  function repaintMinimap(): void {
+    const el = minimap.element
+    const cs = getComputedStyle(el)
+    minimap.paint(
+      mapView.viewRect(),
+      Math.max(0, el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+      Math.max(0, el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)),
+    )
+  }
+
+  // Message-driven repaints coalesce through rAF, mirroring the main map's
+  // scheduleRender: a movement turn delivers player + map in one batch, and
+  // without this each message would repaint (and restyle) the lens
+  // separately.
+  let minimapRepaintQueued = false
+  function scheduleMinimapRepaint(): void {
+    if (!minimapOpen || minimapRepaintQueued) return
+    minimapRepaintQueued = true
+    requestAnimationFrame(() => {
+      minimapRepaintQueued = false
+      if (minimapOpen) repaintMinimap()
+    })
+  }
+
+  function openMinimap(): void {
+    // Same refusal set as the monster panel: don't cover a server prompt.
+    if (serverPromptActive() || monsterPanelOpen || minimapOpen) return
+    minimapOpen = true
+    mapWrap.appendChild(minimap.element)
+    repaintMinimap()
+    view.focus({ preventScroll: true })
+  }
+
+  function closeMinimap(): void {
+    if (!minimapOpen) return
+    minimapOpen = false
+    minimap.element.remove()
+  }
+
+  // A server-driven prompt/menu owns the screen — no client-side map overlay
+  // (monster panel, minimap) may open over it. Shared by the open guards so
+  // the two can't drift apart.
+  function serverPromptActive(): boolean {
+    return uiStack.length > 0 || crtActive || dialogActive || !!activeMenu || isHarvesting()
+  }
+
+  // Dismiss both client-side map overlays. Called wherever a server overlay
+  // takes the screen (the reset handlers below); each close is idempotent, so
+  // the redundant call under enterOverlayLayout's own closeMinimap is a no-op.
+  function closeClientOverlays(): void {
+    monsterPanelOpen = false
+    closeMinimap()
+  }
+
   // --- shared overlay helpers ---
 
   // Swap the screen from map/HUD/log to overlay layout: clear + show
@@ -2416,6 +2511,9 @@ export function buildGameView(
   // keyboard covers the d-pad anyway when open); screens with no use for
   // the d-pad (newgame-choice, CRT) pass touch:false.
   function enterOverlayLayout(opts?: { touch?: boolean }): void {
+    // Every server-driven overlay passes through here; the map-area minimap
+    // lens must not linger over (or under) it.
+    closeMinimap()
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
     mapView.element.style.display = 'none'

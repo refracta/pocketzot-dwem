@@ -11,6 +11,10 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-03
 
+- Minimap added: toggle by tapping the place name in the HUD
+  (e.g. "@Dungeon:1"). Shows layout, stairs, portals, items, and monsters.
+  The controls stay live while it's up. Tap it, or the place name again, to
+  dismiss.
 - Fixed the skill menu sometimes showing a mastered skill's line twice.
 
 ## 2026-07-02

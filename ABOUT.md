@@ -29,6 +29,7 @@ Obligatory virtual keyboard also available.
 - Double tap on map to toggle zoom level
 - Two-finger long press on map to toggle ASCII/tiles
 - Double tap Shift to lock it
+- Tap place name in HUD (e.g. @Dungeon:1) to toggle minimap
 - Tap floating monster list for full view, then tap monster to inspect
 - Tap chevron at top-right of monster list to collapse to single-line view
 
