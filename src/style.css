@@ -2840,8 +2840,12 @@ html, body {
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
        row is minmax(0, auto): content-sized when there's room, but able to
        shrink so it scrolls (overflow-y:auto below) when a short landscape
-       viewport can't fit everything — keeping the bottom controls visible. */
-    grid-template-rows: minmax(0, auto) auto 1fr auto auto;
+       viewport can't fit everything — keeping the bottom controls visible.
+       The panel row's minimum is max-content, NOT the item's automatic
+       minimum: .tc-panel declares min-height:0 for its portrait flex life,
+       which zeroes that minimum here and would let a starved sidebar crush
+       the panel until its footer keys paint over the row above. */
+    grid-template-rows: minmax(0, auto) auto 1fr auto minmax(max-content, auto);
     grid-template-areas:
       "map hud"
       "map mons"
@@ -2889,14 +2893,35 @@ html, body {
     bottom: auto;
   }
 
+  /* The minimap lens's log-clearance padding (base rule) assumes the
+     portrait log along the map's bottom edge; here the log floats on top,
+     so flip the reserved band. The spell-row variant is folded in because
+     in landscape the rail sits in the sidebar, not over the map — no extra
+     clearance on either side. */
+  .minimap-lens,
+  #game-view.spell-row .minimap-lens {
+    padding-top: calc(var(--msglog-h) + 0.25rem);
+    padding-bottom: 0.25rem;
+  }
+
   #map-wrap { grid-area: map; }
 
   #game-hud {
     grid-area: hud;
     border-top: none;
     overflow-y: auto;
+    /* The place chip's hit-area bleed (padding/negative-margin pair) pokes
+       ~8px past the sidebar's right padding edge. Harmless in portrait
+       (overflow stays visible), but overflow-y:auto makes the x axis
+       scrollable too — clip it so the stats block can't wiggle sideways. */
+    overflow-x: hidden;
     padding: 0.3rem 0.4rem;
   }
+  /* When the sidebar is height-starved, the squeeze must land on this
+     scroll container — not on its rows, which otherwise flex-shrink in
+     place and slice the status/weapon lines mid-glyph while scrollHeight
+     tracks the shrunken content (so nothing ever scrolls). */
+  #game-hud > * { flex-shrink: 0; }
 
   /* Stack HP and MP bars vertically when the HUD is a narrow sidebar */
   .hg-bar-pair { flex-direction: column; align-items: stretch; gap: 0.15rem; }
