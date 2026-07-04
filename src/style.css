@@ -1673,6 +1673,9 @@ html, body {
 .hs-id { font-size: 0.75rem; line-height: 1.2; display: flex; align-items: baseline; }
 .hs-id #hud-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .hg-piety { margin-left: 0.4em; flex-shrink: 0; }
+/* Under god's wrath the whole piety row reads red (reference
+   #stats_piety.penance, colour 4). */
+.hg-piety.penance { color: #b30009; }
 
 .hg-bar-pair {
   display: flex;

@@ -13,9 +13,11 @@ Notable changes to PocketZot, newest first.
 
 - Minimap added: toggle by tapping the place name in the HUD (e.g. "@D:1").
   Shows layout, stairs, portals, items, and monsters. The controls stay live
-  while it's up. Tap it, or the place name again, to dismiss.
+  while it's up. Tap the map, or the place name again, to dismiss.
 - The HUD now uses the standard short branch names (D:5, Elf:3, Zot:5) in
-  portrait, matching the lobby and morgue notes.
+  portrait.
+- Draconians now show their colour in the HUD, and the piety row now shows
+  penance (in red) and Xom's mood.
 - Fixed the skill menu sometimes showing a mastered skill's line twice.
 
 ## 2026-07-02

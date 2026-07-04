@@ -179,8 +179,13 @@ export interface PlayerMsg {
   name?: string
   title?: string
   species?: string
+  species_display_name?: string  // e.g. "Red Draconian" where species = "Draconian"
   god?: string
   piety_rank?: number
+  penance?: boolean          // under god's wrath — piety row tints red
+  ostracism_pips?: number    // trunk: red X pips eating the piety row's dots
+  wizard?: number            // 1 in wizard-mode games
+  explore?: boolean          // explore-mode games ('+' on WebTiles)
   form?: number
   hp?: number
   hp_max?: number
