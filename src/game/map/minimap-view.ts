@@ -130,17 +130,19 @@ export class MinimapView {
     // the rectangle draws fully OUTSIDE the bordered region.
     const region = { ...crop }
     if (viewRect) {
+      // Grow one axis's [min, max] to cover the view rect, greedily and up to
+      // the cell budget: extend the low edge first, then the high edge with
+      // whatever budget remains. Both axes take the same shape, so run it twice.
+      const growAxis = (cMin: number, cMax: number, vMin: number, vSize: number, maxCells: number): [number, number] => {
+        const grow = (want: number, avail: number) => Math.max(0, Math.min(want, avail))
+        const min = cMin - grow(cMin - vMin, maxCells - (cMax - cMin + 1))
+        const max = cMax + grow(vMin + vSize - 1 - cMax, maxCells - (cMax - min + 1))
+        return [min, max]
+      }
       const maxCellsW = Math.floor(maxCssW * dpr / this.cellPx)
       const maxCellsH = Math.floor(maxCssH * dpr / this.cellPx)
-      const grow = (want: number, avail: number) => Math.max(0, Math.min(want, avail))
-      let availW = maxCellsW - cropW
-      region.left -= grow(crop.left - viewRect.x, availW)
-      availW = maxCellsW - (region.right - region.left + 1)
-      region.right += grow(viewRect.x + viewRect.w - 1 - crop.right, availW)
-      let availH = maxCellsH - cropH
-      region.top -= grow(crop.top - viewRect.y, availH)
-      availH = maxCellsH - (region.bottom - region.top + 1)
-      region.bottom += grow(viewRect.y + viewRect.h - 1 - crop.bottom, availH)
+      ;[region.left, region.right] = growAxis(crop.left, crop.right, viewRect.x, viewRect.w, maxCellsW)
+      ;[region.top, region.bottom] = growAxis(crop.top, crop.bottom, viewRect.y, viewRect.h, maxCellsH)
     }
     this.originX = region.left
     this.originY = region.top
