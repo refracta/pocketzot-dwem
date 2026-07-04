@@ -73,6 +73,47 @@ html, body {
   padding: 1.5rem 1.25rem;
 }
 
+/* Relocation notice on the old pages.dev origin (login.ts). Accent-tinted
+   card above the wordmark; the × snoozes it for the browsing session. */
+.login-moved {
+  position: relative;
+  margin-bottom: 1.25rem;
+  padding: 0.8rem 2rem 0.85rem 0.85rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.login-moved-msg { margin: 0; }
+.login-moved strong { color: var(--accent); font-weight: 600; }
+.login-moved-link {
+  display: inline-block;
+  margin: 0.5rem 0;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.login-moved-sub {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.login-moved-x {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .login-title {
   font-size: 1.4rem;
   color: var(--accent);

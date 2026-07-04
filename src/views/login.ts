@@ -113,6 +113,24 @@ export function buildLoginView(
 
   decorateLogo(view.querySelector<HTMLElement>('.login-title')!)
 
+  // Relocation notice, shown only on the exact public old origin (pocketzot.pages.dev)
+  if (location.hostname === 'pocketzot.pages.dev' &&
+      sessionStorage.getItem('pocketzot:moved-snooze') !== '1') {
+    const banner = document.createElement('div')
+    banner.className = 'login-moved'
+    banner.innerHTML = `
+      <button type="button" class="login-moved-x" aria-label="Dismiss">×</button>
+      <p class="login-moved-msg">PocketZot has moved to <strong>pocketzot.app</strong>.</p>
+      <a href="https://pocketzot.app/" class="login-moved-link">Open new site →</a>
+      <p class="login-moved-sub">If you keep PocketZot on your home screen, re-add it from there.</p>
+    `
+    banner.querySelector('.login-moved-x')!.addEventListener('click', () => {
+      sessionStorage.setItem('pocketzot:moved-snooze', '1')
+      banner.remove()
+    })
+    view.querySelector('.login-card')!.prepend(banner)
+  }
+
   if (notice) {
     errorEl.textContent = notice
     errorEl.style.display = ''
