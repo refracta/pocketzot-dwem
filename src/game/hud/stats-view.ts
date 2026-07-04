@@ -1,6 +1,7 @@
 import type { PlayerMsg } from '../../ws/types'
 import type { InventoryStore } from '../inventory-store'
 import { escHtml, dcssToHtml } from '../dcss-colors'
+import { abbrevPlace } from '../place-abbrev'
 
 const BAR_RES = 10000  // basis points; matches reference player.js precision
 
@@ -181,7 +182,11 @@ export class StatsView {
       // compact: XL/progress/place/gold composed onto one line
       let html = `<span class="hg-caption">XL</span><span>${escHtml(String(xl))}</span>`
       if (s.progress != null) html += ` ${escHtml(String(s.progress))}%`
-      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(placeStr)}</span></span>`
+      // Compact abbreviates the branch (D:5, Elf:3 — the lobby/morgue short
+      // forms) to protect the line's tightest real estate; square keeps the
+      // full name, as the reference does.
+      const compactPlace = depth ? `${abbrevPlace(place)}:${depth}` : abbrevPlace(place)
+      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(compactPlace)}</span></span>`
       if (god === 'Gozag' && s.gold != null) {
         const valClass = goldAura ? ' class="stat-boosted"' : ''
         html += ` <span class="hg-caption">$</span><span${valClass}>${escHtml(String(s.gold))}</span>`

@@ -1600,10 +1600,16 @@ html, body {
   image-rendering: pixelated;
   background: #000;
 }
-/* .hud-place-chip has no styling on purpose: like the message-log and
-   monster-list taps, the minimap toggle is an undecorated tap surface,
+/* .hud-place-chip is visually undecorated on purpose: like the message-log
+   and monster-list taps, the minimap toggle is an unadorned tap surface,
    documented in ABOUT.md's Gestures. The class is StatsView's own tap-target
-   hook (its constructor delegates the tap; consumers use setOnPlaceTap). */
+   hook (its constructor delegates the tap; consumers use setOnPlaceTap).
+   The padding/negative-margin pair grows the hit area without moving the
+   text — abbreviated names ("@D:1") are otherwise a small target. */
+.hud-place-chip {
+  padding: 0.5rem;
+  margin: -0.5rem;
+}
 
 /* Monster panel (full-screen takeover variant of #monster-list) */
 .mp-list {
