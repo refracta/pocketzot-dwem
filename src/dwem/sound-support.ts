@@ -29,7 +29,7 @@ interface SoundConfig {
   fileIndex: Record<string, AudioBlob>
 }
 
-interface SoundMatch {
+export interface SoundMatch {
   regex: RegExp
   path: string
 }
@@ -56,7 +56,7 @@ interface LoadedSoundPack {
 export class SoundSupport {
   private readonly dbName = 'SoundPackDB'
   private readonly storeName = 'soundPacks'
-  private readonly dbReady: Promise<IDBDatabase>
+  private dbReady: Promise<IDBDatabase> | null = null
   private readonly soundManager = new SoundManager()
   private installed = false
   private soundConfig: SoundConfig | null = null
@@ -67,9 +67,7 @@ export class SoundSupport {
   private bgmContextKey: string | null = null
   private bgmRequestId = 0
 
-  constructor() {
-    this.dbReady = this.openDB()
-  }
+  constructor() {}
 
   onLoad(): void {
     if (this.installed) return
@@ -250,10 +248,9 @@ export class SoundSupport {
         continue
       }
 
-      if (!/^\s*sound\s*[+^]=\s*.+$/.test(line)) continue
       try {
-        const [regexText, pathText = ''] = line.split(/[+^]=/)[1].trim().split(/(?<!\\):/)
-        matchData.push({ regex: new RegExp(regexText), path: buildAudioPath(soundFilePath, pathText) })
+        const parsed = parseSoundLine(line, soundFilePath)
+        if (parsed) matchData.push(parsed)
       } catch (err) {
         console.warn('[DWEM][SoundSupport] invalid sound line', rawLine, err)
       }
@@ -315,11 +312,15 @@ export class SoundSupport {
           if (this.soundConfig.soundDebug) console.warn('[DWEM][SoundSupport] matched missing sound file', match.path)
           continue
         }
-        if (this.soundConfig.soundDebug) console.log('[DWEM][SoundSupport]', rawText, match.regex, match.path)
-        const audioBuffer = file.audioBuffer ?? await this.soundManager.blobToAudioBuffer(file)
-        file.audioBuffer = audioBuffer
-        if (this.soundConfig.oneSDLSoundChannel) this.soundManager.stop()
-        await this.soundManager.play(audioBuffer)
+        if (this.soundConfig.soundDebug) console.log(`${rawText}\n\tregex: ${match.regex}\n\tpath: ${match.path} (${file.size} bytes)`)
+        try {
+          const audioBuffer = file.audioBuffer ?? await this.soundManager.blobToAudioBuffer(file)
+          file.audioBuffer = audioBuffer
+          if (this.soundConfig.oneSDLSoundChannel) this.soundManager.stop()
+          await this.soundManager.play(audioBuffer)
+        } catch (err) {
+          if (this.soundConfig.soundDebug) console.warn('[DWEM][SoundSupport] failed to play sound', match.path, err)
+        }
         break
       }
     }
@@ -509,7 +510,7 @@ export class SoundSupport {
   }
 
   private async getSoundPacks(): Promise<Array<{ url: string; soundPack: Blob }>> {
-    const db = await this.dbReady
+    const db = await this.getDb()
     return new Promise((resolve, reject) => {
       const request = db.transaction([this.storeName], 'readonly').objectStore(this.storeName).getAll()
       request.onsuccess = () => resolve(request.result as Array<{ url: string; soundPack: Blob }>)
@@ -537,7 +538,7 @@ export class SoundSupport {
   }
 
   private async clearSoundPacks(): Promise<void> {
-    const db = await this.dbReady
+    const db = await this.getDb()
     await new Promise<void>((resolve, reject) => {
       const request = db.transaction([this.storeName], 'readwrite').objectStore(this.storeName).clear()
       request.onsuccess = () => resolve()
@@ -546,7 +547,7 @@ export class SoundSupport {
   }
 
   private async removeSoundPack(url: string): Promise<void> {
-    const db = await this.dbReady
+    const db = await this.getDb()
     await new Promise<void>((resolve, reject) => {
       const request = db.transaction([this.storeName], 'readwrite').objectStore(this.storeName).delete(url)
       request.onsuccess = () => resolve()
@@ -555,7 +556,7 @@ export class SoundSupport {
   }
 
   private async saveSoundPack(url: string, blob: Blob): Promise<void> {
-    const db = await this.dbReady
+    const db = await this.getDb()
     await new Promise<void>((resolve, reject) => {
       const request = db.transaction([this.storeName], 'readwrite').objectStore(this.storeName).put({ url, soundPack: blob })
       request.onsuccess = () => resolve()
@@ -564,7 +565,7 @@ export class SoundSupport {
   }
 
   private async getSoundPack(url: string): Promise<LoadedSoundPack> {
-    const db = await this.dbReady
+    const db = await this.getDb()
     const record = await new Promise<{ soundPack: Blob } | undefined>((resolve, reject) => {
       const request = db.transaction([this.storeName], 'readonly').objectStore(this.storeName).get(url)
       request.onsuccess = () => resolve(request.result as { soundPack: Blob } | undefined)
@@ -585,6 +586,11 @@ export class SoundSupport {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Network response was not ok: HTTP ${response.status}`)
     await this.saveSoundPack(url, await response.blob())
+  }
+
+  private getDb(): Promise<IDBDatabase> {
+    this.dbReady ??= this.openDB()
+    return this.dbReady
   }
 
   private setVolumeCommand(text: string): void {
@@ -660,6 +666,10 @@ class SoundManager {
   private previousData: { source: AudioBufferSourceNode; gainNode: GainNode } | null = null
   private loopData: { source: AudioBufferSourceNode; gainNode: GainNode } | null = null
 
+  constructor() {
+    this.installUnlockHandlers()
+  }
+
   async blobToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
     const context = await this.getContext()
     return context.decodeAudioData(await blob.arrayBuffer())
@@ -711,12 +721,106 @@ class SoundManager {
   }
 
   private async getContext(): Promise<AudioContext> {
-    this.context ??= new AudioContext()
+    if (!this.context) {
+      const ctor = globalThis.AudioContext
+        ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!ctor) throw new Error('AudioContext unavailable')
+      this.context = new ctor()
+    }
     if (this.context.state === 'suspended') {
       await this.context.resume().catch(() => undefined)
     }
     return this.context
   }
+
+  private installUnlockHandlers(): void {
+    if (typeof window === 'undefined') return
+    const events = ['pointerdown', 'touchstart', 'keydown', 'click'] as const
+    const unlock = (): void => {
+      for (const event of events) window.removeEventListener(event, unlock)
+      void this.getContext()
+    }
+    for (const event of events) window.addEventListener(event, unlock, { once: true, passive: true })
+  }
+}
+
+export function parseSoundLine(line: string, soundFilePath = ''): SoundMatch | null {
+  const match = line.match(/^\s*sound\s*[+^]=\s*(.+)$/)
+  if (!match) return null
+  const parsed = splitSoundSpec(match[1].trim())
+  if (!parsed) return null
+  return {
+    regex: parseSoundRegex(parsed.regexText.trim()),
+    path: buildAudioPath(soundFilePath, parsed.pathText),
+  }
+}
+
+function splitSoundSpec(spec: string): { regexText: string; pathText: string } | null {
+  const slashDelimited = spec.startsWith('/')
+  let escaping = false
+  let inClass = false
+  let inSlashRegex = slashDelimited
+
+  for (let i = 0; i < spec.length; i++) {
+    const ch = spec[i]
+    if (escaping) {
+      escaping = false
+      continue
+    }
+    if (ch === '\\') {
+      escaping = true
+      continue
+    }
+    if (inSlashRegex) {
+      if (ch === '[') inClass = true
+      else if (ch === ']') inClass = false
+      else if (ch === '/' && !inClass && i > 0) {
+        let j = i + 1
+        while (/[a-z]/i.test(spec[j] ?? '')) j++
+        const flagsEnd = j
+        while (/\s/.test(spec[j] ?? '')) j++
+        if (spec[j] === ':') return { regexText: spec.slice(0, flagsEnd), pathText: spec.slice(j + 1) }
+        inSlashRegex = false
+        i = j - 1
+      }
+      continue
+    }
+    if (ch === ':') {
+      return { regexText: spec.slice(0, i).replace(/\\:/g, ':'), pathText: spec.slice(i + 1) }
+    }
+  }
+
+  return { regexText: spec.replace(/\\:/g, ':'), pathText: '' }
+}
+
+function parseSoundRegex(text: string): RegExp {
+  const delimited = parseDelimitedRegex(text)
+  return delimited ? new RegExp(delimited.pattern, delimited.flags) : new RegExp(text)
+}
+
+function parseDelimitedRegex(text: string): { pattern: string; flags: string } | null {
+  if (!text.startsWith('/')) return null
+  let escaping = false
+  let inClass = false
+  for (let i = 1; i < text.length; i++) {
+    const ch = text[i]
+    if (escaping) {
+      escaping = false
+      continue
+    }
+    if (ch === '\\') {
+      escaping = true
+      continue
+    }
+    if (ch === '[') inClass = true
+    else if (ch === ']') inClass = false
+    else if (ch === '/' && !inClass) {
+      const flags = text.slice(i + 1)
+      if (!/^[dgimsuvy]*$/.test(flags)) return null
+      return { pattern: text.slice(1, i), flags }
+    }
+  }
+  return null
 }
 
 function stripQuotes(text: string): string {
