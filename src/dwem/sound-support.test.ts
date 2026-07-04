@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSoundLine } from './sound-support'
+import { getSoundMessageTexts, parseSoundLine } from './sound-support'
 
 describe('parseSoundLine', () => {
   it('keeps legacy raw regex entries working', () => {
@@ -34,5 +34,16 @@ describe('parseSoundLine', () => {
   it('applies sound_file_path to parsed sound paths', () => {
     const parsed = parseSoundLine('sound += /You kill/:Zdeath.mp3', 'se/')
     expect(parsed?.path).toBe('se/Zdeath.mp3')
+  })
+
+  it('snapshots all message texts before async playback can yield to translation', () => {
+    const messages = [
+      { text: 'You hit the dart slug.' },
+      { text: 'You kill the dart slug!' },
+    ]
+    const snapshot = getSoundMessageTexts(messages)
+    messages[1].text = '당신은 다트 민달팽이를 죽였다!'
+
+    expect(snapshot).toEqual(['You hit the dart slug.', 'You kill the dart slug!'])
   })
 })

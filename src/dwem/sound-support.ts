@@ -301,8 +301,8 @@ export class SoundSupport {
 
   private async handleSoundMessage(data: IncomingMessage): Promise<void> {
     if (!this.soundConfig?.soundOn || !Array.isArray(data.messages)) return
-    for (const message of data.messages) {
-      const rawText = String(message?.text ?? '').replace(/<.+?>/g, '')
+    const rawTexts = getSoundMessageTexts(data.messages)
+    for (const rawText of rawTexts) {
       if (!rawText) continue
       for (const config of this.soundConfig.soundPackConfigList) {
         const match = config.matchData?.find((entry) => rawText.match(entry.regex))
@@ -742,6 +742,13 @@ class SoundManager {
     }
     for (const event of events) window.addEventListener(event, unlock, { once: true, passive: true })
   }
+}
+
+export function getSoundMessageTexts(messages: unknown[]): string[] {
+  return messages.map((message) => {
+    if (!message || typeof message !== 'object') return ''
+    return String((message as Record<string, unknown>).text ?? '').replace(/<.+?>/g, '')
+  })
 }
 
 export function parseSoundLine(line: string, soundFilePath = ''): SoundMatch | null {
