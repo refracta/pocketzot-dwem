@@ -88,6 +88,9 @@ internals are renamed:
   needs to be extended to handle them first.
 - **Newgame-choice** — `ui-push` with `type:"newgame-choice"`. Only
   emitted at character creation; a saved-game session can't capture it.
+  Covered by `06-newgame-choice-flow` (maps/species/background pushes +
+  the `!` random-combo). `07-lookup-input-dialog` covers the
+  `msgwin-get-line` input push the same way.
 
 ### Sizing
 
@@ -128,3 +131,12 @@ messages. Other message types in a capture are silently ignored — you
 don't need to filter them out. Extend `replay()` (and the `expected`
 schema) when you want to assert against other state (inventory, status,
 overlay stack, etc.).
+
+Beyond `replay()`, the runner also collects `ui-push` frames and can
+drive the extracted overlay screens (`views/game-overlays.ts`) with them
+headlessly: `expected.uiPushTypes` pins the push sequence,
+`expected.newgameChoices` renders each `newgame-choice` through the real
+grid builder and asserts button counts plus the wire message a two-tap
+confirm produces, and `expected.inputDialog` renders `msgwin-get-line`
+and asserts the `ui_state_sync` echo carries the captured
+`generation_id`. All optional, like the store fields.

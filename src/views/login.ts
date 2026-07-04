@@ -1,11 +1,15 @@
 import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
-import { clearSession, listSessions, saveSession, type StoredSession } from '../auth/session'
+import { listSessions, saveSession, type StoredSession } from '../auth/session'
 import { cncUserinfo } from '../dwem/cnc-userinfo'
+import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
 import { decorateLogo } from '../logo'
+import { listAvatars } from '../avatars'
+import { paintAvatars } from './avatar-tiles'
+import { openCrypt } from './crypt-view'
 
 export interface LoginResult {
   conn: WsConnection
@@ -14,7 +18,10 @@ export interface LoginResult {
 }
 
 export function buildLoginView(
-  onLogin: (result: LoginResult) => void
+  onLogin: (result: LoginResult) => void,
+  // Shown in the error slot on mount — how the app explains an involuntary
+  // trip back here (connection lost, auto-resume gave up).
+  notice?: string,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
@@ -73,6 +80,7 @@ export function buildLoginView(
   view.innerHTML = `
     <div class="login-card">
       <h1 class="login-title">PocketZot (DWEM)</h1>
+      <div id="login-avatars" class="login-avatars"></div>
 
       ${hasSessions ? `
       <section id="resume-section" class="login-section">
@@ -105,6 +113,29 @@ export function buildLoginView(
   const btn = view.querySelector<HTMLButtonElement>('#login-btn')!
 
   decorateLogo(view.querySelector<HTMLElement>('.login-title')!)
+
+  // Relocation notice, shown only on the exact public old origin (pocketzot.pages.dev)
+  if (location.hostname === 'pocketzot.pages.dev' &&
+      sessionStorage.getItem('pocketzot:moved-snooze') !== '1') {
+    const banner = document.createElement('div')
+    banner.className = 'login-moved'
+    banner.innerHTML = `
+      <button type="button" class="login-moved-x" aria-label="Dismiss">×</button>
+      <p class="login-moved-msg">PocketZot has moved to <strong>pocketzot.app</strong>.</p>
+      <a href="https://pocketzot.app/" class="login-moved-link">Open new site →</a>
+      <p class="login-moved-sub">If you keep PocketZot on your home screen, re-add it from there.</p>
+    `
+    banner.querySelector('.login-moved-x')!.addEventListener('click', () => {
+      sessionStorage.setItem('pocketzot:moved-snooze', '1')
+      banner.remove()
+    })
+    view.querySelector('.login-card')!.prepend(banner)
+  }
+
+  if (notice) {
+    errorEl.textContent = notice
+    errorEl.style.display = ''
+  }
 
   for (const s of KNOWN_SERVERS) {
     const o1 = document.createElement('option')
@@ -142,6 +173,28 @@ export function buildLoginView(
   })
 
   renderResumeButtons()
+  renderAvatars()
+
+  // Shelf of your recently-played character dolls (see ../avatars + ./avatar-tiles),
+  // newest at the left. One newest-first order is shared with the crypt grid (newest
+  // top-left), so the visible row reads as the crypt's top row — the head you see
+  // here is the same dolls in the same order that lead the full grid. Tapping the
+  // row opens the crypt (the full history). The strip stays collapsed (`:empty`)
+  // until at least one doll's atlas resolves, so the tap target only exists when
+  // there's something to show.
+  function renderAvatars(): void {
+    const strip = view.querySelector<HTMLElement>('#login-avatars')
+    if (!strip) return
+    void paintAvatars(strip, listAvatars(), 2, 'login-avatar')
+    strip.setAttribute('role', 'button')
+    strip.setAttribute('tabindex', '0')
+    strip.setAttribute('aria-label', 'View all characters')
+    const open = (): void => { if (strip.childElementCount) openCrypt() }
+    strip.addEventListener('click', open)
+    strip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() }
+    })
+  }
 
   function renderResumeButtons(): void {
     const section = view.querySelector<HTMLElement>('#resume-section')
@@ -181,23 +234,18 @@ export function buildLoginView(
       return
     }
 
-    // Refresh the rotating cookie on every successful (re)login.
-    conn.onLoginCookie = (cookie, expiresDays) => {
-      saveSession(s.wsUrl, s.username, cookie, expiresDays)
-    }
-
-    conn.send({ msg: 'token_login', cookie: s.cookie })
-
-    listenOnce(conn, (msg) => {
-      if (msg.msg === 'login_success') {
-        conn.send({ msg: 'set_login_cookie' })
-        onLogin({ conn, username: msg.username })
-      } else if (msg.msg === 'login_fail') {
-        clearSession(s.wsUrl, s.username)
+    tokenLogin(conn, s, {
+      onSuccess: (username, flush) => {
+        // onLogin swaps in the lobby view, which takes over conn.onMessage;
+        // flush() then replays the pre-login lobby snapshot into it.
+        onLogin({ conn, username })
+        flush()
+      },
+      onFail: () => {
         conn.close()
-        showError('Saved session expired — please log in again.')
+        showError(SESSION_EXPIRED_NOTICE)
         renderResumeButtons()
-      }
+      },
     })
   }
 

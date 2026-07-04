@@ -1,11 +1,15 @@
 import type { CellUpdate, MonsterInfo } from '../../ws/types'
-import { bgLo } from './cell-flags'
+import { bgFlags } from './flag-decode'
 
 export interface Cell {
   g: string   // glyph
   col: number // packed color byte
-  // tile background; bits MM_UNSEEN=0x20000 / UNSEEN=0x40000 (lo word) indicate
-  // out-of-FOV. Same [lo, hi] encoding as `fg` — see TileInfo.bg / cell-flags.ts.
+  // Minimap feature category (map-feature.h `map_feature` value): wall /
+  // floor / stair / hostile-monster / … . Consumed only by MinimapView.
+  mf?: number
+  // tile background; the MM_UNSEEN / UNSEEN flags indicate out-of-FOV. Same
+  // [lo, hi] encoding as `fg`; stored raw and decoded by name at read time
+  // via flag-decode.ts (see TileInfo.bg).
   t_bg?: number | number[]
   // Tile foreground + overlays. Carried per cell (not just per monster) so
   // TileMapView can render items, clouds, ground icons, and the player avatar
@@ -53,18 +57,18 @@ export interface Cell {
 // shadow would go stale across the memorize → re-FOV transition, and
 // (the bug this comment was written for) `col` changes on mon-less cell
 // deltas like sleep→wake would never propagate to the monster list.
-// `g` is the *canonical* glyph (first-sighting), distinct from Cell.g
-// which can flip briefly for spell animations.
+// `g` is the glyph captured when the monster was last merged, kept only as
+// a FALLBACK — renderers read the live Cell.g (like col/fg) and fall back
+// to this when the cell is missing. It cannot be trusted as canonical: the
+// server writes `mon` and `g` into one cell update independently, so a
+// monster first sent during a beam-animation redraw is captured with the
+// beam glyph ('*'), and the g-only restore frame never refreshes it.
 export interface MonsterCell {
   mon: MonsterInfo
   g: string
   x: number
   y: number
 }
-
-// From reference enums.js: MM_UNSEEN=0x00020000, UNSEEN=0x00040000.
-// When either is set, the cell has been explored but is not in the player's current FOV.
-const UNSEEN_MASK = 0x00060000
 
 // Cell-store key format: "x,y". The dirty Set returned by merge() holds these
 // keys and renderers decode them back to coords via parseCellKey — so the
@@ -132,6 +136,7 @@ export class MapStore {
       const cell: Cell = {
         g: u.g ?? existing?.g ?? ' ',
         col: u.col ?? existing?.col ?? 7,
+        mf: u.mf ?? existing?.mf,
         flc: u.flc ?? existing?.flc,
         fla: u.fla ?? existing?.fla,
         t_bg: t && 'bg' in t ? t.bg : existing?.t_bg,
@@ -167,10 +172,12 @@ export class MapStore {
       dirty.add(key)
 
       const existingMonCell = this.monsterMap.get(key)
-      // A cell is out of FOV when its t.bg has the UNSEEN or MM_UNSEEN bit set.
-      // Only treat as out-of-FOV when we have definitive t_bg evidence; if unknown, assume visible.
-      // UNSEEN/MM_UNSEEN live in the lo word — bgLo handles the [lo, hi] form.
-      const outOfFov = cell.t_bg !== undefined && (bgLo(cell.t_bg) & UNSEEN_MASK) !== 0
+      // A cell is out of FOV when its t.bg has the UNSEEN or MM_UNSEEN flag.
+      // Decoded by name via the flag facade so the bit positions follow the
+      // game version's own enums.js when loaded. An undefined t_bg decodes as
+      // 0 → both flags false — i.e. without definitive evidence, assume visible.
+      const bgf = bgFlags(cell.t_bg)
+      const outOfFov = !!(bgf.UNSEEN || bgf.MM_UNSEEN)
 
       // Track monster presence. 'mon' in u distinguishes explicit null from absent.
       if ('mon' in u) {
@@ -286,6 +293,36 @@ export class MapStore {
 
   get(x: number, y: number): Cell | undefined {
     return this.cells.get(cellKey(x, y))
+  }
+
+  // Iterate every known cell (minimap paint). Coords are decoded from the
+  // store key, so callers never touch the key format.
+  forEachCell(cb: (x: number, y: number, cell: Cell) => void): void {
+    for (const [key, cell] of this.cells) {
+      const { x, y } = parseCellKey(key)
+      cb(x, y, cell)
+    }
+  }
+
+  // Bounding box of minimap-worthy cells (mf > 0, so MF_UNSEEN and mf-less
+  // cells are excluded), or null before any are known. Computed on demand in
+  // one pass: only the minimap reads it, and it already re-scans the whole
+  // store to draw — so keeping merge (the hot path) free of per-cell bbox
+  // bookkeeping is the better trade.
+  mfBounds(): { left: number; top: number; right: number; bottom: number } | null {
+    let box: { left: number; top: number; right: number; bottom: number } | null = null
+    this.forEachCell((x, y, cell) => {
+      if (!cell.mf) return
+      if (!box) {
+        box = { left: x, top: y, right: x, bottom: y }
+      } else {
+        if (x < box.left) box.left = x
+        if (x > box.right) box.right = x
+        if (y < box.top) box.top = y
+        if (y > box.bottom) box.bottom = y
+      }
+    })
+    return box
   }
 
   getMonsters(): ReadonlyMap<string, MonsterCell> {

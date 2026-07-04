@@ -1,0 +1,341 @@
+{
+  "description": "Help lookup (?/m): formatted-scroller help, lookup category menu, then msgwin-get-line input push",
+  "captured_from": "https://crawl.dcss.io on 2026-07-03",
+  "messages": [
+    {
+      "msg": "input_mode",
+      "mode": 0
+    },
+    {
+      "tag": "help",
+      "text": "<yellow>Dungeon Crawl Help<lightgrey>                       <yellow>Manual Contents<lightgrey>\n                                         \nPress one of the following keys to       <white>*<lightgrey>       Table of contents\nobtain more information on a certain     <white>A<lightgrey>.      Overview\naspect of Dungeon Crawl.                 <white>B<lightgrey>.      Starting Screen\n<white>?<lightgrey>: List of commands                      <white>C<lightgrey>.      Attributes and Stats\n<white>^<lightgrey>: Quickstart Guide                      <white>D<lightgrey>.      Exploring the Dungeon\n<white>:<lightgrey>: Browse character notes                <white>E<lightgrey>.      Experience and Skills\n<white>#<lightgrey>: Browse character dump                 <white>F<lightgrey>.      Monsters\n<white>~<lightgrey>: Macros help                           <white>G<lightgrey>.      Items\n<white>&<lightgrey>: Options help                          <white>H<lightgrey>.      Spellcasting\n<white>%<lightgrey>: Table of aptitudes                    <white>I<lightgrey>.      Targeting\n<white>/<lightgrey>: Lookup description                    <white>J<lightgrey>.      Religion\n<white>Q<lightgrey>: FAQ                                   <white>K<lightgrey>.      Mutations\n<white>V<lightgrey>: Version information                   <white>L<lightgrey>.      Licence, Contact, History\n<white>!<lightgrey>: Display diagnostics                   <white>M<lightgrey>.      Macros, Options, Performance\n<white>Home<lightgrey>: This screen                        <white>N<lightgrey>.      Philosophy\n                                         <white>1<lightgrey>.      List of Character Species\n                                         <white>2<lightgrey>.      List of Character Backgrounds\n                                         <white>3<lightgrey>.      List of Skills\n                                         <white>4<lightgrey>.      List of Keys and Commands\n                                         <white>5<lightgrey>.      Inscriptions\n                                         <white>6<lightgrey>.      Dungeon sprint modes",
+      "highlight": "",
+      "more": "",
+      "title": "",
+      "easy_exit": false,
+      "start_at_end": false,
+      "msg": "ui-push",
+      "type": "formatted-scroller",
+      "ui-centred": false,
+      "generation_id": 1
+    },
+    {
+      "msg": "ui-pop"
+    },
+    {
+      "msg": "close_all_menus"
+    },
+    {
+      "msg": "menu_scroll",
+      "first": 0,
+      "last_hovered": 0,
+      "force": false
+    },
+    {
+      "msg": "menu",
+      "ui-centred": false,
+      "tag": "",
+      "flags": 262786,
+      "last_hovered": 0,
+      "title": {
+        "text": "<white>Lookup information about:"
+      },
+      "more": "<lightgrey>[<white>Up<lightgrey>|<white>Down<lightgrey>] select  [<white>PgDn<lightgrey>|<white>><lightgrey>] page down  [<white>PgUp<lightgrey>|<white><<<lightgrey>] page up  [<white>Esc<lightgrey>] exit<lightgrey>        <lightgrey>[<white>XXX<lightgrey>]<lightgrey>",
+      "alt_more": "",
+      "total_items": 16,
+      "chunk_start": 0,
+      "items": [
+        {
+          "text": " m - Monster",
+          "q": 1,
+          "hotkeys": [
+            109
+          ],
+          "level": 2
+        },
+        {
+          "text": " s - Spell",
+          "q": 1,
+          "hotkeys": [
+            115
+          ],
+          "level": 2
+        },
+        {
+          "text": " k - Skill",
+          "q": 1,
+          "hotkeys": [
+            107
+          ],
+          "level": 2
+        },
+        {
+          "text": " a - Ability",
+          "q": 1,
+          "hotkeys": [
+            97
+          ],
+          "level": 2
+        },
+        {
+          "text": " c - Card",
+          "q": 1,
+          "hotkeys": [
+            99
+          ],
+          "level": 2
+        },
+        {
+          "text": " i - Item",
+          "q": 1,
+          "hotkeys": [
+            105
+          ],
+          "level": 2
+        },
+        {
+          "text": " f - Feature",
+          "q": 1,
+          "hotkeys": [
+            102
+          ],
+          "level": 2
+        },
+        {
+          "text": " g - God",
+          "q": 1,
+          "hotkeys": [
+            103
+          ],
+          "level": 2
+        },
+        {
+          "text": " b - Branch",
+          "q": 1,
+          "hotkeys": [
+            98
+          ],
+          "level": 2
+        },
+        {
+          "text": " l - Cloud",
+          "q": 1,
+          "hotkeys": [
+            108
+          ],
+          "level": 2
+        },
+        {
+          "text": " p - Passive",
+          "q": 1,
+          "hotkeys": [
+            112
+          ],
+          "level": 2
+        },
+        {
+          "text": " t - Status",
+          "q": 1,
+          "hotkeys": [
+            116
+          ],
+          "level": 2
+        },
+        {
+          "text": " u - Mutation",
+          "q": 1,
+          "hotkeys": [
+            117
+          ],
+          "level": 2
+        },
+        {
+          "text": " n - Bane",
+          "q": 1,
+          "hotkeys": [
+            110
+          ],
+          "level": 2
+        },
+        {
+          "text": "",
+          "colour": 1,
+          "level": 1
+        },
+        {
+          "text": " Esc - Exit help lookup",
+          "q": 1,
+          "hotkeys": [
+            27
+          ],
+          "level": 2,
+          "tiles": [
+            {
+              "t": 9525,
+              "tex": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "msg": "map",
+      "cells": [
+        {
+          "x": -11,
+          "y": -5,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "x": -11,
+          "y": -4,
+          "mf": 26
+        },
+        {
+          "x": -9,
+          "y": -4,
+          "mf": 26
+        },
+        {
+          "x": -11,
+          "y": -3,
+          "mf": 26
+        },
+        {
+          "x": -9,
+          "y": -3,
+          "mf": 26
+        },
+        {
+          "x": -11,
+          "y": -2,
+          "mf": 26
+        },
+        {
+          "x": -8,
+          "y": -2,
+          "mf": 26
+        },
+        {
+          "x": -8,
+          "y": -1,
+          "mf": 26
+        },
+        {
+          "x": -7,
+          "y": 2,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "x": 6,
+          "y": 2,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "x": -4,
+          "y": 3,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "x": 3,
+          "y": 3,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        },
+        {
+          "x": 7,
+          "y": 3,
+          "mf": 26
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "mf": 26
+        },
+        {
+          "mf": 26
+        }
+      ]
+    },
+    {
+      "msg": "update_menu_items",
+      "chunk_start": 0,
+      "items": [
+        {
+          "text": " m - Monster",
+          "q": 1,
+          "hotkeys": [
+            109
+          ],
+          "level": 2
+        }
+      ]
+    },
+    {
+      "msg": "menu_scroll",
+      "first": 0,
+      "last_hovered": 0,
+      "force": true
+    },
+    {
+      "msg": "input_mode",
+      "mode": 7
+    },
+    {
+      "prompt": "<cyan>Describe a monster; partial names and regexps are fine. Enter a single letter\nto list monsters displayed by that symbol.\nDescribe what? ",
+      "msg": "ui-push",
+      "type": "msgwin-get-line",
+      "ui-centred": false,
+      "generation_id": 3
+    },
+    {
+      "text": "",
+      "cursor": 0,
+      "msg": "ui-state-sync",
+      "widget_id": "input",
+      "from_webtiles": false,
+      "generation_id": 3
+    },
+    {
+      "msg": "ui-state-sync",
+      "has_focus": true,
+      "widget_id": "input",
+      "from_webtiles": false,
+      "generation_id": 3
+    },
+    {
+      "msg": "text_cursor",
+      "enabled": true
+    }
+  ],
+  "expected": {
+    "uiPushTypes": [
+      "formatted-scroller",
+      "msgwin-get-line"
+    ],
+    "inputDialog": {
+      "promptIncludes": "Describe a monster",
+      "echoesGeneration": true
+    }
+  }
+}

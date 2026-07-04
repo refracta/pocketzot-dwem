@@ -7,8 +7,8 @@ PocketZot is an unofficial [DCSS](https://crawl.develz.org) [WebTiles](https://c
 - Custom ASCII-first design that fits the full standard console map onto a phone in
   portrait mode, with a font still large enough to read
 - Tiles support
-- Log in with multiple WebTiles server accounts and easily switch between them
-- Many menus and descriptions contain inline tap regions for quick touch interaction
+- Log in with multiple WebTiles server accounts and switch between them
+- Inline tap targets in many menus and descriptions
 - Context-aware control sets for common situations
 - Spectator mode with an expanded map view
 - Floating, collapsible monster list; tap for details
@@ -16,7 +16,7 @@ PocketZot is an unofficial [DCSS](https://crawl.develz.org) [WebTiles](https://c
 
 ## Controls
 
-The controls are organized into three tabs: **@**, **>**, and **?**. While the sorting is not 100% perfect, the mental model is as follows:
+The controls are organized into three tabs: **@**, **>**, and **?**. The mental model is:
 
 - **@** *"micro"* — moment-to-moment actions, including during battle
 - **>** *"macro"* — actions often taken outside of battle, or after clearing a floor
@@ -29,26 +29,21 @@ Obligatory virtual keyboard also available.
 - Double tap on map to toggle zoom level
 - Two-finger long press on map to toggle ASCII/tiles
 - Double tap Shift to lock it
+- Tap place name in HUD (e.g. @D:1) to toggle minimap
 - Tap floating monster list for full view, then tap monster to inspect
 - Tap chevron at top-right of monster list to collapse to single-line view
 
+## Version support
+
+Current stable and trunk DCSS are supported. Versions back to 0.24 generally work; older versions and forks may or may not. In particular, starting a new character on versions before 0.24 doesn't work.
+
 ## Security
 
-PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket.
-
-### Accounts
-
-"Account" refers to a WebTiles account between you and your DCSS server of choice. PocketZot does not have any accounts of its own, and never stores your credentials.
-
-### Password handling
-
-PocketZot only connects over `wss://` (an encrypted WebSocket) so your credentials are protected in transit. Every server in the list requires it, with no plaintext fallback. Your password is only held as an in-memory JavaScript variable long enough to send `{msg:"login", username, password}`. It's never written to disk or stored anywhere.
+PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket (`wss://`). Your account is a WebTiles account between you and that server — PocketZot has no accounts of its own. Credentials are sent only in the login message and never stored.
 
 ### "Resume as …" — what is stored
 
-If the server issues a session cookie, the app stores it in `localStorage` under a per-{server, username} key. This is what allows you to connect again without entering your credentials, until the session token expires or is revoked.
-
-Logging out sends `{msg:"forget_login_cookie", cookie}` to the server and removes the local entry, invalidating the token on both ends.
+If the server issues a session cookie, it's stored in `localStorage` under a per-{server, username} key so you can reconnect without re-entering your credentials, until the token expires or is revoked. Logging out invalidates the token on both ends: the server is told to forget it, and the local entry is removed.
 
 ## How it was built
 

@@ -1,6 +1,7 @@
 import type { PlayerMsg } from '../../ws/types'
 import type { InventoryStore } from '../inventory-store'
 import { escHtml, dcssToHtml } from '../dcss-colors'
+import { abbrevPlace } from '../place-abbrev'
 
 const BAR_RES = 10000  // basis points; matches reference player.js precision
 
@@ -30,11 +31,20 @@ export class StatsView {
   private oldMp: number | undefined
   private layout: 'compact' | 'square'
   private mql: MediaQueryList | null
+  private onPlaceTap: (() => void) | null = null
 
   constructor(inv: InventoryStore) {
     this.inv = inv
     this.el = document.createElement('div')
     this.el.id = 'hud-stats'
+    // The place chip's tap surface. Delegated on the stable root because
+    // render() rewrites the chip's markup each repaint — and kept HERE, next
+    // to the templates that emit .hud-place-chip, so the selector and the
+    // markup have a single owner (same principle as cellKey/parseCellKey in
+    // map-store). Consumers get a callback, not knowledge of our DOM.
+    this.el.addEventListener('click', (e) => {
+      if (this.onPlaceTap && (e.target as HTMLElement).closest?.('.hud-place-chip')) this.onPlaceTap()
+    })
     // Portrait gets the compact HUD (single nowrap rows); landscape gets the
     // square two-column HUD, which fits the 15rem sidebar without clipping.
     // Same query string as the style.css landscape block so JS and CSS can
@@ -49,6 +59,10 @@ export class StatsView {
 
   get element(): HTMLElement {
     return this.el
+  }
+
+  setOnPlaceTap(cb: () => void): void {
+    this.onPlaceTap = cb
   }
 
   // Swap templates on rotate and repaint from the accumulated state — render()
@@ -88,30 +102,54 @@ export class StatsView {
 
     const name = s.name ?? ''
     const title = s.title ?? ''
+    // Display name carries subtype colour ("Red Draconian"); logic checks
+    // below (Djinni, Deep Dwarf) key off the base `species` as the wire
+    // guarantees that form, not the display one.
     const species = s.species ?? ''
+    const speciesDisplay = s.species_display_name || species
     const god = s.god ?? ''
     const piety = s.piety_rank ?? 0
     const godStr = god && god !== 'No God' ? ` of ${god}` : ''
-    const nameTitle = name && title ? `${name} ${title}` : name || title
-    const speciesGod = species + godStr
+    // Titles that begin with a comma (", Duchess of …") join without a
+    // space, per the reference titleline.
+    const nameTitle = name && title ? (title.startsWith(',') ? name + title : `${name} ${title}`) : name || title
+    // Wizard/explore games are non-scoring; flag them like the reference's
+    // #stats_wizmode. Explore mode is reachable from the WebTiles lobby ('+').
+    const modeFlag = s.wizard ? ' *WIZARD*' : s.explore ? ' *EXPLORE*' : ''
+    const speciesGod = speciesDisplay + godStr
     const idEl = this.el.querySelector<HTMLElement>('#hud-id')
     if (idEl) {
       // compact: one combined line
       const idLine = nameTitle && speciesGod ? `${nameTitle} — ${speciesGod}` : nameTitle || speciesGod
-      idEl.textContent = idLine
+      idEl.textContent = idLine + modeFlag
     } else {
       // square: separate title and species lines, as in the reference
       // (#stats_titleline / #stats_species_god in game.html)
-      this.setText('hud-title', nameTitle)
+      this.setText('hud-title', nameTitle + modeFlag)
       this.setText('hud-species', speciesGod)
     }
 
+    // Piety row, mirroring the reference's three-way render (player.js):
+    // Xom's rank is a *position* (mood meter), not a level — a lone star
+    // sliding along dots, or all dots for the "very special plaything"
+    // state (negative rank). Other gods get stars + dots, with trunk's
+    // ostracism pips as red X's consuming trailing dots, shown for ANY
+    // rank (dots-only at 0) so a fresh convert or penanced row stays
+    // visible. Penance tints the whole row red via the CSS class.
     const pietyEl = this.el.querySelector<HTMLElement>('#hud-piety')
     if (pietyEl) {
-      const showPiety = god && god !== 'No God' && god !== 'Gozag'
-      pietyEl.textContent = showPiety && piety > 0
-        ? '*'.repeat(piety) + '.'.repeat(Math.max(0, 6 - piety))
-        : ''
+      const pips = s.ostracism_pips ?? 0
+      if (god === 'Xom') {
+        pietyEl.textContent = piety >= 0
+          ? '.'.repeat(piety) + '*' + '.'.repeat(Math.max(0, 5 - piety))
+          : '......'
+      } else if (god && god !== 'No God' && god !== 'Gozag') {
+        pietyEl.innerHTML = escHtml('*'.repeat(piety) + '.'.repeat(Math.max(0, 6 - piety - pips)))
+          + (pips > 0 ? `<span class="fg5">${escHtml('X'.repeat(pips))}</span>` : '')
+      } else {
+        pietyEl.textContent = ''
+      }
+      pietyEl.classList.toggle('penance', !!s.penance)
     }
 
     const realHpMax = s.real_hp_max
@@ -168,7 +206,11 @@ export class StatsView {
       // compact: XL/progress/place/gold composed onto one line
       let html = `<span class="hg-caption">XL</span><span>${escHtml(String(xl))}</span>`
       if (s.progress != null) html += ` ${escHtml(String(s.progress))}%`
-      if (placeStr) html += ` <span class="hg-caption">@</span><span>${escHtml(placeStr)}</span>`
+      // Compact abbreviates the branch (D:5, Elf:3 — the lobby/morgue short
+      // forms) to protect the line's tightest real estate; square keeps the
+      // full name, as the reference does.
+      const compactPlace = depth ? `${abbrevPlace(place)}:${depth}` : abbrevPlace(place)
+      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(compactPlace)}</span></span>`
       if (god === 'Gozag' && s.gold != null) {
         const valClass = goldAura ? ' class="stat-boosted"' : ''
         html += ` <span class="hg-caption">$</span><span${valClass}>${escHtml(String(s.gold))}</span>`
@@ -491,7 +533,7 @@ export class StatsView {
         <span><span class="hg-caption">SH:</span><span id="hud-sh"></span></span>
         <span><span class="hg-caption">Dex:</span><span id="hud-dex"></span></span>
         <span><span class="hg-caption">XL:</span><span id="hud-xl"></span> <span class="hg-caption">Next:</span><span id="hud-prog"></span></span>
-        <span><span class="hg-caption">Place:</span><span id="hud-place"></span></span>
+        <span class="hud-place-chip"><span class="hg-caption">Place:</span><span id="hud-place"></span></span>
         <span class="hg-noise"><span class="hg-caption">Noise:</span><span class="hg-noise-cell" id="hud-noise-cell"><span class="hud-bar-seg noise-full"></span><span class="hud-bar-seg noise-decrease"></span></span><span class="hg-noise-status" id="hud-noise-status"></span></span>
         <span class="hg-time"><span class="hg-caption">Time:</span><span id="hud-time-val"></span></span>
       </div>

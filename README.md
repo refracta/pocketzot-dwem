@@ -2,7 +2,7 @@
 
 **Dungeon Crawl Stone Soup (DCSS) WebTiles in your pocket.**
 
-**[Play now: pocketzot.pages.dev](https://pocketzot.pages.dev)**
+**[Play now: pocketzot.app](https://pocketzot.app)**
 
 PocketZot is an unofficial, mobile-first [WebTiles](https://crawl.develz.org/wordpress/howto)
 client for [DCSS](https://crawl.develz.org). It connects to standard DCSS WebTiles servers
@@ -14,10 +14,10 @@ Web App.
 <!-- Screenshots are served from the live deployment; the image files are part
      of the hosted site, not this repository. -->
 <p>
-  <img src="https://pocketzot.pages.dev/shot-spriggan.png" alt="ASCII dungeon map with touch controls" height="420">
-  <img src="https://pocketzot.pages.dev/shot-monsters.png" alt="Full-screen monster description" height="420">
-  <img src="https://pocketzot.pages.dev/shot-shoals.png" alt="Tiles dungeon map, spectating player" height="420">
-  <img src="https://pocketzot.pages.dev/shot-login.png" alt="PocketZot account picker" height="420">
+  <img src="https://pocketzot.app/shot-spriggan.png" alt="ASCII dungeon map with touch controls" height="420">
+  <img src="https://pocketzot.app/shot-monsters.png" alt="Full-screen monster description" height="420">
+  <img src="https://pocketzot.app/shot-shoals.png" alt="Tiles dungeon map, spectating player" height="420">
+  <img src="https://pocketzot.app/shot-login.png" alt="PocketZot account picker" height="420">
 </p>
 
 ## Features

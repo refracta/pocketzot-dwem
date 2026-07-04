@@ -14,6 +14,10 @@ const ZOOM_REDUCTION = 8
 export class MapView {
   private container: HTMLElement
   private spans: HTMLSpanElement[][] = []
+  // Last values written to each span (parallel to `spans`), so #paintSpan can
+  // skip DOM writes that wouldn't change anything. Objects are allocated once
+  // per grid build and mutated in place on paint.
+  private painted: { g: string; fg: string; bg: string; flash: string }[][] = []
   private store: MapStore
   private viewportW = NORMAL_W
   private viewportH = NORMAL_H
@@ -211,6 +215,12 @@ export class MapView {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }
 
+  // The viewport's footprint in dungeon coords (top-left + size), for the
+  // minimap's you-are-here rectangle.
+  viewRect(): { x: number; y: number; w: number; h: number } {
+    return { x: this.offX, y: this.offY, w: this.viewportW, h: this.viewportH }
+  }
+
   // Re-render the viewport centered on viewCenter.
   render(dirty?: Set<string>): void {
     const offX = this.offX
@@ -241,24 +251,33 @@ export class MapView {
 
   #paintSpan(col: number, row: number, mx: number, my: number): void {
     const span = this.spans[row][col]
+    const p = this.painted[row][col]
     const cell = this.store.get(mx, my)
+    let g = ' '
+    let fg = DEFAULT_BG
+    let bg = ''
+    let flash = ''
     if (cell) {
       const c = decodeColor(cell.col)
-      span.textContent = cell.g || ' '
-      span.style.color = c.fg
-      span.style.backgroundColor = c.bg ?? ''
+      g = cell.g || ' '
+      fg = c.fg
+      bg = c.bg ?? ''
       // Flash overlay (damage flash, spell impact, blind, sanctuary, etc.).
       // Inset box-shadow paints on top of the background but below the
       // glyph text, so the flash tint layers over any HILITE bg without
       // hiding the cell character.
-      const flash = flashColor(cell.flc, cell.fla)
-      span.style.boxShadow = flash ? `inset 0 0 0 999px ${flash}` : ''
-    } else {
-      span.textContent = ' '
-      span.style.color = DEFAULT_BG
-      span.style.backgroundColor = ''
-      span.style.boxShadow = ''
+      const f = flashColor(cell.flc, cell.fla)
+      flash = f ? `inset 0 0 0 999px ${f}` : ''
     }
+    // Write only what changed since the last paint of this span. fullRender
+    // fires on every movement step (the viewport pans), but after a one-cell
+    // shift large uniform regions — unexplored black, wall and floor runs —
+    // come out identical, and `textContent =` replaces the text node even
+    // when the value matches, so unconditional writes are real DOM churn.
+    if (p.g !== g) { p.g = g; span.textContent = g }
+    if (p.fg !== fg) { p.fg = fg; span.style.color = fg }
+    if (p.bg !== bg) { p.bg = bg; span.style.backgroundColor = bg }
+    if (p.flash !== flash) { p.flash = flash; span.style.boxShadow = flash }
   }
 
   // Full redraw — called when viewport center or map changes.
@@ -286,19 +305,24 @@ export class MapView {
   private buildGrid(): void {
     this.container.textContent = ''
     this.spans = []
+    this.painted = []
     for (let row = 0; row < this.viewportH; row++) {
       const rowDiv = document.createElement('div')
       const rowSpans: HTMLSpanElement[] = []
+      const rowPainted: { g: string; fg: string; bg: string; flash: string }[] = []
 
       for (let col = 0; col < this.viewportW; col++) {
         const span = document.createElement('span')
         span.textContent = ' '
         rowDiv.appendChild(span)
         rowSpans.push(span)
+        // Matches the span as just built: blank glyph, no inline styles.
+        rowPainted.push({ g: ' ', fg: '', bg: '', flash: '' })
       }
 
       this.container.appendChild(rowDiv)
       this.spans.push(rowSpans)
+      this.painted.push(rowPainted)
     }
   }
 }

@@ -7,15 +7,26 @@ import type { SpectateTarget } from './game-view'
 import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
 import { openAboutDoc, openChangelogDoc } from './docs'
+import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
+import { classifyTransition } from '../ws/transition'
+import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 
 export function buildLobbyView(
   conn: WsConnection,
   username: string,
   guest: boolean,
-  onGameStart: (spectating?: SpectateTarget, loader?: TileLoader) => void,
+  onGameStart: (spectating?: SpectateTarget, loader?: TileLoader, gameId?: string) => void,
   onDisconnect: () => void,
   exit?: GameExit,
 ): HTMLElement {
+  // game_id of the version line the user clicked Play on, captured at click time
+  // and forwarded to the game view (for the login-screen doll shelf's identity
+  // key). Always set before a lobby→game transition: on every DGL server (i.e.
+  // all public servers) entering a game requires a `play` request, which only
+  // the Play button sends — the server never auto-resumes a running game on
+  // login (it always returns to the lobby). Empty only for spectated games,
+  // which the shelf ignores anyway.
+  let playedGameId = ''
   const games = new Map<string, LobbyEntry>()
   // Wall-clock timestamp at which each idle game first went idle. Server only
   // emits idle_time on the toggle, not continuously, so we interpolate locally
@@ -138,6 +149,28 @@ export function buildLobbyView(
   conn.onMessage = handleMsg
 
   function handleMsg(msg: ServerMsg): void {
+    // Transition triggers are classified by the same helper the auto-resume
+    // path uses (src/ws/transition.ts) so the two can't drift.
+    const transition = classifyTransition(msg)
+    if (transition) {
+      if (transition.type === 'capture-loader') {
+        // game_client is sent on `watch` *before* watching_started (and before
+        // game_started on CPO-ordered servers), so it lands while the lobby is
+        // still the active handler. Resolve this game's per-version loader now
+        // and hand it over at the transition — the server won't resend the
+        // version once the game view has mounted. Stays null when game_client
+        // only arrives after the transition (e.g. CDI), where the game view's
+        // own handler resolves the loader instead.
+        activeLoader = getTileLoader(conn.httpBase, transition.version)
+      } else {
+        // playedGameId is only set by the play button (makeGameBtn); a watch
+        // transition carries transition.spectating instead, and the game view
+        // ignores gameId when spectating (it saves avatars only for your own
+        // played chars), so forwarding it unconditionally is safe.
+        onGameStart(transition.spectating, activeLoader ?? undefined, playedGameId)
+      }
+      return
+    }
     switch (msg.msg) {
       case 'set_game_links':
         renderGameButtons((msg as unknown as { content: string }).content)
@@ -167,36 +200,67 @@ export function buildLobbyView(
         complete = true
         renderList()
         break
-      case 'game_started':
-        onGameStart(undefined, activeLoader ?? undefined)
-        break
-      case 'watching_started':
-        onGameStart({ username: msg.username }, activeLoader ?? undefined)
-        break
-      case 'game_client': {
-        // Sent on `watch` *before* `watching_started`, so it lands here while
-        // the lobby is still active. Resolve this game's per-version loader now
-        // and pass it to the game view via watching_started — the server won't
-        // resend the version once we've mounted.
-        if (msg.version) activeLoader = getTileLoader(conn.httpBase, msg.version)
-        break
-      }
-      case 'layer':
-      case 'set_layer':
-        // `layer` is the real message (0.34 + trunk send bare `layer`);
-        // `set_layer` is a defensive alias the server never actually sends.
-        // game-view.ts handles both identically — match that here so a
-        // layer-driven transition still forwards the captured loader.
-        if (msg.layer === 'game' || msg.layer === 'crt') onGameStart(undefined, activeLoader ?? undefined)
-        break
       case 'close':
         onDisconnect()
         break
+      // A play/watch attempt was aborted while the lobby stayed mounted
+      // (force_terminate? answered "Leave it" → server sends go_lobby; watching
+      // a game that just ended). The resume context armed at click time must
+      // die with the attempt — otherwise a later reload/eviction auto-replays
+      // the abandoned `play`, and the server's stale-purge SIGHUPs the very
+      // session the user chose to keep alive.
+      case 'go_lobby':
+        clearGameStart()
+        break
       case 'auth_error':
+        clearGameStart()
         noticeEl.textContent = msg.reason
         noticeEl.hidden = false
         break
+      // A previous session of ours still holds the game's lockfile (typical
+      // after a phone app-swap: the server hasn't noticed the dead socket
+      // yet). The server waits ~msg.timeout seconds, tells the old process to
+      // save, then proceeds to game_started on its own — without this notice
+      // the lobby just sits silently unresponsive for 10–20s.
+      case 'stale_processes':
+        noticeEl.textContent =
+          'Closing your previous session — the game will start in a moment…'
+        noticeEl.hidden = false
+        break
+      case 'force_terminate?':
+        showForceTerminatePrompt()
+        break
+      case 'hide_dialog':
+        noticeEl.textContent = ''
+        noticeEl.hidden = true
+        break
     }
+  }
+
+  // The stale process didn't exit when asked; the server wants a yes/no.
+  // Yes force-kills it (skipping its save), no abandons the play attempt.
+  function showForceTerminatePrompt(): void {
+    noticeEl.textContent = ''
+    noticeEl.hidden = false
+    const label = document.createElement('div')
+    label.textContent = FORCE_TERMINATE_WARNING
+    const actions = document.createElement('div')
+    actions.className = 'lobby-notice-actions'
+    const yes = document.createElement('button')
+    yes.type = 'button'
+    yes.textContent = 'Force close'
+    const no = document.createElement('button')
+    no.type = 'button'
+    no.textContent = 'Leave it'
+    const answer = (a: boolean) => () => {
+      conn.send({ msg: 'force_terminate', answer: a })
+      noticeEl.textContent = a ? 'Force-closing previous session…' : ''
+      noticeEl.hidden = !a
+    }
+    yes.addEventListener('click', answer(true))
+    no.addEventListener('click', answer(false))
+    actions.append(yes, no)
+    noticeEl.append(label, actions)
   }
 
   function renderGameButtons(html: string): void {
@@ -253,6 +317,15 @@ export function buildLobbyView(
       moreList.className = 'lobby-more-games-list'
       for (const g of otherGames) moreList.appendChild(makeGameBtn(g, 'lobby-btn-secondary'))
       details.appendChild(moreList)
+      // Advisory footnote, only when this server actually offers pre-cutoff
+      // versions (the parse fails open, so fork-only lists show nothing).
+      // Informs at the moment of intent; nothing is hidden or blocked.
+      if (otherGames.some(g => isBelowSupportCutoff(parseDcssVersion(g.gameId)))) {
+        const note = document.createElement('p')
+        note.className = 'lobby-more-games-note'
+        note.textContent = 'Versions before 0.24 predate PocketZot’s supported range — starting a new character there usually won’t work.'
+        details.appendChild(note)
+      }
       gamesEl.appendChild(details)
     }
   }
@@ -261,7 +334,19 @@ export function buildLobbyView(
     const btn = document.createElement('button')
     btn.className = cls
     btn.textContent = g.label
-    btn.addEventListener('click', () => conn.send({ msg: 'play', game_id: g.gameId }))
+    btn.addEventListener('click', () => {
+      // Recorded so an unexpected mid-game socket drop (or a full iOS page
+      // eviction) can auto-resume by replaying this exact play — the server
+      // never echoes the game_id back.
+      rememberGameStart(
+        { kind: 'play', gameId: g.gameId },
+        { wsUrl: conn.wsUrl, username, guest },
+      )
+      // Also stashed for the avatar shelf: forwarded to the game view at the
+      // transition so a played char's doll can be saved under its game_id.
+      playedGameId = g.gameId
+      conn.send({ msg: 'play', game_id: g.gameId })
+    })
     return btn
   }
 
@@ -320,13 +405,18 @@ export function buildLobbyView(
         <span class="lobby-game-info">${parts.join(' ')}</span>
       </div>
     `
-    row.addEventListener('click', () => {
+    const startWatch = (): void => {
+      rememberGameStart(
+        { kind: 'watch', username: g.username },
+        { wsUrl: conn.wsUrl, username, guest },
+      )
       conn.send({ msg: 'watch', username: g.username })
-    })
+    }
+    row.addEventListener('click', startWatch)
     row.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        conn.send({ msg: 'watch', username: g.username })
+        startWatch()
       }
     })
     return row

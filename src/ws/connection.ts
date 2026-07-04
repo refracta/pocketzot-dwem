@@ -7,9 +7,14 @@ export type StateHandler = () => void
 export class WsConnection {
   private socket: WebSocket | null = null
   private url: string
+  private intentionalClose = false
 
   onMessage: MessageHandler = () => {}
   onOpen: StateHandler = () => {}
+  // Fires only on *unexpected* socket loss (network drop, server kick, iOS
+  // suspending the app). A client-initiated close() never fires it — every
+  // intentional-close call site performs its own navigation, and the reconnect
+  // path must be able to treat onClose as "the connection died under us".
   onClose: StateHandler = () => {}
   // Connection-scoped hook for the rotating session token. Set once after
   // a successful login so the cookie can be persisted regardless of which
@@ -32,6 +37,9 @@ export class WsConnection {
   }
 
   connect(): Promise<void> {
+    // close() latches this; un-latch on (re)connect so a reused instance
+    // doesn't permanently suppress onClose.
+    this.intentionalClose = false
     return new Promise((resolve, reject) => {
       // Request no-compression to keep message handling simple.
       // The server will fall back gracefully if the subprotocol is unsupported.
@@ -49,7 +57,7 @@ export class WsConnection {
 
       this.socket.onclose = () => {
         this.socket = null
-        this.onClose()
+        if (!this.intentionalClose) this.onClose()
       }
 
       this.socket.onmessage = (event) => {
@@ -59,6 +67,10 @@ export class WsConnection {
       if (import.meta.env.DEV) {
         const w = window as unknown as Record<string, unknown>
         w['__dcssSimulateIn'] = (m: unknown) => this.dispatch(m as ServerMsg)
+        // Close the raw socket *without* setting intentionalClose — fires
+        // onClose exactly like an unexpected drop (iOS suspension), for
+        // driving the reconnect paths from the console/playwright.
+        w['__dcssKillSocket'] = () => { this.socket?.close() }
       }
     })
   }
@@ -72,6 +84,7 @@ export class WsConnection {
   }
 
   close(): void {
+    this.intentionalClose = true
     this.socket?.close()
     this.socket = null
   }

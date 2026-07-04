@@ -263,19 +263,25 @@ export function reflowSkillCrt(lines: string[]): string[] {
   const pad = ' '.repeat(indent)
   const rightOut = rightCells.map(c => pad + c)
 
-  // Column header(s) above the grid: keep only the left copy.
+  // Column header(s) above the grid: keep only the left copy. The head isn't
+  // necessarily just the header — a mastered skill (level 27) loses both its
+  // hotkey and training sign, so its row can't anchor, and when it's the first
+  // left-column row (Fighting, typically) it sits above `first` with an empty
+  // right column. It renders fine in place, but only true header lines may be
+  // repeated at the column break below, or the mastered row would duplicate.
   const head: string[] = []
   for (let i = 0; i < first; i++) {
     const [l] = splitHtmlAtCol(lines[i], repRight)
     head.push(l.replace(/\s+$/, ''))
   }
+  const headRepeat = head.filter(l => HEADER_RE.test(plainText(l)))
 
   // Stack the two columns, but keep the break between them: a blank line plus a
   // repeated header. The original two-column view shows the header above each
   // column, and the left/right split is a meaningful grouping (physical vs.
   // magic skills) that players navigate by position — so preserve it.
   const body: string[] = [...leftCells]
-  if (leftCells.length && rightOut.length) body.push('', ...head)
+  if (leftCells.length && rightOut.length) body.push('', ...headRepeat)
   body.push(...rightOut)
 
   // Explanatory / help text below the grid: the command footer is itself a

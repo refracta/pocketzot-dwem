@@ -9,21 +9,7 @@ import type { Cell, MapStore } from './map-store'
 import { parseCellKey } from './map-store'
 import { decodeColor, DEFAULT_FG, flashColor } from './colors'
 import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
-import {
-  FG_TILE_ID_MASK,
-  FG_S_UNDER, FG_FLYING,
-  FG_BEHAVIOUR_MASK, FG_STAB, FG_MAY_STAB, FG_FLEEING, FG_PARALYSED,
-  FG_NET, FG_WEB,
-  FG_MDAM_LO_MASK, FG_MDAM_LIGHT_LO, FG_MDAM_MOD_LO, FG_MDAM_HEAVY_LO, FG_MDAM_HI_BIT,
-  FG_POISON_MASK_HI, FG_POISON, FG_MORE_POISON, FG_MAX_POISON,
-  BG_TILE_ID_MASK,
-  BG_MM_UNSEEN, BG_UNSEEN, BG_TRAV_EXCL, BG_EXCL_CTR, BG_OOR, BG_WATER,
-  BG_NEW_STAIR, BG_NEW_TRANSPORTER,
-  BG_CURSOR_MASK, BG_CURSOR1, BG_CURSOR2, BG_CURSOR3, BG_TUT_CURSOR,
-  BG_KRAKEN_NW, BG_KRAKEN_NE, BG_KRAKEN_SE,
-  BG_RAMPAGE_HI,
-  bgLo, bgHi,
-} from './cell-flags'
+import { fgFlags, bgFlags } from './flag-decode'
 import { buildStatusIconSizeMap } from './icon-sizes'
 import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId } from '../hud/monster-style'
 
@@ -72,105 +58,12 @@ const HALO_RANGE = 1
 const HALO_UMBRA_FIRST = 2
 const HALO_UMBRA_LAST = 5
 
-// fg flag decoder. Bits packed into one or two 32-bit words; the server sends
-// `fg: [lo, hi]` when MDAM/threat/poison/etc. push the bitset past 32 bits.
-// Reference layout: crawl-ref/source/webserver/game_data/static/enums.js:139-205.
-//
-// `>>> 0` coerces to uint32 so high-bit masks (0x80000000, 0xC0000000, etc.)
-// compare correctly — bitwise `&` in JS returns int32, which would make
-// `(lo & 0xC0000000) === 0xC0000000` test `-1073741824 === 3221225472` and
-// fail. Coerced both sides land in the same positive range.
-// Attitude (PET/…) and threat-tier (TRIVIAL/…/UNUSUAL, GHOST) bits aren't
-// decoded here: their only consumer was the halo / threat-wash tile choice,
-// which now goes through fgHaloDngnName / fgThreatDngnName (monster-style.ts)
-// — the selectors shared with the HUD monster list and touch panel.
-interface DecodedFg {
-  value: number
-  S_UNDER: boolean; FLYING: boolean
-  STAB: boolean; MAY_STAB: boolean; FLEEING: boolean; PARALYSED: boolean
-  NET: boolean; WEB: boolean
-  POISON: boolean; MORE_POISON: boolean; MAX_POISON: boolean
-  MDAM_LIGHT: boolean; MDAM_MOD: boolean; MDAM_HEAVY: boolean; MDAM_SEV: boolean; MDAM_ADEAD: boolean
-}
-function decodeFg(fg: number | number[] | undefined): DecodedFg {
-  const loRaw = fg === undefined ? 0 : (typeof fg === 'number' ? fg : (fg[0] ?? 0))
-  const hiRaw = fg === undefined ? 0 : (typeof fg === 'number' ? 0 : (fg[1] ?? 0))
-  const lo = loRaw >>> 0
-  const hi = hiRaw >>> 0
-  const behavior = lo & FG_BEHAVIOUR_MASK
-  const poison = hi & FG_POISON_MASK_HI
-  const mdamLo = (lo & FG_MDAM_LO_MASK) >>> 0
-  const mdamHi = hi & FG_MDAM_HI_BIT
-  return {
-    value: lo & FG_TILE_ID_MASK,
-    S_UNDER: (lo & FG_S_UNDER) !== 0,
-    FLYING: (lo & FG_FLYING) !== 0,
-    STAB: behavior === FG_STAB,
-    MAY_STAB: behavior === FG_MAY_STAB,
-    FLEEING: behavior === FG_FLEEING,
-    PARALYSED: behavior === FG_PARALYSED,
-    NET: (lo & FG_NET) !== 0,
-    WEB: (lo & FG_WEB) !== 0,
-    POISON: poison === FG_POISON,
-    MORE_POISON: poison === FG_MORE_POISON,
-    MAX_POISON: poison === FG_MAX_POISON,
-    MDAM_LIGHT: mdamLo === FG_MDAM_LIGHT_LO && mdamHi === 0,
-    MDAM_MOD: mdamLo === FG_MDAM_MOD_LO && mdamHi === 0,
-    MDAM_HEAVY: mdamLo === FG_MDAM_HEAVY_LO && mdamHi === 0,
-    MDAM_SEV: mdamLo === 0 && mdamHi === FG_MDAM_HI_BIT,
-    MDAM_ADEAD: mdamLo === FG_MDAM_HEAVY_LO && mdamHi === FG_MDAM_HI_BIT,
-  }
-}
-
-interface DecodedBg {
-  value: number
-  MM_UNSEEN: boolean; UNSEEN: boolean
-  TRAV_EXCL: boolean; EXCL_CTR: boolean; OOR: boolean
-  WATER: boolean
-  NEW_STAIR: boolean; NEW_TRANSPORTER: boolean
-  CURSOR1: boolean; CURSOR2: boolean; CURSOR3: boolean; TUT_CURSOR: boolean
-  KRAKEN_NW: boolean; KRAKEN_NE: boolean; KRAKEN_SE: boolean; KRAKEN_SW: boolean
-  // ELDRITCH_* aren't present in the v0.34 bg flag table (enums.js only
-  // defines KRAKEN_*), but cell_renderer dispatches them too — leave fields
-  // here returning false so the draw code branches uniformly.
-  ELDRITCH_NW: boolean; ELDRITCH_NE: boolean; ELDRITCH_SE: boolean; ELDRITCH_SW: boolean
-  // RAMPAGE marks rampage-target cells (winged-boot icon overlay). Lives in
-  // the bg hi word, so a cell with RAMPAGE arrives as `bg: [lo, hi]` — see
-  // BG_RAMPAGE_HI / bgLo / bgHi in cell-flags.ts.
-  RAMPAGE: boolean
-}
-function decodeBg(bg: number | number[] | undefined): DecodedBg {
-  // bg arrives as `number` or `[lo, hi]`; see bgLo/bgHi in cell-flags.ts for
-  // the rationale (hi-word flags like RAMPAGE would silently wipe the dngn
-  // tile id if coerced through `& 0xFFFF`).
-  const lo = bgLo(bg)
-  const hi = bgHi(bg)
-  const cursor = lo & BG_CURSOR_MASK
-  return {
-    value: lo & BG_TILE_ID_MASK,
-    MM_UNSEEN: (lo & BG_MM_UNSEEN) !== 0,
-    UNSEEN: (lo & BG_UNSEEN) !== 0,
-    TRAV_EXCL: (lo & BG_TRAV_EXCL) !== 0,
-    EXCL_CTR: (lo & BG_EXCL_CTR) !== 0,
-    OOR: (lo & BG_OOR) !== 0,
-    WATER: (lo & BG_WATER) !== 0,
-    NEW_STAIR: (lo & BG_NEW_STAIR) !== 0,
-    NEW_TRANSPORTER: (lo & BG_NEW_TRANSPORTER) !== 0,
-    CURSOR1: cursor === BG_CURSOR1,
-    CURSOR2: cursor === BG_CURSOR2,
-    CURSOR3: cursor === BG_CURSOR3,
-    TUT_CURSOR: (lo & BG_TUT_CURSOR) !== 0,
-    KRAKEN_NW: (lo & BG_KRAKEN_NW) !== 0,
-    KRAKEN_NE: (lo & BG_KRAKEN_NE) !== 0,
-    KRAKEN_SE: (lo & BG_KRAKEN_SE) !== 0,
-    // KRAKEN_SW lives in the hi word per enums.js but v0.34 never sends one;
-    // ELDRITCH_* aren't defined in 0.34's bg flag table at all. Fields kept
-    // returning false so the draw branches in drawCell stay uniform.
-    KRAKEN_SW: false,
-    ELDRITCH_NW: false, ELDRITCH_NE: false, ELDRITCH_SE: false, ELDRITCH_SW: false,
-    RAMPAGE: (hi & BG_RAMPAGE_HI) !== 0,
-  }
-}
+// fg/bg flag decoding happens through the flag-decode facade (fgFlags /
+// bgFlags): named booleans + `.value` (the masked tile id), backed by the
+// game version's own enums.js when loaded, else the bundled 0.34 layout in
+// cell-flags.ts. Names missing on a version come back undefined → falsy —
+// exactly the "feature off" degradation we want (ELDRITCH_* exist only in
+// the versions that had them; KRAKEN_SW/RAMPAGE only where defined).
 
 // Tile renderer. Same public API as MapView, but each cell is a stack of
 // sprites drawn to a single <canvas>. Viewport floors at 21×21 (non-zoom)
@@ -460,6 +353,12 @@ export class TileMapView {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }
 
+  // The viewport's footprint in dungeon coords (top-left + size), for the
+  // minimap's you-are-here rectangle.
+  viewRect(): { x: number; y: number; w: number; h: number } {
+    return { x: this.offX, y: this.offY, w: this.viewportW, h: this.viewportH }
+  }
+
   render(dirty?: Set<string>): void {
     const offX = this.offX
     const offY = this.offY
@@ -613,9 +512,9 @@ export class TileMapView {
       return
     }
 
-    const fg = decodeFg(cell.fg)
-    const bg = decodeBg(cell.t_bg)
-    const inWater = bg.WATER && !fg.FLYING
+    const fg = fgFlags(cell.fg)
+    const bg = bgFlags(cell.t_bg)
+    const inWater = !!bg.WATER && !fg.FLYING
 
     // Resolve the background sprite once (tex dispatch + atlas lookup) and reuse
     // it for both the safety net below and the actual bg paint further down, so
@@ -761,7 +660,10 @@ export class TileMapView {
 
     // ── after draw_background (do_render_cell:260-456) ─────────────────────
 
-    const cloudId = cell.cloud && cell.cloud > 0 ? cell.cloud & TILE_ID_MASK : 0
+    // cell.cloud goes through the fg-flag decode like the reference's
+    // do_render_cell (`cell.cloud = enums.prepare_fg_flags(cell.cloud || 0)`)
+    // — the value is fg-namespaced, so the same version-specific mask applies.
+    const cloudId = fgFlags(cell.cloud).value
 
     // Cloud underlay. When an actor is present, draw the cloud half-opaque so
     // the actor shows through; when no actor, draw fully opaque. The reference

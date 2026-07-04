@@ -86,7 +86,7 @@ const TAB_BUTTONS: Record<Exclude<TabKey, 'spells'>, TabButtonDef[][]> = {
     ],
     [
       { label: 'a',   title: 'Use ability',           text: 'a' },
-      { label: 'z',   title: 'Cast spell',            text: 'z' },
+      { label: 'e',   title: 'Equip / unequip',       text: 'e' },
       { label: 'x',   title: 'Examine surroundings',  text: 'x' },
       { label: ',',   title: 'Pick up item',          text: ',' },
     ],

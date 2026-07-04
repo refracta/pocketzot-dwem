@@ -9,6 +9,42 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-03
+
+- Minimap added: toggle by tapping the place name in the HUD (e.g. "@D:1").
+  Shows layout, stairs, portals, items, and monsters. The controls stay live
+  while it's up. Tap the map, or the place name again, to dismiss.
+- The HUD now uses the standard short branch names (D:5, Elf:3, Zot:5) in
+  portrait.
+- Draconians now show their colour in the HUD, and the piety row now shows
+  penance (in red) and Xom's mood.
+- Fixed the skill menu sometimes showing a mastered skill's line twice.
+
+## 2026-07-02
+
+- Map and monster-list rendering while moving is now ~3.5x faster in ASCII
+  mode and ~25% faster in tiles mode.
+- Monster markers in tiles mode — status icons (asleep, poisoned, caught…),
+  threat and ally highlights, damage indicators — now display correctly on
+  older DCSS versions, and automatically keep up with future trunk changes.
+- The lobby's full version list now notes the 0.24 support cutoff, and
+  starting or watching a game on an older version shows a brief heads-up
+  with a way back to the lobby if character creation doesn't appear.
+
+## 2026-07-01
+
+- The login screen now shows your recently played characters, as they were
+  last seen. Tap to view the full gallery.
+- Switching away from the app mid-game no longer lands you back on the login
+  screen: PocketZot now reconnects and resumes your game (or the game you were
+  spectating) automatically when you switch back, even if the app was
+  reloaded.
+
+## 2026-06-29
+
+- Fixed the monster list sometimes requiring a double-Escape to clear it.
+- Replaced 'z' since the quick-cast buttons make it obsolete.
+
 ## 2026-06-22
 
 - Added 1.96 trillion new PocketZot logos. Each is procedurally generated
@@ -17,8 +53,7 @@ Notable changes to PocketZot, newest first.
 ## 2026-06-17
 
 - Stash search (`Ctrl-F`) and similar text fields now work properly on
-  pre-0.34 DCSS versions. (Note that pre-0.34 versions are not officially
-  supported at this time.)
+  pre-0.34 DCSS versions.
 
 ## 2026-06-12
 
@@ -80,7 +115,7 @@ Notable changes to PocketZot, newest first.
 - The HUD now shows drained stats alongside their natural maximum
   (e.g. `12 (15)`), plus Contamination and Doom meters when either is active.
 - Fixed occasional stray specks of color left next to monsters and items in
-  tile mode.
+  tiles mode.
 
 ## 2026-05-28
 
@@ -88,7 +123,7 @@ Notable changes to PocketZot, newest first.
 - Rewrote message log handling to be an order of magnitude faster when many
   messages are arriving.
 - The noise indicator is now a graphical colored bar instead of an ASCII meter.
-- In tile mode, HP and MP bars now appear beneath the player tile.
+- In tiles mode, HP and MP bars now appear beneath the player tile.
 - The HUD no longer briefly flashes empty bars and stat captions before the
   first game update arrives.
 
@@ -135,8 +170,8 @@ Notable changes to PocketZot, newest first.
   on-screen numpad to pick the radius value.
 - Shift-tapping a shop row to add an item to your shopping list no longer
   highlights an unrelated row.
-- X mode now zooms out in tile mode, matching existing ASCII mode behavior.
-- In tile mode, a monster re-entering FoV at a memorized location no longer
+- X mode now zooms out in tiles mode, matching existing ASCII mode behavior.
+- In tiles mode, a monster re-entering FoV at a memorized location no longer
   renders as a bare floor tile in the monster list.
 
 ## 2026-05-20
@@ -145,8 +180,8 @@ Notable changes to PocketZot, newest first.
   in-game popups.
 - Fixed a jump-back when scrolling those popups to the bottom on phone-width
   screens.
-- In tile mode, the highlight marking cells you can Rampage to now shows.
-- In tile mode, mangroves rooted in water now show the water through their
+- In tiles mode, the highlight marking cells you can Rampage to now shows.
+- In tiles mode, mangroves rooted in water now show the water through their
   bases.
 
 ## 2026-05-19

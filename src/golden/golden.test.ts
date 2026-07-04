@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 // Golden-fixture replay tests. Each *.golden.json file holds a recorded
 // sequence of server messages plus the expected store state after replay.
 // Real captures break loud on any upstream wire-format change — that's
@@ -8,7 +10,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { MapStore } from '../game/map/map-store'
-import type { ServerMsg } from '../ws/types'
+import type { ClientMsg, ServerMsg } from '../ws/types'
+import { showInputDialog, showNewgameChoice, type OverlayScreenCtx, type UiPushMsg } from '../views/game-overlays'
 
 interface CellSample {
   x: number
@@ -32,7 +35,56 @@ interface GoldenFixture {
     cellCount?: number
     monsterCount?: number
     monsterNames?: string[]
+    // Ordered `type` of every ui-push frame in the capture. Pins the
+    // creation-flow sequencing (maps → species → background → combo).
+    uiPushTypes?: string[]
+    // One entry per newgame-choice push, in capture order. Validated by
+    // rendering the REAL screen (showNewgameChoice) from the captured frame:
+    // grid button counts, plus the wire message a double-tap of the first
+    // main button produces — proving hotkey decode still matches what the
+    // server sent.
+    newgameChoices?: Array<{
+      mainButtons: number
+      subButtons: number
+      firstConfirm?: ClientMsg
+    }>
+    // Rendered from the first msgwin-get-line push: the prompt survives to
+    // the DOM, and a typed edit echoes ui_state_sync with the SAME
+    // generation_id the server stamped (it drops mismatched syncs).
+    inputDialog?: {
+      promptIncludes?: string
+      echoesGeneration?: boolean
+    }
   }
+}
+
+// Minimal OverlayScreenCtx for driving the extracted screens headlessly:
+// layout/keyboard/focus callbacks are inert, sends are recorded.
+function overlayHarness(): { ctx: OverlayScreenCtx; overlay: HTMLElement; sent: ClientMsg[] } {
+  const overlay = document.createElement('div')
+  const sent: ClientMsg[] = []
+  const ctx: OverlayScreenCtx = {
+    overlay,
+    send: (m) => { sent.push(m) },
+    enterLayout: () => { overlay.innerHTML = '' },
+    renderOverlay: (_title, buildBody) => { overlay.innerHTML = ''; buildBody() },
+    autoOpenKbd: () => {},
+    focusView: () => {},
+  }
+  return { ctx, overlay, sent }
+}
+
+// Renders a captured newgame-choice push through the real screen and returns
+// the assertable facts: grid sizes and the send from double-tapping the
+// first main button (two taps = the screen's preview→confirm UX).
+function probeNewgameChoice(push: UiPushMsg): { mainButtons: number; subButtons: number; firstConfirm?: ClientMsg } {
+  const { ctx, overlay, sent } = overlayHarness()
+  showNewgameChoice(ctx, push)
+  const main = overlay.querySelectorAll('.ngc-grid:not(.ngc-sub-grid) .ngc-btn')
+  const sub = overlay.querySelectorAll('.ngc-sub-grid .ngc-btn')
+  const first = main[0] as HTMLButtonElement | undefined
+  if (first) { first.click(); first.click() }
+  return { mainButtons: main.length, subButtons: sub.length, firstConfirm: sent[0] }
 }
 
 // Vite/Vitest evaluates this glob at build time; each matched JSON file
@@ -72,6 +124,8 @@ describe('golden replays', () => {
     it(`${name} — ${fx.description}`, () => {
       const store = replay(fx.messages)
       const { expected } = fx
+      const pushes = fx.messages.filter(m => m.msg === 'ui-push') as unknown as UiPushMsg[]
+      const ngcPushes = pushes.filter(p => p.type === 'newgame-choice')
 
       if (fx.dump) {
         // eslint-disable-next-line no-console
@@ -85,7 +139,41 @@ describe('golden replays', () => {
           cellSamples: Array.from(store.getMonsters().values())
             .slice(0, 3)
             .map(m => ({ x: m.x, y: m.y, g: m.g, col: store.get(m.x, m.y)?.col })),
+          uiPushTypes: pushes.map(p => p.type),
+          newgameChoices: ngcPushes.map(probeNewgameChoice),
         }, null, 2))
+      }
+
+      if (expected.uiPushTypes) {
+        expect(pushes.map(p => p.type), 'ui-push type sequence').toEqual(expected.uiPushTypes)
+      }
+
+      if (expected.newgameChoices) {
+        expect(ngcPushes.length, 'newgame-choice push count').toBe(expected.newgameChoices.length)
+        ngcPushes.forEach((push, i) => {
+          expect(probeNewgameChoice(push), `newgame-choice #${i}`).toEqual(expected.newgameChoices![i])
+        })
+      }
+
+      if (expected.inputDialog) {
+        const push = pushes.find(p => p.type === 'msgwin-get-line')
+        expect(push, 'msgwin-get-line push should exist').toBeDefined()
+        const { ctx, overlay, sent } = overlayHarness()
+        showInputDialog(ctx, push!)
+        if (expected.inputDialog.promptIncludes) {
+          expect(overlay.querySelector('.input-dialog-prompt')?.textContent)
+            .toContain(expected.inputDialog.promptIncludes)
+        }
+        if (expected.inputDialog.echoesGeneration) {
+          const input = overlay.querySelector<HTMLInputElement>('.input-dialog-field')!
+          input.value = 'x'
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          expect(sent).toEqual([{
+            msg: 'ui_state_sync', widget_id: 'input', text: 'x', cursor: 1,
+            generation_id: push!.generation_id,
+          }])
+          expect(push!.generation_id, 'captured push carries a generation_id').toBeDefined()
+        }
       }
 
       if (expected.playerPos) {

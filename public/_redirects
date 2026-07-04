@@ -14,6 +14,12 @@
 # A previous version tried to force misses to 404 with lines like
 # `/assets/* /index.html 404`. Cloudflare Pages only honours 200/301/302/303/
 # 307/308 statuses in _redirects, so those 404 rules were silently dropped and
-# every miss fell through to the catch-all anyway. Removing the catch-all lets
-# Pages' built-in 404 handle misses correctly (a real 404, so a stale-asset
-# request fails loudly instead of being fed HTML).
+# every miss fell through to the catch-all anyway.
+#
+# NOTE: removing the catch-all here was NOT enough. Pages infers SPA mode from
+# the *absence of a 404.html file*, independent of _redirects, and kept
+# serving index.html (200, text/html) for every miss — and the /assets/*
+# _headers rule stamped that fallback HTML with a one-year immutable
+# Cache-Control, permanently bricking installed PWAs that requested a
+# rotated-out asset hash after a deploy. public/404.html exists to switch
+# that fallback off; misses only 404 correctly while it ships in the deploy.

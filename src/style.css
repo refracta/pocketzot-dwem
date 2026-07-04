@@ -73,6 +73,47 @@ html, body {
   padding: 1.5rem 1.25rem;
 }
 
+/* Relocation notice on the old pages.dev origin (login.ts). Accent-tinted
+   card above the wordmark; the × snoozes it for the browsing session. */
+.login-moved {
+  position: relative;
+  margin-bottom: 1.25rem;
+  padding: 0.8rem 2rem 0.85rem 0.85rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.login-moved-msg { margin: 0; }
+.login-moved strong { color: var(--accent); font-weight: 600; }
+.login-moved-link {
+  display: inline-block;
+  margin: 0.5rem 0;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.login-moved-sub {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.login-moved-x {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .login-title {
   font-size: 1.4rem;
   color: var(--accent);
@@ -123,6 +164,83 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .login-title .logo-ch { transition: none; }
   .login-title .logo-ch--lit { animation: none; }
+}
+
+/* Recently-played character dolls (see src/avatars.ts): a bare, centered row of
+   doll sprites under the title, painted as DOM tile-stacks (.tile-stack). No
+   frame/label — just the cutouts. :empty collapses it so it takes no space
+   until login.ts appends the first doll whose atlas loaded. Every doll is a
+   uniform 32px-cell stack (64px at 2x); the species base part is grid-anchored
+   feet-at-floor by its authored offset (CUT_BOTTOM only clips the overlapping
+   torso, never the base — tilepick-p.cc), so dolls already share a floor line.
+   align-items:flex-end then aligns the (equal-height) box bottoms — a no-op
+   today, kept so the row stays floor-aligned if a box height ever varied. */
+.login-avatars {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  min-height: 64px;
+  cursor: pointer;            /* the row taps through to the crypt (full history) */
+  touch-action: manipulation; /* no iOS double-tap zoom on the tap target */
+}
+.login-avatars:empty { display: none; }
+
+/* Full-screen "crypt": the complete retained character history (src/avatars.ts),
+   a vertical-scrolling 4-wide grid of doll sprites. Opened by tapping the login
+   doll strip; mounted on body above the login view (doc-overlay z-index tier). */
+.crypt-view {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.crypt-header {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+           0.5rem max(1rem, env(safe-area-inset-left));
+}
+/* Mirrors .lobby-header's bar (1rem container padding + 36px centered row) so the
+   "← Back" button lands in the same spot as the lobby/spectate back button. The
+   margin-bottom separates the nav button from the heading so they don't cluster. */
+.crypt-topbar {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  margin-bottom: 1.25rem;
+}
+/* Rotating thematic line (src/views/crypt-flavor.ts): prose, clearly smaller than
+   the logo wordmark. The crypt's sole heading. */
+.crypt-flavor {
+  margin: 0.4rem 0 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+.crypt-flavor:empty { display: none; }
+/* Centered wrapping rows rather than a fixed 4-column grid: a lone character sits
+   centered (reads as intentional, not stranded top-left), full rows center, and the
+   last row of many centers too. align-content:flex-start keeps rows packed at the
+   top (room to grow below); align-items:flex-end floor-aligns dolls within a row. */
+.crypt-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  align-items: flex-end;
+  gap: 1rem 0.5rem;
+  padding: 1rem max(1rem, env(safe-area-inset-right))
+           max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
 }
 
 .login-section { margin-bottom: 1.5rem; }
@@ -499,6 +617,15 @@ html, body {
 .lobby-more-games > summary::before { content: "▸ "; }
 .lobby-more-games[open] > summary::before { content: "▾ "; }
 
+/* Advisory line under the expanded version list — only rendered when the
+   server offers pre-cutoff versions (see renderGameButtons in lobby.ts). */
+.lobby-more-games-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
 .lobby-section-title {
   font-size: 0.8rem;
   color: var(--text-dim);
@@ -783,6 +910,28 @@ html, body {
     "menu";
   overflow: hidden;
   outline: none;
+}
+
+/* Old-version advisory banner (maybeShowVersionNotice in game-view.ts):
+   floats over the map's top edge, tap-to-dismiss, auto-removed after a
+   few seconds. z-index above the floating log/rail tier (≤5), below
+   nothing that matters — server overlays replace the map wholesale. */
+.version-notice {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(92%, 30rem);
+  padding: 0.45rem 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-align: center;
+  cursor: pointer;
 }
 
 /* Map wrapper */
@@ -1472,6 +1621,48 @@ html, body {
 }
 .ml-tile { width: 20px; height: 20px; }
 
+/* Level minimap lens (opened from the HUD place chip): occludes only the
+   map area — HUD, floating log, and touch controls stay live, and movement
+   input passes through so you can walk by the overview. Child of #map-wrap
+   (position:relative), so inset:0 tracks the map region through rotations
+   and render-mode swaps. */
+.minimap-lens {
+  position: absolute;
+  inset: 0;
+  /* Above the map content; below the floating log / spell rail / --more--
+     tier (z ≥ 3), which stay readable over the lens. */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  /* Keep the canvas clear of the floating log along the map's bottom edge. */
+  padding-bottom: calc(var(--msglog-h) + 0.25rem);
+  background: rgba(0, 0, 0, 0.92);
+}
+/* With the spell rail up, the log floats a rail-height higher (same offset
+   pair as #more-btn) — keep the canvas clear of both. */
+#game-view.spell-row .minimap-lens {
+  padding-bottom: calc(var(--msglog-h) + var(--spell-rail-h) + 0.25rem);
+}
+.minimap-canvas {
+  /* The bitmap is integer device-px per cell; keep upscaling (if any)
+     hard-edged. Deliberately borderless: the explored region reads its own
+     extent against the black, as in the reference minimap. */
+  image-rendering: pixelated;
+  background: #000;
+}
+/* .hud-place-chip is visually undecorated on purpose: like the message-log
+   and monster-list taps, the minimap toggle is an unadorned tap surface,
+   documented in ABOUT.md's Gestures. The class is StatsView's own tap-target
+   hook (its constructor delegates the tap; consumers use setOnPlaceTap).
+   The padding/negative-margin pair grows the hit area without moving the
+   text — abbreviated names ("@D:1") are otherwise a small target. */
+.hud-place-chip {
+  padding: 0.5rem;
+  margin: -0.5rem;
+}
+
 /* Monster panel (full-screen takeover variant of #monster-list) */
 .mp-list {
   display: flex;
@@ -1534,6 +1725,9 @@ html, body {
 .hs-id { font-size: 0.75rem; line-height: 1.2; display: flex; align-items: baseline; }
 .hs-id #hud-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .hg-piety { margin-left: 0.4em; flex-shrink: 0; }
+/* Under god's wrath the whole piety row reads red (reference
+   #stats_piety.penance, colour 4). */
+.hg-piety.penance { color: #b30009; }
 
 .hg-bar-pair {
   display: flex;
@@ -2698,8 +2892,12 @@ html, body {
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
        row is minmax(0, auto): content-sized when there's room, but able to
        shrink so it scrolls (overflow-y:auto below) when a short landscape
-       viewport can't fit everything — keeping the bottom controls visible. */
-    grid-template-rows: minmax(0, auto) auto 1fr auto auto;
+       viewport can't fit everything — keeping the bottom controls visible.
+       The panel row's minimum is max-content, NOT the item's automatic
+       minimum: .tc-panel declares min-height:0 for its portrait flex life,
+       which zeroes that minimum here and would let a starved sidebar crush
+       the panel until its footer keys paint over the row above. */
+    grid-template-rows: minmax(0, auto) auto 1fr auto minmax(max-content, auto);
     grid-template-areas:
       "map hud"
       "map mons"
@@ -2747,14 +2945,35 @@ html, body {
     bottom: auto;
   }
 
+  /* The minimap lens's log-clearance padding (base rule) assumes the
+     portrait log along the map's bottom edge; here the log floats on top,
+     so flip the reserved band. The spell-row variant is folded in because
+     in landscape the rail sits in the sidebar, not over the map — no extra
+     clearance on either side. */
+  .minimap-lens,
+  #game-view.spell-row .minimap-lens {
+    padding-top: calc(var(--msglog-h) + 0.25rem);
+    padding-bottom: 0.25rem;
+  }
+
   #map-wrap { grid-area: map; }
 
   #game-hud {
     grid-area: hud;
     border-top: none;
     overflow-y: auto;
+    /* The place chip's hit-area bleed (padding/negative-margin pair) pokes
+       ~8px past the sidebar's right padding edge. Harmless in portrait
+       (overflow stays visible), but overflow-y:auto makes the x axis
+       scrollable too — clip it so the stats block can't wiggle sideways. */
+    overflow-x: hidden;
     padding: 0.3rem 0.4rem;
   }
+  /* When the sidebar is height-starved, the squeeze must land on this
+     scroll container — not on its rows, which otherwise flex-shrink in
+     place and slice the status/weapon lines mid-glyph while scrollHeight
+     tracks the shrunken content (so nothing ever scrolls). */
+  #game-hud > * { flex-shrink: 0; }
 
   /* Stack HP and MP bars vertically when the HUD is a narrow sidebar */
   .hg-bar-pair { flex-direction: column; align-items: stretch; gap: 0.15rem; }
@@ -2884,3 +3103,85 @@ html, body {
   .login-account-tag { padding: 0.2rem 0.4rem; font-size: 0.72rem; }
   .login-footer { margin-top: 0.75rem; font-size: 0.75rem; }
 }
+
+/* ── Reconnect overlay (src/reconnect.ts) ───────────── */
+/* Floats over the frozen game view while auto-resume replays login + play
+   after an unexpected socket drop (iOS app-swap). Above the doc modal —
+   nothing should obscure connection status. */
+.reconnect-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+}
+.reconnect-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  max-width: 22rem;
+  background: var(--surface);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  padding: 1.5rem 1.75rem;
+  font-family: var(--font-mono);
+}
+.reconnect-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: reconnect-spin 0.9s linear infinite;
+}
+@keyframes reconnect-spin { to { transform: rotate(360deg); } }
+.reconnect-status {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.reconnect-question {
+  color: var(--warn);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.reconnect-actions { display: flex; gap: 0.75rem; }
+.reconnect-btn {
+  padding: 0.5rem 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.reconnect-btn:active { background: var(--surface2); }
+.reconnect-force-yes { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
+
+/* Yes/no row inside the lobby notice (force_terminate? on the manual path). */
+.lobby-notice-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.lobby-notice-actions button {
+  padding: 0.4rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lobby-notice-actions button:active { background: var(--surface2); }
