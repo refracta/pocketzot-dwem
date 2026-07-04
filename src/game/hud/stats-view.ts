@@ -89,6 +89,10 @@ export class StatsView {
       }
       this.prevTime = p.time
     }
+    // Pre-0.33 equip deltas carry only the changed slots — merge key-wise so
+    // e.g. a ring swap doesn't drop the stored weapon slot (reference does
+    // $.extend(player.equip, data.equip)).
+    if (p.equip) p = { ...p, equip: { ...this.state.equip, ...p.equip } }
     Object.assign(this.state, p)
     this.render()
   }
@@ -352,7 +356,12 @@ export class StatsView {
 
   private buildWeapon(offhand: boolean): string {
     const s = this.state
+    // weapon_index/offhand_index exist since 0.33; older servers send the
+    // same info in the equip map ("0" = weapon, "5" = shield/offhand), and
+    // always send unarmed_attack — without the equip fallback that shows a
+    // wielding player as unarmed ("Nothing wielded").
     const idx = (offhand ? s.offhand_index : s.weapon_index)
+      ?? s.equip?.[offhand ? '5' : '0']
       ?? (s.unarmed_attack !== undefined ? -1 : undefined)
     if (idx === undefined) return ''
 

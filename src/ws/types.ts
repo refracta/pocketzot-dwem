@@ -221,8 +221,12 @@ export interface PlayerMsg {
   contam?: number
   unarmed_attack?: string
   unarmed_attack_colour?: number
-  weapon_index?: number
-  offhand_index?: number
+  weapon_index?: number   // 0.33+
+  offhand_index?: number  // 0.33+
+  // Pre-0.33: equipment as a slot→inventory-index map (keys are
+  // equipment_type enum values as strings; "0" = weapon, "5" =
+  // shield/offhand). -1 = empty or melded. Deltas carry only changed slots.
+  equip?: Record<string, number>
   offhand_weapon?: number
   quiver_desc?: string
   inv?: Record<string, { name?: string; col?: number }>

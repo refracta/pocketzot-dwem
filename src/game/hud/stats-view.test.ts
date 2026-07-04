@@ -61,6 +61,46 @@ describe('StatsView piety row', () => {
   })
 })
 
+describe('StatsView weapon row (pre-0.33 equip fallback)', () => {
+  function makeArmedView(): StatsView {
+    const inv = new InventoryStore()
+    inv.update({ 3: { name: '+2 mace', col: 2 } })
+    return new StatsView(inv)
+  }
+
+  function weaponRow(v: StatsView): HTMLElement {
+    return v.element.querySelector('#hud-wq')!
+  }
+
+  it('reads the legacy equip map when weapon_index is absent', () => {
+    const v = makeArmedView()
+    // 0.32-shaped player message: equip map + always-present unarmed_attack
+    v.update({ equip: { '0': 3 }, unarmed_attack: 'Nothing wielded' })
+    expect(weaponRow(v).textContent).toBe('d) +2 mace')
+  })
+
+  it('keeps the weapon across equip deltas touching other slots', () => {
+    const v = makeArmedView()
+    v.update({ equip: { '0': 3 }, unarmed_attack: 'Nothing wielded' })
+    v.update({ equip: { '9': 5 } })  // amulet change only
+    expect(weaponRow(v).textContent).toBe('d) +2 mace')
+  })
+
+  it('shows the unarmed attack when the legacy weapon slot is empty', () => {
+    const v = makeArmedView()
+    v.update({ equip: { '0': -1 }, unarmed_attack: 'Nothing wielded' })
+    expect(weaponRow(v).textContent).toBe('-) Nothing wielded')
+  })
+
+  it('prefers weapon_index (0.33+) when both are present', () => {
+    const inv = new InventoryStore()
+    inv.update({ 3: { name: '+2 mace', col: 2 }, 4: { name: '+0 dagger', col: 7 } })
+    const v = new StatsView(inv)
+    v.update({ weapon_index: 4, equip: { '0': 3 } })
+    expect(weaponRow(v).textContent).toBe('e) +0 dagger')
+  })
+})
+
 describe('StatsView identity line', () => {
   it('prefers species_display_name over species', () => {
     const v = makeView()

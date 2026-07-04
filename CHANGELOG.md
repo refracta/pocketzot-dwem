@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-04
+
+- The HUD now shows the wielded weapon in pre-0.33 versions (it previously
+  read "Nothing wielded").
+
 ## 2026-07-03
 
 - Minimap added: toggle by tapping the place name in the HUD (e.g. "@D:1").
