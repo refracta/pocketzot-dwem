@@ -5,7 +5,7 @@
 // (player vs spectator) wants them.
 //
 // Glyph conventions (no emoji — they fight the CRT aesthetic and render
-// differently per platform): ◉ = watchers (an eye), # = chat (IRC channel),
+// differently per platform): ⊙ = watchers (an eye), # = chat (IRC channel),
 // * prefix = meta/server notices, » = send.
 
 const HISTORY_CAP = 200
@@ -73,7 +73,7 @@ function appendLinkified(el: HTMLElement, text: string): void {
 export class ChatView {
   /** Bottom sheet (history + input). Mounted once, hidden until opened. */
   readonly sheet: HTMLElement
-  /** Entry chip: `◉N  #` with an unread badge. Host decides placement. */
+  /** Entry chip: `⊙N  #` with an unread badge. Host decides placement. */
   readonly chip: HTMLButtonElement
   /** Transient one-line preview shown while the sheet is closed. */
   readonly pill: HTMLElement
@@ -196,7 +196,7 @@ export class ChatView {
     const div = document.createElement('div')
     div.innerHTML = names
     const plain = (div.textContent ?? '').trim()
-    this.headerNamesEl.textContent = plain ? `◉ ${plain}` : ''
+    this.headerNamesEl.textContent = plain ? `⊙ ${plain}` : ''
     this.syncChip()
   }
 
@@ -308,8 +308,8 @@ export class ChatView {
       || this.spectatorCount > 0 || this.unread > 0
     this.chip.style.display = show ? '' : 'none'
     // No count yet (or genuinely zero): show a bare `#` rather than a
-    // misleading ◉0 — the join-time update_spectators can lag or be missed.
-    this.chipEyeEl.textContent = this.spectatorCount > 0 ? `◉${this.spectatorCount}` : ''
+    // misleading ⊙0 — the join-time update_spectators can lag or be missed.
+    this.chipEyeEl.textContent = this.spectatorCount > 0 ? `⊙${this.spectatorCount}` : ''
     const n = this.unread
     this.chipBadgeEl.textContent = n > 0 ? (n > 9 ? '9+' : String(n)) : ''
     this.chipBadgeEl.style.display = n > 0 ? '' : 'none'

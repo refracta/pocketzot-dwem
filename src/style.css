@@ -3525,7 +3525,7 @@ html, body {
 .tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }
 
 /* ── Chat (chat-view.ts) ──────────────────────────────────────
-   Glyph language, no emoji: ◉ = watchers, # = chat, * = server notice,
+   Glyph language, no emoji: ⊙ = watchers, # = chat, * = server notice,
    » = send. Chip lives in the spectator bar when spectating; while playing
    it floats over the map's top-right and only exists once someone watches. */
 
@@ -3624,10 +3624,14 @@ html, body {
   /* Content-sized: hugs a short conversation instead of claiming a fixed
      40% of the screen. The history's max-height caps the rise (~8 lines). */
   background: var(--surface);
-  border-top: 1px solid var(--accent);
+  /* Standard region-seam hairline, same as the HUD/spectator-bar/touch
+     edges — a full-accent line here out-shouted every other seam on screen
+     (accent borders mean "special mode": x-mode d-pad, kbd overlay). Chat's
+     accent identity lives in the #chat title, chip outline, and ». */
+  border-top: 1px solid var(--border);
 }
 
-/* One rule only — the sheet's accent top edge. The header/history/input
+/* One rule only — the sheet's top-edge hairline. The header/history/input
    internals separate by spacing and the input's own box: stacked hairlines
    read as venetian blinds when the history is short or empty. */
 .chat-header {
