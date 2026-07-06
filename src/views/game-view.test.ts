@@ -402,6 +402,38 @@ describe('menu handler', () => {
     expect(isHidden(overlay(h))).toBe(true)
   })
 
+  // The reference client keeps a covered menu's DOM (and thus its scroll)
+  // alive in its popup stack; our single overlay frame rebuilds the list, so
+  // showMenu saves/restores the offset explicitly (menuScrollTops).
+  it('restores the inventory scroll position after a describe ui-push/ui-pop round trip', () => {
+    const h = setup()
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler', hotkeys: [98] },
+    ] })
+    const list = overlay(h).querySelector<HTMLElement>('.overlay-list')!
+    list.scrollTop = 120
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 'a buckler', body: 'A small shield.' })
+    h.dispatch({ msg: 'ui-pop' })
+    const restored = overlay(h).querySelector<HTMLElement>('.overlay-list')!
+    expect(restored).not.toBe(list) // rebuilt, not the same node —
+    expect(restored.scrollTop).toBe(120) // — so the offset must be re-applied
+  })
+
+  it('restores the outer menu scroll position when a stacked menu closes over it', () => {
+    const h = setup()
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+    ] })
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 77
+    h.dispatch({ msg: 'menu', tag: 'macro_mapping', title: { text: 'Which one?' }, items: [
+      { level: 2, text: 'x - this one', hotkeys: [120] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(0)
+    h.dispatch({ msg: 'close_menu' })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(77)
+  })
+
   it('update_menu_items patches the chunk in place, leaving items outside it intact', () => {
     const h = setup()
     h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [

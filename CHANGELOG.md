@@ -11,10 +11,12 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-06
 
+- Long menus now keep scroll position after opening and closing an entry's
+  description.
 - Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8
   trillion unique rolls. See them all!
 
-## 2026-07-05
+## 2026-07-04
 
 - The HUD now shows the wielded weapon in pre-0.33 versions.
 

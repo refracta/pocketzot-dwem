@@ -63,6 +63,11 @@ interface MenuMsg {
   // When the server pushes a new menu replacing the topmost (without an
   // intervening close_menu) it sets replace:true.
   replace?: boolean
+  // First-visible item index from the server-side menu (menu.cc
+  // webtiles_write_menu). Restores position when a menu is re-sent whole:
+  // reconnect, spectator join, and pre-popup-stack servers that close and
+  // reopen the inventory around an item describe.
+  jump_to?: number
 }
 
 // Menu flag bits (subset; values from the reference client enums.js).
@@ -1446,6 +1451,7 @@ export function buildGameView(
   }
 
   function showUiPush(msg: UiPushMsg): void {
+    captureMenuScroll()
     // Standalone screens (game-overlays.ts) own their ui-push type wholesale;
     // everything after this block shares the title/body/actions frame below.
     if (msg.type === 'newgame-choice') {
@@ -1671,6 +1677,7 @@ export function buildGameView(
   // --- CRT handler ---
 
   function showCrt(tag?: string): void {
+    captureMenuScroll()
     crtActive = true
     crtTag = tag
     crtLines.clear()
@@ -2000,10 +2007,13 @@ export function buildGameView(
   // (= server-index order; continuations/headers carry no data-menu-idx).
   function visibleMenuRows(el: HTMLElement): HTMLElement[] {
     const lr = el.getBoundingClientRect()
-    return [...el.querySelectorAll<HTMLElement>('[data-menu-idx]')].filter(r => {
+    const rows: HTMLElement[] = []
+    for (const r of el.querySelectorAll<HTMLElement>('[data-menu-idx]')) {
       const rr = r.getBoundingClientRect()
-      return rr.bottom > lr.top + 1 && rr.top < lr.bottom - 1
-    })
+      if (rr.top >= lr.bottom - 1) break  // DOM order: the rest are below the fold
+      if (rr.bottom > lr.top + 1) rows.push(r)
+    }
+    return rows
   }
 
   function firstSelectableVisibleIdx(el: HTMLElement): number {
@@ -2028,6 +2038,47 @@ export function buildGameView(
     })
   }
 
+  // Scroll offsets of menus covered by another overlay (describe ui-push,
+  // stacked menu, CRT), keyed by the covered MenuMsg so re-showing the same
+  // menu restores where the user was. The reference client gets this for
+  // free — its popup stack keeps the covered menu's DOM alive — but our
+  // single overlay frame rebuilds the list, so save/restore explicitly.
+  const menuScrollTops = new WeakMap<MenuMsg, number>()
+
+  // Callers must only capture while the DOM list belongs to activeMenu. The
+  // one path where they diverge is close_menu — activeMenu is reassigned to
+  // the outer menu while the popped inner one is still in the DOM — which
+  // showMenu sidesteps by skipping capture when re-showing activeMenu itself
+  // (the covering overlay there is never a menu list anyway).
+  function captureMenuScroll(): void {
+    const el = menuListEl()
+    if (el && activeMenu) menuScrollTops.set(activeMenu, el.scrollTop)
+  }
+
+  // Align the first indexed row at-or-after `index` with the top of the
+  // list (reference scroll_to_item; headers/continuations carry no index).
+  function scrollMenuToItem(el: HTMLElement, index: number): void {
+    const listTop = el.getBoundingClientRect().top
+    for (const row of el.querySelectorAll<HTMLElement>('[data-menu-idx]')) {
+      if (Number(row.dataset.menuIdx) < index) continue
+      el.scrollTop += row.getBoundingClientRect().top - listTop
+      return
+    }
+  }
+
+  // Debounced scroll reporter (reference schedule_server_scroll): keeps the
+  // engine's first-visible current so a re-sent menu's jump_to points where
+  // the user actually was, and lets spectators follow our menu scrolling.
+  let menuScrollSendTimer: number | null = null
+  function scheduleMenuScrollSend(): void {
+    if (menuScrollSendTimer !== null) return
+    menuScrollSendTimer = window.setTimeout(() => {
+      menuScrollSendTimer = null
+      const el = menuListEl()
+      if (el && activeMenu) sendMenuScroll(el)
+    }, SCROLLER_SYNC_DEBOUNCE_MS)
+  }
+
   function pageMenu(up: boolean): void {
     const el = menuListEl()
     if (!el) return
@@ -2038,7 +2089,7 @@ export function buildGameView(
       : !up && el.scrollTop >= max - 1 ? lastSelectableIdx()
       : firstSelectableVisibleIdx(el)
     if (target >= 0) setMenuHover(target, false)
-    sendMenuScroll(el)
+    scheduleMenuScrollSend()
   }
 
   function jumpMenu(toEnd: boolean): void {
@@ -2046,7 +2097,7 @@ export function buildGameView(
     if (!el) return
     el.scrollTop = toEnd ? el.scrollHeight : 0
     setMenuHover(toEnd ? lastSelectableIdx() : firstSelectableIdx(), false)
-    sendMenuScroll(el)
+    scheduleMenuScrollSend()
   }
 
   // A rendered, arrow-selectable menu overlay is up: arrow input should drive
@@ -2215,6 +2266,7 @@ export function buildGameView(
 
   function showMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
+      captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
       menuServerHover = -1
       menuHoverFromUser = false
@@ -2247,30 +2299,28 @@ export function buildGameView(
         }, { passive: true })
       }
     }
+    const listEl = menuListEl()
+    if (listEl) {
+      const saved = menuScrollTops.get(msg)
+      if (saved !== undefined) listEl.scrollTop = saved
+      else if (msg.jump_to) scrollMenuToItem(listEl, msg.jump_to)
+    }
   }
 
   function updateMenuItems(msg: MenuMsg): void {
     if (!msg.items) return
-    const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
-    if (listEl) {
-      const savedScrollTop = listEl.scrollTop
-      listEl.remove()
-      const footer = uiOverlay.querySelector('.overlay-footer')
-      const newList = document.createElement('div')
-      newList.className = 'overlay-list'
-      fillMenuItems(newList, msg.items)
-      uiOverlay.insertBefore(newList, footer)
-      newList.scrollTop = savedScrollTop
-    } else {
-      renderMenuItems(msg.items)
-    }
-    syncMenuShiftLabels()
+    const old = menuListEl()
+    const saved = old?.scrollTop
+    old?.remove()
+    renderMenuItems(msg.items)
+    if (saved !== undefined) menuListEl()!.scrollTop = saved
   }
 
   function renderMenuItems(items: MenuItem[]): void {
     const listEl = document.createElement('div')
     listEl.className = 'overlay-list'
     fillMenuItems(listEl, items)
+    listEl.addEventListener('scroll', () => scheduleMenuScrollSend(), { passive: true })
     const footer = uiOverlay.querySelector('.overlay-footer')
     uiOverlay.insertBefore(listEl, footer)
     syncMenuShiftLabels()
