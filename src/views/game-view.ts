@@ -32,6 +32,7 @@ import {
   renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
 } from './overlay-body'
 import { SpellHarvester, type SpellEntry } from '../game/spell-harvest'
+import { ChatView } from './chat-view'
 import {
   showInputDialog, showNewgameChoice, showRandomCombo, showSeedSelection,
   type OverlayScreenCtx, type UiPushMsg,
@@ -99,6 +100,7 @@ export function buildGameView(
   initialLoader?: TileLoader,
   username = '',
   gameId = '',
+  guest = false,
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
@@ -200,6 +202,31 @@ export function buildGameView(
   // tap detection (see its constructor); we only supply the behavior.
   statsView.setOnPlaceTap(() => minimapOpen ? closeMinimap() : openMinimap())
   statsView.setOnSettingsTap(() => openSettings())
+  // WebTiles chat. The view handles history/pill/chip; we supply transport.
+  // Spectators always get the chip — chat is half the point of watching;
+  // players only once someone shows up.
+  const chatView = new ChatView({
+    onSend: (text) => conn.send({ msg: 'chat_msg', text }),
+    alwaysShowChip: !!spectating,
+    // The server refuses guest sends; lock the input honestly up front.
+    readOnly: guest,
+    // No pill over a server prompt/overlay — the unread badge carries the
+    // signal. (serverPromptActive also counts a silent spell harvest;
+    // losing a pill to that sub-second window is fine.)
+    pillAllowed: () => !serverPromptActive(),
+  })
+  // Programmatic focus pulls (hardware keys onto the view, or a server text
+  // prompt) must never fire while the user is typing in chat: when
+  // spectating, the watched player's every menu/overlay transition lands
+  // here, and each stolen focus blurs the chat input and drops the phone
+  // keyboard mid-word. User-initiated focus changes are unaffected.
+  function chatTyping(): boolean {
+    return chatView.inputFocused
+  }
+  function focusView(): void {
+    if (chatTyping()) return
+    view.focus({ preventScroll: true })
+  }
   // Fetch this version's enums.js flag tables and install them as the flag-
   // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
   // because the monster list/panel style attitude+threat from fg flags in
@@ -410,7 +437,7 @@ export function buildGameView(
     if (isHarvesting()) return
     if (uiOverlay.style.display === 'none' && !(e.target as HTMLElement).closest('button, input, .game-text-input-row')) {
       conn.send({ msg: 'key', keycode: 16 })
-      view.focus({ preventScroll: true })
+      focusView()
     }
   })
 
@@ -523,7 +550,7 @@ export function buildGameView(
   moreBtn.addEventListener('click', () => {
     if (isHarvesting()) return
     conn.send({ msg: 'key', keycode: 32 })
-    view.focus({ preventScroll: true })
+    focusView()
   })
 
   // The d-pad calls this send directly (it doesn't dispatch a keydown), so
@@ -603,6 +630,8 @@ export function buildGameView(
   view.appendChild(moreBtn)
   view.appendChild(hud)
   view.appendChild(numpadInput)
+  view.appendChild(chatView.sheet)
+  view.appendChild(chatView.pill)
   if (spectating) {
     const bar = document.createElement('div')
     bar.id = 'spectator-bar'
@@ -622,15 +651,21 @@ export function buildGameView(
       <span class="lobby-chip-tag">${escHtml(spectating.username)}</span>
     `
     bar.appendChild(exitBtn)
+    bar.appendChild(chatView.chip)
     bar.appendChild(chip)
     view.appendChild(bar)
   } else {
+    // Playing: the chip floats over the map's top-right corner and only
+    // exists while someone is actually watching (see ChatView.syncChip) —
+    // the zero-watchers common case spends no pixels.
+    chatView.chip.classList.add('chat-chip-float')
+    view.appendChild(chatView.chip)
     view.appendChild(touchControls.element)
     view.appendChild(menuControls)
   }
 
   view.setAttribute('tabindex', '0')
-  requestAnimationFrame(() => view.focus({ preventScroll: true }))
+  requestAnimationFrame(() => focusView())
 
   // Observe the map-grid element so any container size change (initial
   // layout settlement, message panel growth, HUD changes, window resize)
@@ -798,6 +833,35 @@ export function buildGameView(
     // HUD place chip), for driving with __dcssSimulateIn'd map frames.
     ;(window as unknown as { __dcssMinimap: () => void }).__dcssMinimap =
       () => openMinimap()
+    // __dcssChat() — toggle the chat sheet; drive content with
+    // __dcssSimulateIn({msg:'chat',...} / {msg:'update_spectators',...}).
+    ;(window as unknown as { __dcssChat: () => void }).__dcssChat =
+      () => chatView.toggle()
+    // __dcssChatDemo() — replay a scripted burst of synthetic incoming chat
+    // through the real message path (pill, unread badge, sheet history), for
+    // eyeballing pill behavior in either role without a second chatter.
+    // Nothing touches the wire. The default script covers the interesting
+    // cases: a short line, a quick follow-up that replaces the pill
+    // mid-display, a long line that ellipsizes, and a fresh pill after the
+    // previous one expired. Pass your own lines (sent 2s apart) to override:
+    // __dcssChatDemo(['hi', 'a much longer message …'])
+    ;(window as unknown as { __dcssChatDemo: (lines?: string[]) => void })
+      .__dcssChatDemo = (lines?) => {
+        const script: Array<[number, string, string]> = lines
+          ? lines.map((l, i) => [i * 2000, 'gammafunk', l])
+          : [
+              [0, 'gammafunk', 'oh nice, a MiFi with a broad axe already'],
+              [1500, 'rakuen', 'grab the whip for the hydra later too'],
+              [6500, 'gammafunk', 'you should swap to the broad axe before D:4, reach will not help once the orcs surround you'],
+              [11500, 'Sequell', 'gammafunk: 300 games, best XL:27 MiBe'],
+            ]
+        for (const [t, sender, text] of script) {
+          setTimeout(() => chatView.handleChat(
+            `<span class='chat_sender'>${sender}</span>: <span class='chat_msg'>${text}</span>`,
+            false,
+          ), t)
+        }
+      }
   }
 
   // Apply the persisted render-mode preference now that the map element,
@@ -815,6 +879,15 @@ export function buildGameView(
     // Escape listener (overlay.ts) handles dismissal, so no preventDefault here.
     if (isOverlayOpen()) return
     if (isHarvesting()) { e.preventDefault(); return }  // suppress during silent harvest
+    // Chat sheet: Escape closes it, in both roles — checked before the
+    // spectator branch so it doesn't double as exit-to-lobby. (Keys typed
+    // while the chat input is focused never reach here — the input's own
+    // handler stops propagation.)
+    if (chatView.isOpen && e.key === 'Escape') {
+      e.preventDefault()
+      chatView.closeSheet()
+      return
+    }
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -904,6 +977,18 @@ export function buildGameView(
 
       case 'hide_dialog':
         if (dialogActive) { dialogActive = false; hideOverlay() }
+        break
+
+      case 'chat':
+        chatView.handleChat(msg.content ?? '', !!msg.meta)
+        break
+
+      case 'update_spectators':
+        chatView.handleSpectators(msg.count ?? 0, msg.names ?? '')
+        break
+
+      case 'super_hide_chat':
+        chatView.superHide()
         break
 
       case 'game_client': {
@@ -1121,12 +1206,12 @@ export function buildGameView(
         if (m.widget_id === 'input') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.input-dialog-field')
           if (!input) break
-          if (m.has_focus) input.focus()
+          if (m.has_focus && !chatTyping()) input.focus()
           else if (typeof m.text === 'string' && input.value !== m.text) input.value = m.text
         } else if (m.widget_id === 'seed') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.seed-input-field')
           if (!input) break
-          if (m.has_focus) input.focus()
+          if (m.has_focus && !chatTyping()) input.focus()
           else if (typeof m.text === 'string' && input.value !== m.text) {
             input.value = m.text
             // Keep the revert-anchor aligned with the server so a non-digit
@@ -1705,7 +1790,7 @@ export function buildGameView(
     titleEl.appendChild(input)
     titlePromptInput = input
     autoOpenKbd()
-    requestAnimationFrame(() => input.focus())
+    requestAnimationFrame(() => { if (!chatTyping()) input.focus() })
   }
 
   function closeTitlePrompt(): void {
@@ -1753,7 +1838,7 @@ export function buildGameView(
     // it wrap instead (the help text below the grid is full-width).
     if (crtTag === 'skills') el.classList.add('crt-skills')
     uiOverlay.appendChild(el)
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
   function renderCrtEl(): void {
@@ -1801,7 +1886,7 @@ export function buildGameView(
       }
       btn.addEventListener('click', () => {
         fire()
-        view.focus({ preventScroll: true })
+        focusView()
       })
       btn.addEventListener('touchstart', (e) => {
         e.preventDefault()
@@ -1914,7 +1999,7 @@ export function buildGameView(
         applyShiftBtnState(btn)
         btn.addEventListener('click', () => {
           menuShift.tap()
-          view.focus({ preventScroll: true })
+          focusView()
         })
         btn.addEventListener('touchstart', (e) => {
           e.preventDefault()
@@ -1924,7 +2009,7 @@ export function buildGameView(
         btn.addEventListener('click', () => {
           if (def.key) conn.send({ msg: 'input', text: def.key })
           else if (def.keycode) conn.send({ msg: 'key', keycode: def.keycode })
-          view.focus({ preventScroll: true })
+          focusView()
         })
         btn.addEventListener('touchstart', (e) => {
           e.preventDefault()
@@ -2576,7 +2661,7 @@ export function buildGameView(
     minimapOpen = true
     mapWrap.appendChild(minimap.element)
     repaintMinimap()
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
   function closeMinimap(opts?: { suspend?: boolean }): void {
@@ -2632,12 +2717,15 @@ export function buildGameView(
     enterLayout: enterOverlayLayout,
     renderOverlay,
     autoOpenKbd,
-    focusView: () => view.focus({ preventScroll: true }),
+    focusView,
   }
 
   function renderOverlay(title: string, buildBody: () => void): void {
     autoCloseKbdIfOurs()
     enterOverlayLayout()
+    // A pill already in flight would float over the incoming overlay
+    // (new pills are vetoed via pillAllowed, but not one mid-display).
+    chatView.hidePill()
 
     const headerEl = document.createElement('div')
     // fg15 (white) by default so unstyled titles read brighter than the
@@ -2654,7 +2742,7 @@ export function buildGameView(
     // ends up with nothing (no title, no tile inserted by buildBody) so help
     // popups don't render a blank bar.
     if (!title && headerEl.children.length === 1) headerEl.remove()
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
   // --- formatted-scroller: client-owned scroll widget ---
@@ -2820,7 +2908,7 @@ export function buildGameView(
       // The restore above painted against the pre-fit viewport; refresh the
       // you-are-here rect now that fitToContainer has settled the real size.
       if (minimapOpen) repaintMinimap()
-      view.focus({ preventScroll: true })
+      focusView()
     })
   }
 
@@ -2831,7 +2919,7 @@ export function buildGameView(
     el.innerHTML = `<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
     el.addEventListener('click', () => {
       onClick()
-      view.focus({ preventScroll: true })
+      focusView()
     })
     return el
   }
@@ -2934,7 +3022,7 @@ export function buildGameView(
       btn.textContent = b.label
       btn.addEventListener('click', () => {
         b.onTap()
-        view.focus({ preventScroll: true })
+        focusView()
       })
       btn.addEventListener('touchstart', (e) => {
         e.preventDefault()
@@ -2973,17 +3061,17 @@ export function buildGameView(
         const text = (tag !== 'repeat' ? '\x15\x0b' : '') + input.value + '\r'
         removeTextInput()
         conn.send({ msg: 'input', text })
-        view.focus({ preventScroll: true })
+        focusView()
       } else if (e.key === 'Escape') {
         e.preventDefault()
         removeTextInput()
         conn.send({ msg: 'key', keycode: 27 })
-        view.focus({ preventScroll: true })
+        focusView()
       }
     })
     row.appendChild(input)
     pushMsgRow(row, false)  // input row isn't pruned by the 50-row cap
-    requestAnimationFrame(() => input.focus())
+    requestAnimationFrame(() => { if (!chatTyping()) input.focus() })
     autoOpenKbd()
   }
 
@@ -3028,7 +3116,7 @@ export function buildGameView(
     btn.innerHTML = dcssToHtml(label)
     btn.addEventListener('click', () => {
       conn.send({ msg: 'input', text: key })
-      view.focus({ preventScroll: true })
+      focusView()
     })
     row.appendChild(btn)
   }
@@ -3050,7 +3138,7 @@ export function buildGameView(
         btn.innerHTML = dcssToHtml(t)
         btn.addEventListener('click', () => {
           conn.send({ msg: 'input', text: key })
-          view.focus({ preventScroll: true })
+          focusView()
         })
         bar.appendChild(btn)
       } else {

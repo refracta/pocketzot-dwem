@@ -902,11 +902,19 @@ html, body {
      (position:absolute, see their rules) so the map's 1fr claims the full
      height. Keeping them out of flow is what makes the rail's post-harvest
      arrival a non-event for the map's size — no re-fit, no jump. */
-  grid-template-rows: 1fr auto auto auto;
+  /* `chat` sits between hud and touch: the chat sheet opens with the HUD
+     riding its top edge, while the touch/spectator-bar row keeps the true
+     bottom — chrome stays anchored (and the chat chip inside the spectator
+     bar doesn't jump when tapping it opens the sheet). Explicit placement
+     matters: an auto-placed sheet migrates into whichever row a full-screen
+     overlay happens to have display:none'd (empty cells attract
+     auto-placement), reordering the footer per screen. */
+  grid-template-rows: 1fr auto auto auto auto;
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "map"
     "hud"
+    "chat"
     "touch"
     "menu";
   overflow: hidden;
@@ -2955,6 +2963,14 @@ html, body {
     z-index: 5;
   }
 
+  /* No `chat` area in this template — the portrait grid-area would resolve
+     to an implicit column off the right edge. Full-width implicit bottom
+     row instead; a real landscape home (likely the sidebar) is future work. */
+  #chat-sheet {
+    grid-area: auto;
+    grid-column: 1 / -1;
+  }
+
   /* The log floats over the map's TOP edge in landscape. Everything else —
      grid-area, abspos, translucent scrim, z-index, height, column-reverse —
      comes from the base #game-messages rule; only the anchor differs (the
@@ -3507,3 +3523,191 @@ html, body {
 
 /* 3-char macro faces on the touch panel shrink to fit the button */
 .tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }
+
+/* ── Chat (chat-view.ts) ──────────────────────────────────────
+   Glyph language, no emoji: ◉ = watchers, # = chat, * = server notice,
+   » = send. Chip lives in the spectator bar when spectating; while playing
+   it floats over the map's top-right and only exists once someone watches. */
+
+#chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#chat-chip .chat-chip-hash { color: var(--accent); font-weight: 600; }
+#chat-chip.chat-chip-open { border-color: var(--accent); }
+#chat-chip .chat-chip-badge {
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  border-radius: 999px;
+}
+
+/* Playing role: float over the map's top-right corner (same containing-block
+   trick as #more-btn). Below the version notice (6), above the log tier. */
+#chat-chip.chat-chip-float {
+  grid-area: map;
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 5;
+}
+
+/* Transient preview of an incoming message while the sheet is closed.
+   Sits just above the floating message log (and spell rail, for casters).
+   Speech-bubble shape on purpose; the dashed border is what lifts it off
+   the map (the old solid var(--border) hairline vanished against dark
+   glyphs). Wraps to two lines, then ellipsizes — the clamp lives on the
+   inner .chat-pill-text because WebKit lets clamped overflow ghost through
+   the padding when the clamp sits on the padded box itself. */
+#chat-pill {
+  grid-area: map;
+  position: absolute;
+  /* Centered via insets + auto margins, not left:50%/translate — the
+     translate trick caps a *wrapping* box's shrink-to-fit width at the
+     space right of the midline (~50%), ellipsizing messages that would
+     fit on the full width. */
+  left: 0.75rem;
+  right: 0.75rem;
+  margin-inline: auto;
+  width: fit-content;
+  bottom: calc(var(--msglog-h) + 0.5rem);
+  z-index: 5;
+  padding: 0.35rem 0.7rem;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 75%, transparent);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  cursor: pointer;
+  /* Expiry fades (chat-view adds .chat-pill-fade, then hides after the
+     transition); explicit dismissals — tap-to-open, overlay taking the
+     screen — skip the class and hide instantly. */
+  transition: opacity 0.4s ease;
+}
+#chat-pill.chat-pill-fade { opacity: 0; }
+.chat-pill-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+#game-view.spell-row #chat-pill { bottom: calc(var(--msglog-h) + var(--spell-rail-h) + 0.5rem); }
+
+/* Bottom sheet: history + input. Fixed so the map keeps playing above it —
+   chatting while watching is the point. Above the touch/menu tier, below
+   doc-overlays (60+). */
+#chat-sheet {
+  /* In the grid flow, not a fixed overlay: opening it shrinks the map's 1fr
+     row instead of covering anything — the player's health stays visible
+     while chatting, and the map refits via its ResizeObserver like any
+     other container change. Explicit `chat` row (see #game-view's template)
+     so the footer order never depends on which rows an overlay hid. */
+  grid-area: chat;
+  display: flex;
+  flex-direction: column;
+  /* Content-sized: hugs a short conversation instead of claiming a fixed
+     40% of the screen. The history's max-height caps the rise (~8 lines). */
+  background: var(--surface);
+  border-top: 1px solid var(--accent);
+}
+
+/* One rule only — the sheet's accent top edge. The header/history/input
+   internals separate by spacing and the input's own box: stacked hairlines
+   read as venetian blinds when the history is short or empty. */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.7rem 0.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.chat-title { color: var(--accent); font-weight: 600; }
+.chat-names {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chat-history {
+  /* ~8 lines at 0.8rem × 1.45, then scrolls; shrinks to fit fewer. */
+  max-height: 9.5rem;
+  overflow-y: auto;
+  padding: 0.4rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overscroll-behavior: contain;
+}
+/* No messages yet: drop the empty strip entirely — header meets input. */
+.chat-history:empty { display: none; }
+.chat-line { color: var(--text); word-break: break-word; }
+.chat-line a { color: var(--accent); text-underline-offset: 2px; }
+.chat-line-sender { color: var(--accent); }
+.chat-line-meta { color: var(--text-dim); font-style: italic; }
+
+.chat-input-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.45rem 0.7rem;
+}
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  color: var(--text);
+  font-family: var(--font-mono);
+  /* Matches the sheet's type scale. No ≥16px anti-zoom guard needed: the
+     viewport meta's user-scalable=no already suppresses iOS Safari's
+     focus auto-zoom on small inputs. */
+  font-size: 0.8rem;
+}
+.chat-input:focus { outline: none; border-color: var(--accent); }
+/* Guest (read-only) role: input locked with a sign-in hint. */
+.chat-input:disabled { opacity: 0.55; }
+.chat-send:disabled { opacity: 0.4; cursor: default; }
+.chat-send {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.8rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-send:active { background: var(--surface); }

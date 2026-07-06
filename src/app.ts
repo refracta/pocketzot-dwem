@@ -87,6 +87,7 @@ function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: str
     loader,
     currentUsername,
     gameId,
+    currentIsGuest,
   ))
 }
 

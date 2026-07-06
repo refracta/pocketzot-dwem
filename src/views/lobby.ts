@@ -7,7 +7,7 @@ import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
 import { openAboutDoc, openChangelogDoc } from './docs'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
-import { classifyTransition } from '../ws/transition'
+import { classifyTransition, isPreGameState } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 
 export function buildLobbyView(
@@ -40,6 +40,14 @@ export function buildLobbyView(
   // game_client only arrives after the transition (e.g. CDI), where the game
   // view's own game_client handler resolves the loader instead.
   let activeLoader: TileLoader | null = null
+  // Game-state messages (chat, update_spectators) that arrive before the
+  // transition trigger — on a spectate join the server sends them between
+  // game_client and watching_started, while this lobby still owns
+  // conn.onMessage. Replayed into the game view right after onGameStart
+  // mounts it (see the transition branch of handleMsg); without this the
+  // initial watcher count and any join-time chat are silently lost. Capped
+  // as a guard against a nonconforming server flooding the lobby.
+  const preGameMsgs: ServerMsg[] = []
 
   const view = document.createElement('div')
   view.id = 'lobby-view'
@@ -166,7 +174,18 @@ export function buildLobbyView(
         // ignores gameId when spectating (it saves avatars only for your own
         // played chars), so forwarding it unconditionally is safe.
         onGameStart(transition.spectating, activeLoader ?? undefined, playedGameId)
+        // onGameStart mounted the game view synchronously (app.ts:showGame),
+        // so conn.onMessage is now its handler — replay the pre-transition
+        // game state into it. splice-then-iterate so a replay that somehow
+        // lands back here (handler unchanged) re-buffers instead of looping.
+        if (conn.onMessage !== handleMsg) {
+          for (const m of preGameMsgs.splice(0)) conn.onMessage?.(m)
+        }
       }
+      return
+    }
+    if (isPreGameState(msg)) {
+      if (preGameMsgs.length < 100) preGameMsgs.push(msg)
       return
     }
     switch (msg.msg) {

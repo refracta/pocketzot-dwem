@@ -28,6 +28,7 @@ function setupLobby(): {
   onGameStart: ReturnType<typeof vi.fn>
   dispatch: (msg: ServerMsg) => void
   view: HTMLElement
+  conn: WsConnection
 } {
   const conn = {
     wsUrl: WS_URL,
@@ -42,7 +43,7 @@ function setupLobby(): {
   const onDisconnect = vi.fn()
   // buildLobbyView assigns conn.onMessage = its internal handler.
   const view = buildLobbyView(conn, 'tester', false, onGameStart, onDisconnect)
-  return { onGameStart, dispatch: (msg) => conn.onMessage(msg), view }
+  return { onGameStart, dispatch: (msg) => conn.onMessage(msg), view, conn }
 }
 
 describe('lobby tile-loader hand-off', () => {
@@ -94,6 +95,53 @@ describe('lobby tile-loader hand-off', () => {
     const [spectating, loader] = onGameStart.mock.calls[0]
     expect(spectating).toBeUndefined()
     expect(loader).toBeUndefined()
+  })
+})
+
+// Chat/watcher state sent before the transition trigger. On a spectate join
+// CDI sends game_client → update_spectators → watching_started (captured
+// live 2026-07), so update_spectators lands while the lobby still owns
+// conn.onMessage. The lobby buffers these and replays them into the game
+// view's handler right after onGameStart mounts it — without this the chat
+// chip starts blind (no watcher count) and join-time chat is lost.
+describe('lobby pre-game chat-state replay', () => {
+  const SPECTATORS: ServerMsg = { msg: 'update_spectators', count: 1, names: 'RoinerR' }
+  const CHAT: ServerMsg = { msg: 'chat', content: 'hi' }
+
+  it('replays pre-transition update_spectators and chat, in order, after mount', () => {
+    const { onGameStart, dispatch, conn } = setupLobby()
+    // The mounted game view's handler — onGameStart reassigns onMessage the
+    // way app.ts:showGame → buildGameView does (synchronously).
+    const seen: ServerMsg[] = []
+    onGameStart.mockImplementation(() => { conn.onMessage = (m) => seen.push(m) })
+
+    dispatch({ msg: 'game_client', version: 'v', content: '' })
+    dispatch(SPECTATORS)
+    dispatch(CHAT)
+    dispatch({ msg: 'watching_started', username: 'bob' })
+
+    expect(onGameStart).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual([SPECTATORS, CHAT])
+  })
+
+  it('replays on the played-game path too, not just spectate', () => {
+    const { onGameStart, dispatch, conn } = setupLobby()
+    const seen: ServerMsg[] = []
+    onGameStart.mockImplementation(() => { conn.onMessage = (m) => seen.push(m) })
+
+    dispatch(SPECTATORS)
+    dispatch({ msg: 'game_started' })
+
+    expect(seen).toEqual([SPECTATORS])
+  })
+
+  it('does not replay into itself when no view took over the handler', () => {
+    // If onGameStart failed to mount anything, replaying would feed the
+    // buffer straight back into this handler — must not loop or throw.
+    const { onGameStart, dispatch } = setupLobby()
+    dispatch(SPECTATORS)
+    dispatch({ msg: 'game_started' })
+    expect(onGameStart).toHaveBeenCalledTimes(1)
   })
 })
 

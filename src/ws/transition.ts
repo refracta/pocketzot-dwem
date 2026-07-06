@@ -14,6 +14,17 @@ export type TransitionTrigger =
   // The server has committed to the game.
   | { type: 'game'; spectating?: { username: string } }
 
+// Game-state messages the server sends *before* the transition trigger: on a
+// spectate join, update_spectators (and any join-time chat) arrive between
+// game_client and watching_started — while the lobby/resume handler still
+// owns the connection. Both paths buffer these and replay them into the game
+// view after it mounts; otherwise the initial watcher count and join-time
+// chat are silently lost.
+export function isPreGameState(msg: ServerMsg): boolean {
+  return msg.msg === 'chat' || msg.msg === 'update_spectators'
+    || msg.msg === 'super_hide_chat'
+}
+
 export function classifyTransition(msg: ServerMsg): TransitionTrigger | null {
   switch (msg.msg) {
     case 'game_client':

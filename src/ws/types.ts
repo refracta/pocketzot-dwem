@@ -152,8 +152,16 @@ export type ServerMsg =
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }
   | { msg: 'game_client'; version: string; content: string }
-  | { msg: 'chat'; content: string }
-  | { msg: 'spectators'; count: number; names: string }
+  // content is pre-formatted HTML: <span class='chat_sender'>name</span>:
+  // <span class='chat_msg'>text</span>. meta=true marks server notices
+  // (join/leave lines, /help output) with no sender span.
+  | { msg: 'chat'; content: string; meta?: boolean }
+  // Sent to everyone (player included) on watcher join/leave. count excludes
+  // the player and chat-hidden watchers; names is a pre-joined display string
+  // ("gammafunk, Sequell and 2 Anon") with the player's name first.
+  | { msg: 'update_spectators'; count: number; names: string }
+  // Server-initiated removal of the chat UI (restricted accounts).
+  | { msg: 'super_hide_chat' }
   | { msg: 'txt'; lines: number; text: string }
   | { msg: 'menu'; id?: string; tag?: string; flags?: number; items?: MenuItem[] }
   | { msg: 'menu_scroll'; first?: number }
