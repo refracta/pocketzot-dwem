@@ -143,6 +143,12 @@ html, body {
 .login-title .logo-ch {
   display: inline-block;
   transition: color 0.7s ease;
+  /* Tall fallback glyphs (box-drawing ╬, daggers †‡, ξ/ž descenders) paint
+     outside the span's border box; the transform animation makes each span its
+     own layer, but WebKit invalidates only the border box on a re-roll, leaving
+     the overflow's bottom tips as ghost pixels. will-change keeps a stable
+     compositing layer so the whole glyph — overflow included — repaints as one. */
+  will-change: transform;
 }
 /* Lookalike-glyph swaps (○ • ☼ © φ ß § † …): normalise size/baseline so they sit
    on the line like the letters rather than ballooning in fallback fonts. */

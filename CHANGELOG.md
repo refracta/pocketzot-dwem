@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-06
+
+- Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8
+  trillion unique rolls. See them all!
+
 ## 2026-07-04
 
 - The HUD now shows the wielded weapon in pre-0.33 versions (it previously
