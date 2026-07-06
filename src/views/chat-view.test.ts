@@ -80,6 +80,31 @@ describe('wire parsing and rendering', () => {
     expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('')
   })
 
+  it('tapping the watcher list unfolds it, tapping again (or closing) folds it', () => {
+    const { view } = make()
+    const names = view.sheet.querySelector('.chat-names') as HTMLElement
+    view.openSheet()
+    view.handleSpectators(2, WIRE_NAMES_LINKIFIED)
+    names.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(names.classList.contains('chat-names-open')).toBe(true)
+    // A join/leave update mid-read must not fold the list back.
+    view.handleSpectators(3, WIRE_NAMES_LINKIFIED)
+    expect(names.classList.contains('chat-names-open')).toBe(true)
+    names.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(names.classList.contains('chat-names-open')).toBe(false)
+    // Reopening starts compact.
+    names.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    view.closeSheet()
+    expect(names.classList.contains('chat-names-open')).toBe(false)
+  })
+
+  it('an empty names row has nothing to unfold', () => {
+    const { view } = make()
+    const names = view.sheet.querySelector('.chat-names') as HTMLElement
+    names.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(names.classList.contains('chat-names-open')).toBe(false)
+  })
+
   it('linkifies pasted URLs as safe anchors, keeping sentence punctuation out', () => {
     const { view } = make()
     view.handleChat(

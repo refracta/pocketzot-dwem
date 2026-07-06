@@ -3650,7 +3650,21 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
+/* Tap-to-unfold full watcher list (chat-view.ts toggles the class): wraps in
+   place, capped at ~3 lines then scrolls within — CNCPublicChat regularly has
+   30+ watchers and the header must not swallow the sheet. */
+.chat-names.chat-names-open {
+  white-space: normal;
+  word-break: break-word;
+  max-height: 3.6em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* While the list is unfolded the header grows; keep the title and × pinned
+   to its first line instead of drifting to the vertical middle. */
+.chat-header:has(.chat-names-open) { align-items: flex-start; }
 .chat-close {
   background: none;
   border: none;

@@ -122,6 +122,13 @@ export class ChatView {
     title.textContent = '#chat'
     this.headerNamesEl = document.createElement('span')
     this.headerNamesEl.className = 'chat-names'
+    // The one-line list ellipsizes past a few watchers; tapping it unfolds
+    // the full list in place (wrapped, scroll-capped — see .chat-names-open),
+    // tap again to fold. The ellipsis itself is the affordance; no chevron.
+    this.headerNamesEl.addEventListener('click', () => {
+      if (!this.headerNamesEl.textContent) return
+      this.headerNamesEl.classList.toggle('chat-names-open')
+    })
     const close = document.createElement('button')
     close.className = 'chat-close'
     close.setAttribute('aria-label', 'Close chat')
@@ -197,6 +204,7 @@ export class ChatView {
     div.innerHTML = names
     const plain = (div.textContent ?? '').trim()
     this.headerNamesEl.textContent = plain ? `⊙ ${plain}` : ''
+    if (!plain) this.headerNamesEl.classList.remove('chat-names-open')
     this.syncChip()
   }
 
@@ -222,6 +230,8 @@ export class ChatView {
     if (!this.open_) return
     this.open_ = false
     this.inputEl.blur()
+    // Fold the watcher list so the next open starts compact.
+    this.headerNamesEl.classList.remove('chat-names-open')
     this.sheet.style.display = 'none'
     this.syncChip()
   }
