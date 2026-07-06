@@ -7,7 +7,7 @@ import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
 import { openAboutDoc, openChangelogDoc } from './docs'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
-import { classifyTransition, isPreGameState } from '../ws/transition'
+import { classifyTransition } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 
 export function buildLobbyView(
@@ -40,13 +40,8 @@ export function buildLobbyView(
   // game_client only arrives after the transition (e.g. CDI), where the game
   // view's own game_client handler resolves the loader instead.
   let activeLoader: TileLoader | null = null
-  // Game-state messages (chat, update_spectators) that arrive before the
-  // transition trigger — on a spectate join the server sends them between
-  // game_client and watching_started, while this lobby still owns
-  // conn.onMessage. Replayed into the game view right after onGameStart
-  // mounts it (see the transition branch of handleMsg); without this the
-  // initial watcher count and any join-time chat are silently lost. Capped
-  // as a guard against a nonconforming server flooding the lobby.
+  // Messages the lobby doesn't handle, held for the game view (see handleMsg's
+  // default case) and replayed right after onGameStart mounts it.
   const preGameMsgs: ServerMsg[] = []
 
   const view = document.createElement('div')
@@ -184,10 +179,6 @@ export function buildLobbyView(
       }
       return
     }
-    if (isPreGameState(msg)) {
-      if (preGameMsgs.length < 100) preGameMsgs.push(msg)
-      return
-    }
     switch (msg.msg) {
       case 'set_game_links':
         renderGameButtons((msg as unknown as { content: string }).content)
@@ -220,17 +211,11 @@ export function buildLobbyView(
       case 'close':
         onDisconnect()
         break
-      // A play/watch attempt was aborted while the lobby stayed mounted
-      // (force_terminate? answered "Leave it" → server sends go_lobby; watching
-      // a game that just ended). The resume context armed at click time must
-      // die with the attempt — otherwise a later reload/eviction auto-replays
-      // the abandoned `play`, and the server's stale-purge SIGHUPs the very
-      // session the user chose to keep alive.
       case 'go_lobby':
-        clearGameStart()
+        abortGameStart()
         break
       case 'auth_error':
-        clearGameStart()
+        abortGameStart()
         noticeEl.textContent = msg.reason
         noticeEl.hidden = false
         break
@@ -251,7 +236,29 @@ export function buildLobbyView(
         noticeEl.textContent = ''
         noticeEl.hidden = true
         break
+      default:
+        // Not the lobby's message: game state can arrive before the transition
+        // trigger — on a spectate join, update_spectators (and any join-time
+        // chat) land between game_client and watching_started, while this
+        // lobby still owns conn.onMessage. Hold everything unhandled for the
+        // game view and replay it at handover (the transition branch above),
+        // the same contract as the auto-resume handler (reconnect.ts); without
+        // this the initial watcher count and join-time chat are silently lost.
+        // Capped as a guard against a nonconforming server flooding the lobby.
+        if (preGameMsgs.length < 100) preGameMsgs.push(msg)
     }
+  }
+
+  // A play/watch attempt was aborted while the lobby stayed mounted
+  // (force_terminate? answered "Leave it" → server sends go_lobby; watching
+  // a game that just ended). The resume context armed at click time must
+  // die with the attempt — otherwise a later reload/eviction auto-replays
+  // the abandoned `play`, and the server's stale-purge SIGHUPs the very
+  // session the user chose to keep alive. Messages held for the game view
+  // die with it too — they belong to the game that never started.
+  function abortGameStart(): void {
+    clearGameStart()
+    preGameMsgs.length = 0
   }
 
   // The stale process didn't exit when asked; the server wants a yes/no.

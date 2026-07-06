@@ -220,12 +220,12 @@ export function buildGameView(
   // spectating, the watched player's every menu/overlay transition lands
   // here, and each stolen focus blurs the chat input and drops the phone
   // keyboard mid-word. User-initiated focus changes are unaffected.
-  function chatTyping(): boolean {
-    return chatView.inputFocused
+  function guardedFocus(el: HTMLElement, opts?: FocusOptions): void {
+    if (chatView.inputFocused) return
+    el.focus(opts)
   }
   function focusView(): void {
-    if (chatTyping()) return
-    view.focus({ preventScroll: true })
+    guardedFocus(view, { preventScroll: true })
   }
   // Fetch this version's enums.js flag tables and install them as the flag-
   // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
@@ -1206,12 +1206,12 @@ export function buildGameView(
         if (m.widget_id === 'input') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.input-dialog-field')
           if (!input) break
-          if (m.has_focus && !chatTyping()) input.focus()
+          if (m.has_focus) guardedFocus(input)
           else if (typeof m.text === 'string' && input.value !== m.text) input.value = m.text
         } else if (m.widget_id === 'seed') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.seed-input-field')
           if (!input) break
-          if (m.has_focus && !chatTyping()) input.focus()
+          if (m.has_focus) guardedFocus(input)
           else if (typeof m.text === 'string' && input.value !== m.text) {
             input.value = m.text
             // Keep the revert-anchor aligned with the server so a non-digit
@@ -1790,7 +1790,7 @@ export function buildGameView(
     titleEl.appendChild(input)
     titlePromptInput = input
     autoOpenKbd()
-    requestAnimationFrame(() => { if (!chatTyping()) input.focus() })
+    requestAnimationFrame(() => guardedFocus(input))
   }
 
   function closeTitlePrompt(): void {
@@ -2696,8 +2696,11 @@ export function buildGameView(
   // the d-pad (newgame-choice, CRT) pass touch:false.
   function enterOverlayLayout(opts?: { touch?: boolean }): void {
     // Every server-driven overlay passes through here; the map-area minimap
-    // lens must not linger over (or under) it.
+    // lens must not linger over (or under) it, and neither may a chat pill
+    // already mid-display (new pills are vetoed via pillAllowed, but that
+    // can't retract one in flight).
     closeMinimap({ suspend: true })
+    chatView.hidePill()
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
     mapView.element.style.display = 'none'
@@ -2723,9 +2726,6 @@ export function buildGameView(
   function renderOverlay(title: string, buildBody: () => void): void {
     autoCloseKbdIfOurs()
     enterOverlayLayout()
-    // A pill already in flight would float over the incoming overlay
-    // (new pills are vetoed via pillAllowed, but not one mid-display).
-    chatView.hidePill()
 
     const headerEl = document.createElement('div')
     // fg15 (white) by default so unstyled titles read brighter than the
@@ -3071,7 +3071,7 @@ export function buildGameView(
     })
     row.appendChild(input)
     pushMsgRow(row, false)  // input row isn't pruned by the 50-row cap
-    requestAnimationFrame(() => { if (!chatTyping()) input.focus() })
+    requestAnimationFrame(() => guardedFocus(input))
     autoOpenKbd()
   }
 

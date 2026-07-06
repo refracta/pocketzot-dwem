@@ -70,7 +70,7 @@ describe('wire parsing and rendering', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('◉ RoinerR, tdpma')
-    expect(view.watcherCount).toBe(1)
+    expect(view.chip.textContent).toContain('◉1')
   })
 
   it('clears the names row when the watcher list empties', () => {
@@ -301,16 +301,14 @@ describe('sending', () => {
 })
 
 describe('open/close and super_hide_chat', () => {
-  it('reports open state and fires onToggle both ways', () => {
-    const toggles: boolean[] = []
-    const { view } = make({ onToggle: (o) => toggles.push(o) })
+  it('reports open state both ways', () => {
+    const { view } = make()
     view.openSheet()
     expect(view.isOpen).toBe(true)
     expect(view.sheet.style.display).not.toBe('none')
     view.closeSheet()
     expect(view.isOpen).toBe(false)
     expect(view.sheet.style.display).toBe('none')
-    expect(toggles).toEqual([true, false])
   })
 
   it('super_hide_chat removes all chat UI and ignores further traffic', () => {

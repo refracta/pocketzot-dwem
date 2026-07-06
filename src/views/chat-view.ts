@@ -15,8 +15,6 @@ const PILL_FADE_MS = 400
 
 export interface ChatViewOpts {
   onSend: (text: string) => void
-  /** Called on open/close so the host can gate map refits, etc. */
-  onToggle?: (open: boolean) => void
   /** Spectator role: chat is a primary feature of watching, so the chip is
    *  always present. Player role omits this — the chip earns its pixels only
    *  once someone is actually watching (fallback-only). */
@@ -99,7 +97,6 @@ export class ChatView {
     this.chip.id = 'chat-chip'
     this.chip.setAttribute('aria-label', 'Chat')
     this.chipEyeEl = document.createElement('span')
-    this.chipEyeEl.className = 'chat-chip-eye'
     const hash = document.createElement('span')
     hash.className = 'chat-chip-hash'
     hash.textContent = '#'
@@ -174,7 +171,6 @@ export class ChatView {
   }
 
   get isOpen(): boolean { return this.open_ }
-  get watcherCount(): number { return this.spectatorCount }
   /** True while the user is typing in the chat input. Hosts must not pull
    *  focus elsewhere during this — a programmatic focus/blur drops the
    *  phone keyboard mid-word. */
@@ -220,7 +216,6 @@ export class ChatView {
     this.sheet.style.display = ''
     this.historyEl.scrollTop = this.historyEl.scrollHeight
     this.syncChip()
-    this.opts.onToggle?.(true)
   }
 
   closeSheet(): void {
@@ -229,7 +224,6 @@ export class ChatView {
     this.inputEl.blur()
     this.sheet.style.display = 'none'
     this.syncChip()
-    this.opts.onToggle?.(false)
   }
 
   toggle(): void { this.open_ ? this.closeSheet() : this.openSheet() }
