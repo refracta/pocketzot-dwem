@@ -14,10 +14,9 @@ Notable changes to PocketZot, newest first.
 - Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8
   trillion unique rolls. See them all!
 
-## 2026-07-04
+## 2026-07-05
 
-- The HUD now shows the wielded weapon in pre-0.33 versions (it previously
-  read "Nothing wielded").
+- The HUD now shows the wielded weapon in pre-0.33 versions.
 
 ## 2026-07-03
 
@@ -26,7 +25,7 @@ Notable changes to PocketZot, newest first.
   while it's up. Tap the map, or the place name again, to dismiss.
 - The HUD now uses the standard short branch names (D:5, Elf:3, Zot:5) in
   portrait.
-- Draconians now show their colour in the HUD, and the piety row now shows
+- Draconians now show their color in the HUD, and the piety row now shows
   penance (in red) and Xom's mood.
 - Fixed the skill menu sometimes showing a mastered skill's line twice.
 
