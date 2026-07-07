@@ -711,7 +711,7 @@ html, body {
 .lobby-game-idle { flex: 0 0 auto; white-space: nowrap; font-size: 0.8rem; color: var(--text-dim); }
 .lobby-game-idle:empty { display: none; }
 
-.lobby-game-watchers {
+.lobby-game-spectators {
   color: var(--accent);
   opacity: 0.85;
 }
@@ -3538,7 +3538,7 @@ html, body {
 .tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }
 
 /* ── Chat (chat-view.ts) ──────────────────────────────────────
-   Glyph language, no emoji: ⊙ = watchers, # = chat, * = server notice,
+   Glyph language, no emoji: ⊙ = spectators, # = chat, * = server notice,
    » = send. Chip lives in the spectator bar when spectating; while playing
    it floats over the map's top-right and only exists once someone watches. */
 
@@ -3665,9 +3665,9 @@ html, body {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-/* Tap-to-unfold full watcher list (chat-view.ts toggles the class): wraps in
+/* Tap-to-unfold full spectator list (chat-view.ts toggles the class): wraps in
    place, capped at ~3 lines then scrolls within — CNCPublicChat regularly has
-   30+ watchers and the header must not swallow the sheet. */
+   30+ spectators and the header must not swallow the sheet. */
 .chat-names.chat-names-open {
   white-space: normal;
   word-break: break-word;

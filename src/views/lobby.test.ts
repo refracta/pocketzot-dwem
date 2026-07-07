@@ -98,12 +98,12 @@ describe('lobby tile-loader hand-off', () => {
   })
 })
 
-// Chat/watcher state sent before the transition trigger. On a spectate join
+// Chat/spectator state sent before the transition trigger. On a spectate join
 // CDI sends game_client → update_spectators → watching_started (captured
 // live 2026-07), so update_spectators lands while the lobby still owns
 // conn.onMessage. The lobby buffers these and replays them into the game
 // view's handler right after onGameStart mounts it — without this the chat
-// chip starts blind (no watcher count) and join-time chat is lost.
+// chip starts blind (no spectator count) and join-time chat is lost.
 describe('lobby pre-game chat-state replay', () => {
   const SPECTATORS: ServerMsg = { msg: 'update_spectators', count: 1, names: 'RoinerR' }
   const CHAT: ServerMsg = { msg: 'chat', content: 'hi' }

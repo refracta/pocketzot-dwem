@@ -657,7 +657,7 @@ export function buildGameView(
   } else {
     // Playing: the chip floats over the map's top-right corner and only
     // exists while someone is actually watching (see ChatView.syncChip) —
-    // the zero-watchers common case spends no pixels.
+    // the zero-spectators common case spends no pixels.
     chatView.chip.classList.add('chat-chip-float')
     view.appendChild(chatView.chip)
     view.appendChild(touchControls.element)

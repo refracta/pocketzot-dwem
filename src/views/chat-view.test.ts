@@ -5,7 +5,7 @@ import { ChatView, type ChatViewOpts } from './chat-view'
 
 // Wire shapes below are verbatim captures from crawl.dcss.io (2026-07):
 // the server pre-formats chat as sender/msg spans, marks notices with
-// meta:true (no sender span), and linkifies watcher names to scoring pages.
+// meta:true (no sender span), and linkifies spectator names to scoring pages.
 const WIRE_CHAT =
   "<span class='chat_sender'>gammafunk</span>: <span class='chat_msg'>oh nice, a MiFi with a broad axe already</span>"
 const WIRE_META =
@@ -66,21 +66,21 @@ describe('wire parsing and rendering', () => {
     expect(view.sheet.querySelector('.chat-line')!.textContent).toContain('<img src=x onerror=alert(1)>')
   })
 
-  it('extracts plain names from the linkified watcher list', () => {
+  it('extracts plain names from the linkified spectator list', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('⊙ RoinerR, tdpma')
     expect(view.chip.textContent).toContain('⊙1')
   })
 
-  it('clears the names row when the watcher list empties', () => {
+  it('clears the names row when the spectator list empties', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     view.handleSpectators(0, '')
     expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('')
   })
 
-  it('tapping the watcher list unfolds it, tapping again (or closing) folds it', () => {
+  it('tapping the spectator list unfolds it, tapping again (or closing) folds it', () => {
     const { view } = make()
     const names = view.sheet.querySelector('.chat-names') as HTMLElement
     view.openSheet()
@@ -147,7 +147,7 @@ describe('chip visibility — player role (fallback-only)', () => {
     expect(chipVisible(view)).toBe(false)
   })
 
-  it('appears while watched, disappears when the watcher leaves', () => {
+  it('appears while watched, disappears when the spectator leaves', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     expect(chipVisible(view)).toBe(true)
@@ -156,7 +156,7 @@ describe('chip visibility — player role (fallback-only)', () => {
     expect(chipVisible(view)).toBe(false)
   })
 
-  it('a real unread message keeps the chip alive after the watcher leaves', () => {
+  it('a real unread message keeps the chip alive after the spectator leaves', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     view.handleChat(WIRE_CHAT, false)

@@ -243,7 +243,7 @@ export function buildLobbyView(
         // lobby still owns conn.onMessage. Hold everything unhandled for the
         // game view and replay it at handover (the transition branch above),
         // the same contract as the auto-resume handler (reconnect.ts); without
-        // this the initial watcher count and join-time chat are silently lost.
+        // this the initial spectator count and join-time chat are silently lost.
         // Capped as a guard against a nonconforming server flooding the lobby.
         if (preGameMsgs.length < 100) preGameMsgs.push(msg)
     }
@@ -412,7 +412,7 @@ export function buildLobbyView(
     const ver = versionLabel(g.game_id)
     if (ver) parts.push(`<span class="lobby-game-version">${escHtml(ver)}</span>`)
     if (g.spectator_count && g.spectator_count > 0) {
-      parts.push(`<span class="lobby-game-watchers">${g.spectator_count} spectator${g.spectator_count === 1 ? '' : 's'}</span>`)
+      parts.push(`<span class="lobby-game-spectators">${g.spectator_count} spectator${g.spectator_count === 1 ? '' : 's'}</span>`)
     }
     const id = String(g.id)
     const isIdle = idleSinceMs.has(id)

@@ -1,11 +1,11 @@
-// WebTiles chat: bottom-sheet history + input, an entry chip (watcher count
+// WebTiles chat: bottom-sheet history + input, an entry chip (spectator count
 // + unread badge), and a transient pill previewing messages while the sheet
 // is closed. One instance per game view; game-view.ts feeds it `chat` and
 // `update_spectators` messages and mounts chip/sheet/pill where the role
 // (player vs spectator) wants them.
 //
 // Glyph conventions (no emoji — they fight the CRT aesthetic and render
-// differently per platform): ⊙ = watchers (an eye), # = chat (IRC channel),
+// differently per platform): ⊙ = spectators (an eye), # = chat (IRC channel),
 // * prefix = meta/server notices, » = send.
 
 const HISTORY_CAP = 200
@@ -122,7 +122,7 @@ export class ChatView {
     title.textContent = '#chat'
     this.headerNamesEl = document.createElement('span')
     this.headerNamesEl.className = 'chat-names'
-    // The one-line list ellipsizes past a few watchers; tapping it unfolds
+    // The one-line list ellipsizes past a few spectators; tapping it unfolds
     // the full list in place (wrapped, scroll-capped — see .chat-names-open),
     // tap again to fold. The ellipsis itself is the affordance; no chevron.
     this.headerNamesEl.addEventListener('click', () => {
@@ -230,7 +230,7 @@ export class ChatView {
     if (!this.open_) return
     this.open_ = false
     this.inputEl.blur()
-    // Fold the watcher list so the next open starts compact.
+    // Fold the spectator list so the next open starts compact.
     this.headerNamesEl.classList.remove('chat-names-open')
     this.sheet.style.display = 'none'
     this.syncChip()
@@ -309,7 +309,7 @@ export class ChatView {
   private syncChip(): void {
     if (this.hidden) return
     // Fallback-only (player role): the chip earns its pixels only while
-    // someone is watching, or a real message went unread (a watcher may chat
+    // someone is watching, or a real message went unread (a spectator may chat
     // and leave before the player looks). NOT mere history: the server sends
     // a meta "/help" notice on every game start, and join/leave notices are
     // meta too — none of that should summon chat UI for an unwatched player.

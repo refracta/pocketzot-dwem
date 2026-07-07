@@ -161,12 +161,12 @@ describe('resumeOnConn — played game', () => {
     expect(seen.map(m => m.msg)).toEqual(['lobby_complete', 'map', 'input_mode'])
   })
 
-  it('holds pre-transition chat/watcher state for the destination view', async () => {
+  it('holds pre-transition chat/spectator state for the destination view', async () => {
     // A spectate rejoin delivers update_spectators (and often chat notices)
     // BEFORE watching_started — CDI ordering, captured live. mainHandler's
     // default case must hold them so flush() hands the game view its
-    // initial watcher count; losing them blanks the chat chip until the
-    // next watcher change.
+    // initial spectator count; losing them blanks the chat chip until the
+    // next spectator change.
     withSession()
     const { conn, feed } = fakeConn()
     const p = resumeOnConn(conn, { kind: 'watch', username: 'bob' }, { username: USER, guest: false }, fakeUi())
