@@ -22,7 +22,7 @@ function customSet(over: Partial<ControlSet> = {}): ControlSet {
 }
 
 describe('built-in sets', () => {
-  it('ships Standard (3×12) and Big keys (9+9+12), Standard first and active by default', () => {
+  it('ships Standard (3×12) and Larger keys (9+9+12), Standard first and active by default', () => {
     const sets = listControlSets()
     expect(sets.map(s => s.id)).toEqual([STANDARD_ID, 'bigkeys'])
     expect(sets.every(s => s.builtin)).toBe(true)
@@ -147,8 +147,9 @@ describe('export / import string format', () => {
   it('is human-readable', () => {
     const str = encodeControlSet(builtinSets()[0])
     expect(str).toContain('@4:{Tab} 5 i o q r f v a e x ,')
+    expect(str).toContain(':Standard|')
     // set-name spaces stay literal (only key tokens need {sp})
-    expect(str).toContain(':Standard (12 per tab)|')
+    expect(encodeControlSet(builtinSets()[1])).toContain(':Larger keys|')
   })
 
   it('rejects malformed strings with useful errors', () => {

@@ -11,9 +11,9 @@ const KEY = 'pocketzot:prefs'
 export const RENDER_MODE_CHANGED_EVENT = 'pocketzot:render-mode-changed'
 
 // Fired after editing ignoredSpectators. The consumer is the chat view's
-// watcher count (webtiles-chat branch): names on the list are dropped from
-// the effective spectator count so a lurking bot doesn't keep the chat chip
-// lit. Until that branch merges, the setting is stored but unread.
+// spectator count (webtiles-chat branch): names on the list are dropped from
+// the effective count so a lurking bot doesn't keep the chat chip lit.
+// Until that branch merges, the setting is stored but unread.
 export const IGNORED_SPECTATORS_CHANGED_EVENT = 'pocketzot:ignored-spectators-changed'
 
 const PREF_EVENTS: Partial<Record<keyof Prefs, string>> = {
@@ -26,7 +26,7 @@ export interface Prefs {
   monsterListCollapsed: boolean
   mapRenderMode: 'ascii' | 'tiles'
   controlSetId: string
-  /** Spectator names excluded from the watcher count (matched
+  /** Spectator names excluded from the spectator count (matched
    *  case-insensitively). Seeded with beem, the Twitch relay bot. */
   ignoredSpectators: string[]
 }

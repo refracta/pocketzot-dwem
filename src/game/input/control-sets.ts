@@ -169,7 +169,14 @@ export function slotTitle(slot: SlotDef): string | undefined {
 // --- Built-in sets ---------------------------------------------------------
 
 function t(text: string): SlotDef { return { text } }
-function k(key: number): SlotDef { return { key } }
+// Special key by its export-format token ('Tab', '^F', 'F5', …) — the same
+// names used in pocketzot-controls strings, so layouts read without a
+// keycode table. A typo throws here, which any test run would catch.
+function k(token: string): SlotDef {
+  const sk = KEY_BY_TOKEN.get(token)
+  if (!sk) throw new Error(`unknown key token "${token}" in built-in set`)
+  return { key: sk.keycode }
+}
 
 const INFO_SLOTS = (): SlotDef[] => [
   t('@'), t('%'), t('^'), t('='),
@@ -184,17 +191,17 @@ const BUILTIN_IDS = new Set([STANDARD_ID, BIGKEYS_ID])
 function builtinStandard(): ControlSet {
   return {
     id: STANDARD_ID,
-    name: 'Standard (12 per tab)',
+    name: 'Standard',
     builtin: true,
     tabs: [
       { name: '@', cols: 4, slots: [
-        k(9), t('5'), t('i'), t('o'),
+        k('Tab'), t('5'), t('i'), t('o'),
         t('q'), t('r'), t('f'), t('v'),
         t('a'), t('e'), t('x'), t(','),
       ] },
       { name: '>', cols: 4, slots: [
         t('w'), t('R'), t('t'), t('P'),
-        t('d'), k(6), t('G'), k(15),
+        t('d'), k('^F'), t('G'), k('^O'),
         t('X'), t('e'), t('<'), t('>'),
       ] },
       { name: '?', cols: 4, slots: INFO_SLOTS() },
@@ -205,17 +212,17 @@ function builtinStandard(): ControlSet {
 function builtinBigKeys(): ControlSet {
   return {
     id: BIGKEYS_ID,
-    name: 'Big keys (9+9+12)',
+    name: 'Larger keys',
     builtin: true,
     tabs: [
       { name: '@', cols: 3, slots: [
-        k(9), t('5'), t('o'),
+        k('Tab'), t('5'), t('o'),
         t('q'), t('r'), t('f'),
         t('a'), t('x'), t('i'),
       ] },
       { name: '>', cols: 3, slots: [
         t('w'), t('e'), t('d'),
-        k(6), t('G'), k(15),
+        k('^F'), t('G'), k('^O'),
         t('X'), t('<'), t('>'),
       ] },
       { name: '?', cols: 4, slots: INFO_SLOTS() },

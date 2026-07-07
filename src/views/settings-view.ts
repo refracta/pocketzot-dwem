@@ -6,7 +6,7 @@
 // live via window events, fired by the stores themselves (control-sets.ts
 // mutators, setPref in prefs.ts): CONTROLS_CHANGED_EVENT (touch panel
 // re-renders), RENDER_MODE_CHANGED_EVENT (game view swaps renderers),
-// IGNORED_SPECTATORS_CHANGED_EVENT (chat watcher count, once merged).
+// IGNORED_SPECTATORS_CHANGED_EVENT (chat spectator count, once merged).
 
 import { mountCardOverlay } from './overlay'
 import {
@@ -79,8 +79,7 @@ function renderHome(body: HTMLElement): void {
 function renderControlsSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Touch controls'))
   body.appendChild(el('p', 'settings-hint',
-    'Control sets swap the buttons on the three control tabs. ' +
-    'The d-pad, Esc/Enter, Shift/Ctrl and the keyboard toggle stay put.'))
+    'Control sets swap the buttons on the three control tabs.'))
 
   const sets = listControlSets()
   const activeId = getActiveControlSet().id
@@ -170,14 +169,14 @@ function renderControlsSection(body: HTMLElement): void {
 // --- map display section -------------------------------------------------------
 
 const RENDER_MODES = [
-  { mode: 'ascii', label: 'ASCII glyphs' },
-  { mode: 'tiles', label: 'Graphical tiles' },
+  { mode: 'ascii', label: 'ASCII' },
+  { mode: 'tiles', label: 'Tiles' },
 ] as const
 
 function renderDisplaySection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Map display'))
   body.appendChild(el('p', 'settings-hint',
-    'Applies right away; a two-finger long-press on the map also switches mid-game.'))
+    'A two-finger long-press on the map also toggles this mid-game.'))
   const seg = el('div', 'settings-seg seg')
   seg.setAttribute('role', 'radiogroup')
   seg.setAttribute('aria-label', 'Map display')
@@ -203,8 +202,8 @@ function renderDisplaySection(body: HTMLElement): void {
 function renderChatSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Chat'))
   body.appendChild(el('p', 'settings-hint',
-    'Spectator names that don’t count as watchers — a lurking bot ' +
-    'won’t keep the watcher chip lit.'))
+    "Spectator names that won't be counted. Prevents bots " +
+    'from keeping the spectator chip lit.'))
   const chips = el('div', 'settings-chips')
   const save = (names: string[]): void => {
     setPref('ignoredSpectators', names)  // fires IGNORED_SPECTATORS_CHANGED_EVENT
@@ -427,7 +426,7 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
     const textRow = el('div', 'ed-picker-textrow')
     const textInput = noAutofix(el('input', 'ed-picker-text settings-input'))
     textInput.maxLength = MAX_MACRO_LEN
-    textInput.placeholder = 'key(s), e.g. o or za.'
+    textInput.placeholder = "key(s), e.g. 'o' or 'za.'"
     const current = tab.grid[picking.cell]
     if (current?.text) textInput.value = current.text
     const setText = (): void => { if (textInput.value) assign({ text: textInput.value }) }

@@ -34,8 +34,8 @@ describe('settings overlay', () => {
     const rows = $$('.set-row')
     expect(rows).toHaveLength(2)
     expect(rows[0].classList.contains('active')).toBe(true)
-    expect(rows[0].querySelector('.set-name')!.textContent).toBe('Standard (12 per tab)')
-    expect(rows[1].querySelector('.set-name')!.textContent).toBe('Big keys (9+9+12)')
+    expect(rows[0].querySelector('.set-name')!.textContent).toBe('Standard')
+    expect(rows[1].querySelector('.set-name')!.textContent).toBe('Larger keys')
     expect($$('.set-badge')).toHaveLength(2)
   })
 
@@ -184,7 +184,7 @@ describe('settings overlay', () => {
     window.addEventListener(RENDER_MODE_CHANGED_EVENT, fired)
     try {
       openSettings()
-      const [ascii, tiles] = [findButton('ASCII glyphs'), findButton('Graphical tiles')]
+      const [ascii, tiles] = [findButton('ASCII'), findButton('Tiles')]
       expect(ascii.classList.contains('active')).toBe(true)  // default pref
       expect(ascii.getAttribute('aria-checked')).toBe('true')
 

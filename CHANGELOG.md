@@ -32,7 +32,7 @@ Notable changes to PocketZot, newest first.
 ## 2026-07-06
 
 - Custom control sets: the three control tabs' button grids are now yours to
-  change. Two built-ins ship — Standard (12 per tab) and Big keys (9 larger
+  change. Two built-ins ship — Standard (12 per tab) and Larger keys (9 bigger
   buttons on the first two tabs) — and the editor lets you assign any key,
   short macros up to three keys (e.g. "za."), F-keys and Ctrl combos, rename
   the tabs, and pick a 3×3 or 3×4 grid per tab.
