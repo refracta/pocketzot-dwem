@@ -13,6 +13,7 @@ import { fgHaloDngnName } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
+import { openSettings } from './settings-view'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
@@ -576,7 +577,10 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  }, spectating ? {} : { spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 } })
+  }, spectating ? {} : {
+    spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
+    onOpenSettings: openSettings,
+  })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'

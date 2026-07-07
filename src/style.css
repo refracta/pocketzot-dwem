@@ -45,6 +45,11 @@ html, body {
   overflow: hidden;
 }
 
+/* JS toggles collapsibles via the hidden attribute; author display rules
+   (flex/grid) on the same element would otherwise defeat the UA's
+   [hidden] { display: none }, so restate it with priority once, globally. */
+[hidden] { display: none !important; }
+
 #app {
   height: 100dvh;
   display: flex;
@@ -492,12 +497,11 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
+  display: flex;
   flex-direction: column;
   padding: 0.25rem;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
-.lobby-account-menu[hidden] { display: none; }
-.lobby-account-menu:not([hidden]) { display: flex; }
 
 .lobby-account-menu-item {
   background: transparent;
@@ -3203,3 +3207,246 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 .lobby-notice-actions button:active { background: var(--surface2); }
+
+/* ── Settings overlay (src/views/settings-view.ts) ───────────── */
+/* Reuses the doc-viewer shell (.doc-backdrop/.doc-card); above the in-game
+   virtual keyboard (z 200) since the ⚙ key there opens it. */
+.settings-backdrop { z-index: 210; }
+.settings-card { max-width: 26rem; }
+.settings-body {
+  font-family: var(--font-mono);
+  overflow-y: auto;
+  padding: 0.75rem 1rem 1.5rem;
+  color: var(--text);
+}
+.settings-h {
+  font-size: 0.95rem;
+  color: var(--accent);
+  margin: 0.5rem 0 0.4rem;
+}
+.settings-hint {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  margin: 0 0 0.75rem;
+}
+
+/* Control-set list: tap a row to activate; ⋯ reveals per-set actions. */
+.set-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.set-row { display: flex; gap: 0.3rem; align-items: stretch; }
+.set-row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  text-align: left;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-row.active .set-row-main { border-color: var(--accent); }
+.set-radio { color: var(--text-dim); flex-shrink: 0; }
+.set-row.active .set-radio { color: var(--accent); }
+.set-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+}
+.set-row-more {
+  width: 2.2rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 1rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-row-more:active { background: var(--surface2); }
+.set-row-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0 0 0.25rem; }
+.set-action {
+  flex: 1;
+  padding: 0.4rem 0.3rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-action:active { background: var(--surface2); }
+.set-action-danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
+/* Export's transient "Copied ✓" morph */
+.set-action.flash { color: var(--accent); border-color: var(--accent); }
+
+.settings-actions { display: flex; gap: 0.5rem; margin-top: 0.9rem; }
+.settings-btn {
+  flex: 1;
+  padding: 0.55rem 0.6rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.settings-btn:active { background: var(--surface); }
+.settings-btn-primary { border-color: var(--accent); color: var(--accent); }
+
+.settings-import { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.settings-import-field {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+  padding: 0.5rem;
+  resize: vertical;
+}
+.settings-error { color: var(--danger); font-size: 0.75rem; line-height: 1.4; }
+.settings-export-out { flex-basis: 100%; margin-top: 0.3rem; }
+
+/* Control-set editor */
+.ed-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin-bottom: 0.6rem;
+}
+.ed-name-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+  padding: 0.4rem 0.55rem;
+  min-width: 0;
+}
+.ed-tabs { display: flex; flex-direction: column; gap: 0.6rem; }
+.ed-tab {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+.ed-tab-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+.ed-tab-charlabel { color: var(--text-dim); font-size: 0.75rem; }
+.ed-tab-char {
+  width: 2rem;
+  text-align: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+  padding: 0.25rem 0;
+  margin-left: 0.35rem;
+}
+.ed-size-toggle { margin-left: auto; display: flex; }
+.ed-size-btn {
+  padding: 0.3rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ed-size-btn:first-child { border-radius: 5px 0 0 5px; }
+/* Segments overlap their shared edge by 1px; the active one wins it via
+   z-index so its accent border draws unbroken on either side. */
+.ed-size-btn:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
+.ed-size-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  position: relative;
+  z-index: 1;
+}
+.ed-grid { display: grid; gap: 3px; }
+.ed-slot {
+  min-height: 2.4rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ed-slot.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
+.ed-slot.picking { border-color: var(--accent); color: var(--accent); }
+
+/* Key picker: shared panel under the grids */
+.ed-picker {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.6rem;
+  margin-top: 0.6rem;
+}
+.ed-picker-title { color: var(--accent); font-size: 0.78rem; margin-bottom: 0.5rem; }
+.ed-picker-textrow { display: flex; gap: 0.4rem; }
+.ed-picker-text {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+  padding: 0.4rem 0.55rem;
+}
+.ed-picker-set { flex: 0 0 auto; }
+.ed-picker-keys {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+  margin-top: 0.5rem;
+}
+.ed-key {
+  min-height: 1.9rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ed-key:active { background: var(--surface); color: var(--accent); }
+.ed-picker-foot { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+
+/* 3-char macro faces on the touch panel shrink to fit the button */
+.tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }

@@ -9,9 +9,17 @@ import {
   CK_CTRL_BKSP, CAPTURED_CTRL,
 } from './keyboard'
 import { createShiftToggle } from './shift-state'
+import {
+  CONTROLS_CHANGED_EVENT, getActiveControlSet, slotLabel, slotTitle,
+} from './control-sets'
+import type { ControlSet, ControlTabDef, SlotDef } from './control-sets'
 
 type SendFn = (msg: ClientMsg) => void
+// The three control tabs keep stable positional ids (micro/macro/info =
+// tabs[0..2] of the active control set); their visible labels come from the
+// set and are user-renameable.
 type TabKey = 'micro' | 'macro' | 'info' | 'spells'
+const TAB_INDEX: Record<Exclude<TabKey, 'spells'>, 0 | 1 | 2> = { micro: 0, macro: 1, info: 2 }
 
 // Toggled off for testing (2026-06): evaluating whether the horizontal spell
 // rail row is sufficient on its own. The z quick-cast tab stays fully wired
@@ -19,13 +27,6 @@ type TabKey = 'micro' | 'macro' | 'info' | 'spells'
 // flip back to true is all it takes to surface it again. Exported so the
 // tab-visibility test asserts whichever mode is current.
 export const ENABLE_SPELL_TAB = false
-
-interface TabButtonDef {
-  label: string
-  title?: string
-  text?: string
-  key?: number
-}
 
 type DpadDef =
   | { label: string; plain: number; shifted: number; ctrled: number }
@@ -69,74 +70,17 @@ const DPAD_LAYOUT: DpadDef[][] = [
   ],
 ]
 
-// Static tabs only; the 'spells' tab renders dynamic content from game-view.
-const TAB_BUTTONS: Record<Exclude<TabKey, 'spells'>, TabButtonDef[][]> = {
-  micro: [
-    [
-      { label: '⇥',   title: 'Auto-fight nearest',    key: 9 },
-      { label: '5',   title: 'Rest until healed',     text: '5' },
-      { label: 'i',   title: 'Inventory',             text: 'i' },
-      { label: 'o',   title: 'Auto-explore',          text: 'o' },
-    ],
-    [
-      { label: 'q',   title: 'Quaff potion',          text: 'q' },
-      { label: 'r',   title: 'Read scroll',           text: 'r' },
-      { label: 'f',   title: 'Fire / quivered',       text: 'f' },
-      { label: 'v',   title: 'Evoke item',            text: 'v' },
-    ],
-    [
-      { label: 'a',   title: 'Use ability',           text: 'a' },
-      { label: 'e',   title: 'Equip / unequip',       text: 'e' },
-      { label: 'x',   title: 'Examine surroundings',  text: 'x' },
-      { label: ',',   title: 'Pick up item',          text: ',' },
-    ],
-  ],
-  macro: [
-    [
-      { label: 'w',   title: 'Wield weapon',          text: 'w' },
-      { label: 'R',   title: 'Remove jewellery',      text: 'R' },
-      { label: 't',   title: 'Tell allies (tt to shout)', text: 't' },
-      { label: 'P',   title: 'Put on jewellery',      text: 'P' },
-    ],
-    [
-      { label: 'd',   title: 'Drop',                  text: 'd' },
-      { label: '^F',  title: 'Find feature (Ctrl+F)', key: 6 },
-      { label: 'G',   title: 'Go to level / branch',  text: 'G' },
-      { label: '^O',  title: 'Dungeon overview (Ctrl+O)', key: 15 },
-    ],
-    [
-      { label: 'X',   title: 'Examine level map',     text: 'X' },
-      { label: 'e',   title: 'Equip / exclude',       text: 'e' },
-      { label: '<',   title: 'Ascend stairs',         text: '<' },
-      { label: '>',   title: 'Descend stairs',        text: '>' },
-    ],
-  ],
-  info: [
-    [
-      { label: '@',   title: 'Character status',      text: '@' },
-      { label: '%',   title: 'Character overview',    text: '%' },
-      { label: '^',   title: 'Religion / deity',      text: '^' },
-      { label: '=',   title: 'Reassign inventory/spell letters', text: '=' },
-    ],
-    [
-      { label: 'A',   title: 'Abilities/mutations',   text: 'A' },
-      { label: 'm',   title: 'Skills screen',         text: 'm' },
-      { label: '}',   title: 'Runes collected',       text: '}' },
-      { label: '\\',  title: 'Item knowledge',        text: '\\' },
-    ],
-    [
-      { label: '$',    title: 'Gold / shopping list',   text: '$' },
-      { label: 'M',    title: 'Spell library',        text: 'M' },
-      { label: 'I',   title: 'List memorised spells', text: 'I' },
-      { label: '?',   title: 'Help',                  text: '?' },
-    ],
-  ],
-}
+// Tab button layouts come from the active control set (see ./control-sets):
+// the built-in Standard set reproduces the original hard-coded grids, and
+// custom sets swap in user-defined keys, grid widths, and tab labels.
 
 // Virtual QWERTY keyboard overlay. Letter and symbol layers, sticky Shift
 // (tap = once, double-tap = locked, tap from lock = off) and one-shot Ctrl,
 // [123]/[ABC] toggle. Replaces the touch-controls strip while open.
-function buildKeyboardOverlay(send: SendFn): { element: HTMLElement; open: () => void; close: () => void } {
+function buildKeyboardOverlay(
+  send: SendFn,
+  onOpenSettings?: () => void,
+): { element: HTMLElement; open: () => void; close: () => void } {
   type Layer = 'letters' | 'symbols'
   let layer: Layer = 'letters'
   let ctrlActive = false
@@ -366,6 +310,12 @@ function buildKeyboardOverlay(send: SendFn): { element: HTMLElement; open: () =>
     btns.push(makeBtn(switchLabel, 'wide flex', () => setLayer(nextLayer)))
     btns.push(makeBtn('⇥', 'wide flex glyph', () => dispatchKey(9)))
     btns.push(makeBtn('⏎', 'wide flex glyph', () => dispatchKey(13)))
+    // In-game settings entry (the control-set picker/editor lives there);
+    // game-view injects the opener so the input layer stays view-free. Close
+    // the kbd first so the settings overlay isn't fighting its z-index.
+    if (onOpenSettings) {
+      btns.push(makeBtn('⚙', 'wide flex glyph', () => { close(); onOpenSettings() }))
+    }
     btns.push(makeBtn('abc▾', 'wide flex', close))
     return btns
   }
@@ -411,9 +361,15 @@ function buildKeyboardOverlay(send: SendFn): { element: HTMLElement; open: () =>
   return { element: overlay, open, close }
 }
 
-export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConfig } = {}): TouchControls {
+export interface TouchControlsOpts {
+  spellTab?: SpellTabConfig
+  onOpenSettings?: () => void  // wired to the ⚙ key on the virtual keyboard
+}
+
+export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): TouchControls {
   let ctrlActive = false
   let activeTab: TabKey = 'micro'
+  let controlSet: ControlSet = getActiveControlSet()
 
   // Forward declarations — assigned during DOM construction below
   let shiftBtn!: HTMLButtonElement
@@ -423,6 +379,11 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
   let dpadEl!: HTMLDivElement
 
   const shift = createShiftToggle({ onChange: refreshMods })
+
+  // Single owner of the z-tab reveal rule, used by the tab strip and
+  // refreshSpellTab alike. ENABLE_SPELL_TAB gates only visibility — the grid
+  // stays wired (and testable) behind it.
+  const spellTabVisible = (): boolean => ENABLE_SPELL_TAB && !!opts.spellTab?.hasSpells()
 
   // --- Key dispatch helpers ---
 
@@ -451,7 +412,7 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
     }
   }
 
-  function sendTabKey(def: TabButtonDef): void {
+  function sendTabKey(def: SlotDef): void {
     if (def.text !== undefined) {
       let text = def.text
       if (shift.isOn && text.length === 1) text = text.toUpperCase()
@@ -486,7 +447,7 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
   root.id = 'touch-controls'
 
   // Keyboard overlay (fixed position, renders above everything)
-  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send)
+  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send, opts.onOpenSettings)
   root.appendChild(kbdEl)
 
   // --- D-pad ---
@@ -516,26 +477,38 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
 
   tabsEl = document.createElement('div')
   tabsEl.className = 'tc-tabs'
-  const tabDefs: { key: TabKey; label: string }[] = [{ key: 'micro', label: '@' }]
-  // Quick-cast spells get their own tab (playing client only — spectators have
-  // no spells to cast), sitting immediately right of the @ tab. Swaps the
-  // content grid like any other tab.
-  if (opts.spellTab) tabDefs.push({ key: 'spells', label: 'z' })
-  tabDefs.push({ key: 'macro', label: '>' }, { key: 'info', label: '?' })
-  for (const td of tabDefs) {
-    const btn = document.createElement('button')
-    btn.className = 'tc-tab' + (td.key === 'micro' ? ' active' : '')
-    btn.textContent = td.label
-    btn.title = td.key
-    btn.dataset.tab = td.key
-    // The z tab starts hidden; refreshSpellTab() reveals it once a harvest
-    // finds spells (and hides it again if the player ends up with none).
-    if (td.key === 'spells') btn.style.display = 'none'
-    btn.addEventListener('touchstart', e => { e.preventDefault(); renderTab(td.key) }, { passive: false })
-    btn.addEventListener('click', () => renderTab(td.key))
-    tabsEl.appendChild(btn)
-  }
   headerEl.appendChild(tabsEl)
+
+  // (Re)build the tab strip from the active control set — labels are the
+  // set's user-renameable tab chars. Runs at build time and again whenever
+  // the active set changes.
+  function rebuildTabs(): void {
+    tabsEl.innerHTML = ''
+    const tabDefs: { key: TabKey; label: string; title?: string }[] = [
+      { key: 'micro', label: controlSet.tabs[0].name },
+    ]
+    // Quick-cast spells get their own tab (playing client only — spectators
+    // have no spells to cast), sitting immediately right of the first tab.
+    // Swaps the content grid like any other tab.
+    if (opts.spellTab) tabDefs.push({ key: 'spells', label: 'z', title: 'Quick-cast spells' })
+    tabDefs.push(
+      { key: 'macro', label: controlSet.tabs[1].name },
+      { key: 'info', label: controlSet.tabs[2].name },
+    )
+    for (const td of tabDefs) {
+      const btn = document.createElement('button')
+      btn.className = 'tc-tab' + (td.key === activeTab ? ' active' : '')
+      btn.textContent = td.label
+      btn.title = td.title ?? td.key
+      btn.dataset.tab = td.key
+      // The z tab starts hidden; refreshSpellTab() reveals it once a harvest
+      // finds spells (and hides it again if the player ends up with none).
+      if (td.key === 'spells' && !spellTabVisible()) btn.style.display = 'none'
+      btn.addEventListener('touchstart', e => { e.preventDefault(); renderTab(td.key) }, { passive: false })
+      btn.addEventListener('click', () => renderTab(td.key))
+      tabsEl.appendChild(btn)
+    }
+  }
 
   const enterBtn = document.createElement('button')
   enterBtn.className = 'tc-enter'
@@ -617,9 +590,9 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
     // The z tab hosts the spell grid game-view builds (it owns the spell data,
     // tile loader, and cast logic); refreshSpellTab fills it. Sticky like any
     // tab — stays until the player switches away, so repeat-casting is one tap
-    // each. Other tabs render their static button layout.
+    // each. Other tabs render the active control set's button grid.
     if (tab === 'spells') refreshSpellTab()
-    else renderContent(TAB_BUTTONS[tab])
+    else renderContent(controlSet.tabs[TAB_INDEX[tab]])
   }
 
   // Reveal the z tab only when a harvest found spells; hide it otherwise (a
@@ -631,33 +604,35 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
     if (!tab) return  // spectator — there is no z tab
     // Visibility comes from the cheap probe; the grid DOM is built only when
     // the spells tab is the one on screen (render() per harvest was otherwise
-    // constructed and immediately discarded). ENABLE_SPELL_TAB gates only the
-    // tab's visibility — the grid stays wired (and testable) behind it.
-    const has = !!opts.spellTab?.hasSpells()
-    tab.style.display = ENABLE_SPELL_TAB && has ? '' : 'none'
+    // constructed and immediately discarded).
+    tab.style.display = spellTabVisible() ? '' : 'none'
     if (activeTab !== 'spells') return
-    const grid = has ? opts.spellTab!.render() : null
+    const grid = opts.spellTab?.hasSpells() ? opts.spellTab.render() : null
     if (grid) { contentEl.innerHTML = ''; contentEl.appendChild(grid) }
     else renderTab('micro')
   }
 
-  function renderContent(rows: TabButtonDef[][]): void {
+  function renderContent(tabDef: ControlTabDef): void {
     contentEl.innerHTML = ''
-    for (const row of rows) {
+    for (let r = 0; r < 3; r++) {
       const rowEl = document.createElement('div')
       rowEl.className = 'tc-row'
-      for (const def of row) {
-        if (!def.label) {
+      for (let c = 0; c < tabDef.cols; c++) {
+        const def = tabDef.slots[r * tabDef.cols + c]
+        if (!def) {
           const spacer = document.createElement('div')
           spacer.className = 'tc-btn tc-btn-spacer'
           rowEl.appendChild(spacer)
           continue
         }
+        const label = slotLabel(def)
+        const title = slotTitle(def)
         const btn = document.createElement('button')
         btn.className = 'tc-btn'
-        if (/[^\x20-\x7e]/.test(def.label)) btn.classList.add('glyph')
-        btn.textContent = def.label
-        if (def.title) { btn.title = def.title; btn.setAttribute('aria-label', def.title) }
+        if (/[^\x20-\x7e]/.test(label)) btn.classList.add('glyph')
+        if (label.length >= 3) btn.classList.add('tri')  // 3-char macros get a smaller face
+        btn.textContent = label
+        if (title) { btn.title = title; btn.setAttribute('aria-label', title) }
         btn.addEventListener('touchstart', e => { e.preventDefault(); sendTabKey(def) }, { passive: false })
         btn.addEventListener('click', () => sendTabKey(def))
         rowEl.appendChild(btn)
@@ -665,6 +640,26 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
       contentEl.appendChild(rowEl)
     }
   }
+
+  // Sync the panel to the active control set: used for the initial render
+  // and for live-apply when settings changes (activating, editing, or
+  // deleting the active set) fire CONTROLS_CHANGED_EVENT. The listener
+  // unhooks itself once this panel's DOM has been discarded (each game
+  // builds a fresh panel).
+  function applyControlSet(): void {
+    controlSet = getActiveControlSet()
+    rebuildTabs()
+    renderTab(activeTab)
+  }
+
+  function onControlsChanged(): void {
+    if (!root.isConnected) {
+      window.removeEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
+      return
+    }
+    applyControlSet()
+  }
+  window.addEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
 
   function enterXMode(): void {
     root.classList.add('x-mode')
@@ -678,7 +673,7 @@ export function buildTouchControls(send: SendFn, opts: { spellTab?: SpellTabConf
 
   // Initial render
   buildDpad()
-  renderContent(TAB_BUTTONS.micro)
+  applyControlSet()
 
   return { element: root, enterXMode, exitXMode, openKbd, closeKbd, refreshSpellTab }
 }

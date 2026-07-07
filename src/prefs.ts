@@ -6,12 +6,14 @@ export interface Prefs {
   lastGuestSpectateWsUrl: string | null
   monsterListCollapsed: boolean
   mapRenderMode: 'ascii' | 'tiles'
+  controlSetId: string
 }
 
 const DEFAULTS: Prefs = {
   lastGuestSpectateWsUrl: null,
   monsterListCollapsed: false,
   mapRenderMode: 'ascii',
+  controlSetId: 'standard',
 }
 
 function load(): Prefs {

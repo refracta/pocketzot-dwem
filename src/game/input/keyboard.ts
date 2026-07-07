@@ -88,6 +88,12 @@ export {
 // Export for keyboard overlay
 export { CAPTURED_CTRL }
 
+// F-key wire codes are sequential from F1 = -265 (cio.h; see CODE_CONV
+// below). Shared with the control-set special-key table.
+export function fnKeycode(n: number): number {
+  return -264 - n
+}
+
 // keyCode-based mappings (legacy but still used for arrow keys, backspace, etc.)
 const KEY_CONV: Record<number, number> = {
   27:  27,          // Escape

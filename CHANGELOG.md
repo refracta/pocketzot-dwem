@@ -26,6 +26,16 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-06
 
+- Custom control sets: the three control tabs' button grids are now yours to
+  change. Two built-ins ship — Standard (12 per tab) and Big keys (9 larger
+  buttons on the first two tabs) — and the editor lets you assign any key,
+  short macros up to three keys (e.g. "za."), F-keys and Ctrl combos, rename
+  the tabs, and pick a 3×3 or 3×4 grid per tab.
+- Control sets travel as text: Export copies a pocketzot-controls: string to
+  the clipboard, and pasting one into Import brings it back — yours from
+  another device, or another player's.
+- New Settings page, reachable from the login screen footer and the ⚙ key on
+  the in-game keyboard. Control-set changes apply immediately, mid-game.
 - Long menus now keep scroll position after opening and closing an entry's
   description.
 - Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8

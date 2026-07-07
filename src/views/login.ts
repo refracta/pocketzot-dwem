@@ -5,6 +5,7 @@ import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
+import { openSettings } from './settings-view'
 import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
@@ -55,6 +56,7 @@ export function buildLoginView(
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
       <a href="#" id="login-changelog">What's new</a>
+      <a href="#" id="login-settings">Settings</a>
     </div>
   `
 
@@ -169,6 +171,10 @@ export function buildLoginView(
   view.querySelector('#login-changelog')!.addEventListener('click', (e) => {
     e.preventDefault()
     openChangelogDoc()
+  })
+  view.querySelector('#login-settings')!.addEventListener('click', (e) => {
+    e.preventDefault()
+    openSettings()
   })
 
   renderResumeButtons()
