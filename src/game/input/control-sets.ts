@@ -7,7 +7,7 @@
 // in localStorage and travel between installs as a human-readable
 // `pocketzot-controls:1:` string (see encode/decode below).
 
-import { fnKeycode } from './keyboard'
+import { ctrlKeycode, fnKeycode } from './keyboard'
 import { getPref, setPref } from '../../prefs'
 
 // A slot's action — exactly one of `text` (1–3 printable chars sent as a
@@ -32,7 +32,8 @@ export interface ControlSet {
   tabs: [ControlTabDef, ControlTabDef, ControlTabDef]
 }
 
-const GRID_ROWS = 3
+export const GRID_ROWS = 3
+export const MAX_COLS = 4
 export const MAX_MACRO_LEN = 3
 export const CONTROLS_CHANGED_EVENT = 'pocketzot:controls-changed'
 
@@ -88,7 +89,7 @@ const CTRL_COMMANDS: Record<string, string> = {
 const CTRL_KEYS: SpecialKey[] = [...'ABCDEFGHJKLNOPQRSTUVWXYZ'].map(c => {
   const cmd = CTRL_COMMANDS[c]
   return {
-    keycode: c.charCodeAt(0) - 64,
+    keycode: ctrlKeycode(c),
     label: `^${c}`,
     token: `^${c}`,
     title: cmd ? `Ctrl+${c} — ${cmd}` : `Ctrl+${c}`,
@@ -177,6 +178,8 @@ const INFO_SLOTS = (): SlotDef[] => [
 ]
 
 export const STANDARD_ID = 'standard'
+export const BIGKEYS_ID = 'bigkeys'
+const BUILTIN_IDS = new Set([STANDARD_ID, BIGKEYS_ID])
 
 function builtinStandard(): ControlSet {
   return {
@@ -201,7 +204,7 @@ function builtinStandard(): ControlSet {
 
 function builtinBigKeys(): ControlSet {
   return {
-    id: 'bigkeys',
+    id: BIGKEYS_ID,
     name: 'Big keys (9+9+12)',
     builtin: true,
     tabs: [
@@ -260,7 +263,7 @@ export function getActiveControlSet(): ControlSet {
 }
 
 export function setActiveControlSet(id: string): void {
-  if (!getControlSet(id)) return
+  if (id === getPref('controlSetId') || !getControlSet(id)) return
   setPref('controlSetId', id)
   fireChanged()
 }
@@ -281,7 +284,7 @@ export function cloneSet(set: ControlSet, id: string, name: string): ControlSet 
 
 // Upsert a custom set. Built-in ids are immutable — silently ignored.
 export function saveControlSet(set: ControlSet): void {
-  if (builtinSets().some(b => b.id === set.id)) return
+  if (BUILTIN_IDS.has(set.id)) return
   const custom = loadCustom()
   const i = custom.findIndex(s => s.id === set.id)
   if (i >= 0) custom[i] = set
@@ -309,19 +312,28 @@ export function deleteControlSet(id: string): void {
 //          | {Tab} {Ent} {Esc} {F1}…{F12} {^A}…   special key
 //          | literal text (1–3 chars) with escapes:
 //            {sp}=space {lb}={ {rb}=} {bar}=|
+//   <namechar> uses the same escapes as tokens, so it's never a literal
+//   space — and blank/whitespace labels are rejected outright (a tab button
+//   must have a visible face). Only the set <name> keeps its spaces literal.
 //
 // Human-readable and hand-editable; every structural character that could
 // also be a crawl command ({ } | space) round-trips through the escape table.
+//
+// The key-token vocabulary is part of the version contract: adding a token
+// (say {Up}) without bumping EXPORT_VERSION would make older clients reject
+// strings carrying it with a confusing escape error instead of the clean
+// "version N is newer" message. Bump the version when extending SPECIAL_KEYS.
 
 const ESCAPE_NAMES: Record<string, string> = { sp: ' ', lb: '{', rb: '}', bar: '|' }
 const ESCAPE_CHARS: Record<string, string> = { ' ': '{sp}', '{': '{lb}', '}': '{rb}', '|': '{bar}' }
 
-// Key tokens are space-separated, so their spaces must be escaped…
+// Key tokens are space-separated — and tab names abut the cols digit — so
+// their spaces must be escaped…
 function escText(s: string): string {
   return s.replace(/[ {}|]/g, ch => ESCAPE_CHARS[ch])
 }
 
-// …but the name fields are |-delimited, so their spaces can stay readable.
+// …but the set name is |-delimited, so its spaces can stay readable.
 function escName(s: string): string {
   return s.replace(/[{}|]/g, ch => ESCAPE_CHARS[ch])
 }
@@ -335,7 +347,9 @@ function unescText(s: string): string {
       if (end < 0) throw new Error(`unterminated escape in "${s}"`)
       const name = s.slice(i + 1, end)
       const ch = ESCAPE_NAMES[name]
-      if (ch === undefined) throw new Error(`unknown escape {${name}}`)
+      // Reached for unrecognized key tokens too ({F13}, {Up}) — they fall
+      // through decodeToken's key lookup to here — so name both readings.
+      if (ch === undefined) throw new Error(`unknown escape or key {${name}}`)
       out += ch
       i = end
     } else if (c === '}') {
@@ -363,21 +377,27 @@ function decodeToken(tok: string): SlotDef | null {
   if (m && KEY_BY_TOKEN.has(m[1])) return { key: KEY_BY_TOKEN.get(m[1])!.keycode }
   // {^I}/{^M} aliases: wire-identical to Tab/Enter, absent from the table
   const ctrl = m && /^\^([A-Z])$/.exec(m[1])
-  if (ctrl) return { key: ctrl[1].charCodeAt(0) - 64 }
+  if (ctrl) return { key: ctrlKeycode(ctrl[1]) }
   const text = unescText(tok)
-  if (!text || text.length > MAX_MACRO_LEN) throw new Error(`bad key token "${tok}"`)
-  if (/[\x00-\x1f\x7f]/.test(text)) throw new Error(`bad key token "${tok}"`)
+  if (!text || text.length > MAX_MACRO_LEN || /[\x00-\x1f\x7f]/.test(text)) {
+    throw new Error(`bad key token "${tok}"`)
+  }
   return { text }
 }
 
 export function encodeControlSet(set: ControlSet): string {
   const tabs = set.tabs.map(tab =>
-    escName(tab.name) + tab.cols + ':' + tab.slots.map(encodeToken).join(' '))
+    escText(tab.name) + tab.cols + ':' + tab.slots.map(encodeToken).join(' '))
   return EXPORT_PREFIX + escName(set.name) + '|' + tabs.join('|')
 }
 
 export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
-  const s = raw.trim()
+  // Collapse ALL whitespace runs to single spaces first: strings travel
+  // through chat apps and email, which wrap long lines at spaces and
+  // sometimes double them. No token can contain literal whitespace (it's
+  // escaped as {sp}), so this only ever repairs transit damage — the one
+  // casualty is a double space inside a set name.
+  const s = raw.trim().replace(/\s+/g, ' ')
   if (!s.startsWith(EXPORT_MARKER)) {
     throw new Error(`not a control-set string (expected it to start with "${EXPORT_MARKER}")`)
   }
@@ -386,7 +406,10 @@ export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
   if (Number(ver[1]) !== EXPORT_VERSION) {
     throw new Error(`format version ${ver[1]} is newer than this app understands (version ${EXPORT_VERSION})`)
   }
-  const parts = s.slice(EXPORT_PREFIX.length).split('|')
+  // Fields and token lists tolerate surrounding spaces (hand-edits, transit
+  // damage): nothing legitimate is lost, since tab names and tokens never
+  // contain literal whitespace and the set name is trimmed anyway.
+  const parts = s.slice(EXPORT_PREFIX.length).split('|').map(f => f.trim())
   if (parts.length !== 4) throw new Error('expected a name and exactly 3 tabs')
   const name = unescText(parts[0]).trim()
   if (!name || name.length > 48) throw new Error('bad set name')
@@ -394,9 +417,13 @@ export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
     const m = /^(.*?)([34]):(.*)$/.exec(field)
     if (!m) throw new Error(`bad tab header in "${field.slice(0, 20)}"`)
     const tabName = unescText(m[1])
-    if ([...tabName].length !== 1) throw new Error('tab name must be a single character')
+    // trim() also catches exotic blanks (NBSP etc.) — a tab button must
+    // have a visible label.
+    if ([...tabName].length !== 1 || !tabName.trim()) {
+      throw new Error('tab name must be a single visible character')
+    }
     const cols = Number(m[2]) as 3 | 4
-    const toks = m[3].split(' ')
+    const toks = m[3].trim().split(' ')
     if (toks.length !== GRID_ROWS * cols) {
       throw new Error(`tab "${tabName}" needs ${GRID_ROWS * cols} keys, got ${toks.length}`)
     }

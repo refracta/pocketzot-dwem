@@ -23,6 +23,11 @@ Notable changes to PocketZot, newest first.
 - The monster list warns about invisible monsters sensed nearby but not yet
   located — a magenta row in both render modes, shown even when no monster
   is visible.
+- The map render mode (ASCII glyphs or graphical tiles) can now be switched
+  from Settings too, alongside the in-game two-finger long-press. Applies
+  immediately, even mid-game.
+- Settings' Help section now includes a Gestures page listing the touch
+  gestures (zoom, render-mode switch, minimap, Shift lock, and friends).
 
 ## 2026-07-06
 

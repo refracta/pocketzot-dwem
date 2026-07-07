@@ -159,7 +159,9 @@ describe('export / import string format', () => {
       ['pocketzot-controls:1:name|@4:a|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /needs 12 keys/],
       ['pocketzot-controls:1:name|@4:' + 'a '.repeat(11) + 'a', /exactly 3 tabs/],
       ['pocketzot-controls:1:n|@5:a|@4:a|@4:a', /bad tab header/],
-      ['pocketzot-controls:1:n|ab4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /single character/],
+      ['pocketzot-controls:1:n|ab4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /single visible character/],
+      // appears-empty tab labels ({sp} space) are rejected too
+      ['pocketzot-controls:1:n|{sp}4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /single visible character/],
     ]
     for (const [str, re] of bad) {
       expect(() => decodeControlSet(str), str).toThrowError(re)
@@ -172,6 +174,20 @@ describe('export / import string format', () => {
     const badEsc = 'pocketzot-controls:1:n|@4:' + ['{zz}', ...Array(11).fill('a')].join(' ')
       + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ')
     expect(() => decodeControlSet(badEsc)).toThrowError(/unknown escape/)
+  })
+
+  it('repairs whitespace mangled in transit (chat wrapping, doubled spaces)', () => {
+    const set = builtinSets()[0]
+    const str = encodeControlSet(set)
+    // simulate a chat app wrapping the long line at spaces and doubling one
+    const mangled = str.replace(' i o ', ' i \n o ').replace('|>4:', '|>4:  ')
+    const back = decodeControlSet(mangled)
+    expect(back.tabs).toEqual(set.tabs)
+    // {sp} macros survive normalization — the escape is what protects them
+    const spSet = customSet()
+    spSet.tabs[0].slots[0] = { text: ' ' }
+    const viaNewline = encodeControlSet(spSet).replace(/ /g, '\n')
+    expect(decodeControlSet(viaNewline).tabs[0].slots[0]).toEqual({ text: ' ' })
   })
 
   it('importControlSet stores a fresh custom set', () => {

@@ -6,11 +6,11 @@ import {
   CK_SHIFT_HOME, CK_SHIFT_END, CK_SHIFT_PGUP, CK_SHIFT_PGDN,
   CK_CTRL_UP, CK_CTRL_DOWN, CK_CTRL_LEFT, CK_CTRL_RIGHT,
   CK_CTRL_HOME, CK_CTRL_END, CK_CTRL_PGUP, CK_CTRL_PGDN,
-  CK_CTRL_BKSP, CAPTURED_CTRL,
+  CK_CTRL_BKSP, CAPTURED_CTRL, ctrlKeycode,
 } from './keyboard'
 import { createShiftToggle } from './shift-state'
 import {
-  CONTROLS_CHANGED_EVENT, getActiveControlSet, slotLabel, slotTitle,
+  CONTROLS_CHANGED_EVENT, GRID_ROWS, getActiveControlSet, slotLabel, slotTitle,
 } from './control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from './control-sets'
 
@@ -47,6 +47,7 @@ export interface TouchControls {
   openKbd(): void
   closeKbd(): void
   refreshSpellTab(): void  // re-render the z tab if it is the active tab
+  destroy(): void          // release the live-apply listener (game exit)
 }
 
 // Arrow + numpad keycodes; shift = run-variant; ctrl = open-door / attack-stationary.
@@ -194,7 +195,7 @@ function buildKeyboardOverlay(
     } else if (ctrlActive) {
       const upper = ch.toUpperCase()
       if (CAPTURED_CTRL.has(upper)) {
-        send({ msg: 'key', keycode: upper.charCodeAt(0) - 64 })
+        send({ msg: 'key', keycode: ctrlKeycode(upper) })
       } else {
         send({ msg: 'input', text: ch })
       }
@@ -369,7 +370,7 @@ export interface TouchControlsOpts {
 export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): TouchControls {
   let ctrlActive = false
   let activeTab: TabKey = 'micro'
-  let controlSet: ControlSet = getActiveControlSet()
+  let controlSet!: ControlSet  // assigned by applyControlSet() before first read
 
   // Forward declarations — assigned during DOM construction below
   let shiftBtn!: HTMLButtonElement
@@ -419,7 +420,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
       if (ctrlActive && text.length === 1) {
         const upper = text.toUpperCase()
         if (CAPTURED_CTRL.has(upper)) {
-          send({ msg: 'key', keycode: upper.charCodeAt(0) - 64 })
+          send({ msg: 'key', keycode: ctrlKeycode(upper) })
           clearOneshot()
           return
         }
@@ -485,15 +486,15 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   function rebuildTabs(): void {
     tabsEl.innerHTML = ''
     const tabDefs: { key: TabKey; label: string; title?: string }[] = [
-      { key: 'micro', label: controlSet.tabs[0].name },
+      { key: 'micro', label: controlSet.tabs[TAB_INDEX.micro].name },
     ]
     // Quick-cast spells get their own tab (playing client only — spectators
     // have no spells to cast), sitting immediately right of the first tab.
     // Swaps the content grid like any other tab.
     if (opts.spellTab) tabDefs.push({ key: 'spells', label: 'z', title: 'Quick-cast spells' })
     tabDefs.push(
-      { key: 'macro', label: controlSet.tabs[1].name },
-      { key: 'info', label: controlSet.tabs[2].name },
+      { key: 'macro', label: controlSet.tabs[TAB_INDEX.macro].name },
+      { key: 'info', label: controlSet.tabs[TAB_INDEX.info].name },
     )
     for (const td of tabDefs) {
       const btn = document.createElement('button')
@@ -614,7 +615,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
 
   function renderContent(tabDef: ControlTabDef): void {
     contentEl.innerHTML = ''
-    for (let r = 0; r < 3; r++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
       const rowEl = document.createElement('div')
       rowEl.className = 'tc-row'
       for (let c = 0; c < tabDef.cols; c++) {
@@ -643,9 +644,10 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
 
   // Sync the panel to the active control set: used for the initial render
   // and for live-apply when settings changes (activating, editing, or
-  // deleting the active set) fire CONTROLS_CHANGED_EVENT. The listener
-  // unhooks itself once this panel's DOM has been discarded (each game
-  // builds a fresh panel).
+  // deleting the active set) fire CONTROLS_CHANGED_EVENT. game-view calls
+  // destroy() on the way back to the lobby; the isConnected self-unhook is
+  // the backstop for exits that skip that path (socket loss), so a dead
+  // panel is never re-rendered.
   function applyControlSet(): void {
     controlSet = getActiveControlSet()
     rebuildTabs()
@@ -654,12 +656,16 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
 
   function onControlsChanged(): void {
     if (!root.isConnected) {
-      window.removeEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
+      destroy()
       return
     }
     applyControlSet()
   }
   window.addEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
+
+  function destroy(): void {
+    window.removeEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
+  }
 
   function enterXMode(): void {
     root.classList.add('x-mode')
@@ -675,5 +681,5 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   buildDpad()
   applyControlSet()
 
-  return { element: root, enterXMode, exitXMode, openKbd, closeKbd, refreshSpellTab }
+  return { element: root, enterXMode, exitXMode, openKbd, closeKbd, refreshSpellTab, destroy }
 }

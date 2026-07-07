@@ -1,16 +1,23 @@
-// Settings overlay: control-set management (pick / edit / import / export).
-// Body-mounted full-screen modal reusing the doc-viewer shell classes, opened
-// from the login footer and from the ⚙ key on the in-game virtual keyboard.
-// Selecting a set applies live: control-sets fires CONTROLS_CHANGED_EVENT and
-// the touch panel re-renders itself.
+// Settings overlay: a body-mounted full-screen modal reusing the doc-viewer
+// shell classes, opened from the login footer and from the ⚙ key on the
+// in-game virtual keyboard. The home page is a stack of sections (touch
+// controls, map display, chat, help); a section may take over the body for a
+// sub-page (the control-set editor) and return via renderHome. Changes apply
+// live via window events, fired by the stores themselves (control-sets.ts
+// mutators, setPref in prefs.ts): CONTROLS_CHANGED_EVENT (touch panel
+// re-renders), RENDER_MODE_CHANGED_EVENT (game view swaps renderers),
+// IGNORED_SPECTATORS_CHANGED_EVENT (chat watcher count, once merged).
 
 import { mountCardOverlay } from './overlay'
 import {
   cloneSet, deleteControlSet, encodeControlSet, getActiveControlSet,
   importControlSet, listControlSets, newSetId, saveControlSet,
-  setActiveControlSet, slotLabel, slotTitle, MAX_MACRO_LEN, PICKER_KEYS,
+  setActiveControlSet, slotLabel, slotTitle,
+  GRID_ROWS, MAX_COLS, MAX_MACRO_LEN, PICKER_KEYS,
 } from '../game/input/control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from '../game/input/control-sets'
+import { getPref, setPref } from '../prefs'
+import { openAboutDoc, openChangelogDoc, openGesturesDoc } from './docs'
 
 export function openSettings(): void {
   const { body } = mountCardOverlay('Settings', {
@@ -18,7 +25,7 @@ export function openSettings(): void {
     card: 'settings-card',
     body: 'settings-body',
   })
-  renderList(body)
+  renderHome(body)
 }
 
 // --- small DOM helpers -------------------------------------------------------
@@ -39,6 +46,15 @@ function button(label: string, className: string, onTap: () => void): HTMLButton
   return b
 }
 
+// Crawl keys/macros and player names aren't prose — keep mobile keyboards
+// from "helping".
+function noAutofix<T extends HTMLInputElement | HTMLTextAreaElement>(field: T): T {
+  field.spellcheck = false
+  field.setAttribute('autocapitalize', 'off')
+  field.setAttribute('autocorrect', 'off')
+  return field
+}
+
 // "My controls", "My controls 2", … first name not already taken.
 function freshName(): string {
   const taken = new Set(listControlSets().map(s => s.name))
@@ -48,25 +64,35 @@ function freshName(): string {
   }
 }
 
-// --- set list ----------------------------------------------------------------
+// --- home page ---------------------------------------------------------------
 
-function renderList(body: HTMLElement): void {
+function renderHome(body: HTMLElement): void {
   body.innerHTML = ''
+  renderControlsSection(body)
+  renderDisplaySection(body)
+  renderChatSection(body)
+  renderHelpSection(body)
+}
+
+// --- touch-controls section (control-set list) --------------------------------
+
+function renderControlsSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Touch controls'))
   body.appendChild(el('p', 'settings-hint',
     'Control sets swap the buttons on the three control tabs. ' +
     'The d-pad, Esc/Enter, Shift/Ctrl and the keyboard toggle stay put.'))
 
+  const sets = listControlSets()
   const activeId = getActiveControlSet().id
   const list = el('div', 'set-list')
   body.appendChild(list)
 
-  for (const set of listControlSets()) {
+  for (const set of sets) {
     const row = el('div', 'set-row' + (set.id === activeId ? ' active' : ''))
 
     const main = button('', 'set-row-main', () => {
       setActiveControlSet(set.id)
-      renderList(body)
+      renderHome(body)
     })
     main.appendChild(el('span', 'set-radio', set.id === activeId ? '●' : '○'))
     main.appendChild(el('span', 'set-name', set.name))
@@ -85,7 +111,7 @@ function renderList(body: HTMLElement): void {
     }
     actions.appendChild(button('Duplicate', 'set-action', () => {
       saveControlSet(cloneSet(set, newSetId(), freshName()))
-      renderList(body)
+      renderHome(body)
     }))
     const exp = button('Export', 'set-action', () => exportSet(set, exp, actions))
     actions.appendChild(exp)
@@ -97,7 +123,7 @@ function renderList(body: HTMLElement): void {
           return
         }
         deleteControlSet(set.id)
-        renderList(body)
+        renderHome(body)
       })
       actions.appendChild(del)
     }
@@ -110,12 +136,9 @@ function renderList(body: HTMLElement): void {
   // Import area (collapsed behind the button)
   const importWrap = el('div', 'settings-import')
   importWrap.hidden = true
-  const importField = el('textarea', 'settings-import-field')
+  const importField = noAutofix(el('textarea', 'settings-import-field settings-input'))
   importField.placeholder = 'Paste a pocketzot-controls:… string'
   importField.rows = 3
-  importField.spellcheck = false
-  importField.setAttribute('autocapitalize', 'off')
-  importField.setAttribute('autocorrect', 'off')
   const importErr = el('div', 'settings-error')
   importErr.hidden = true
   const importGo = button('Import', 'settings-btn', () => {
@@ -123,7 +146,7 @@ function renderList(body: HTMLElement): void {
     try {
       const set = importControlSet(importField.value)
       setActiveControlSet(set.id)  // fresh-install flow: imported = wanted
-      renderList(body)
+      renderHome(body)
     } catch (err) {
       importErr.textContent = `Couldn't import: ${err instanceof Error ? err.message : String(err)}`
       importErr.hidden = false
@@ -142,6 +165,93 @@ function renderList(body: HTMLElement): void {
     if (!importWrap.hidden) importField.focus()
   }))
   body.appendChild(importWrap)
+}
+
+// --- map display section -------------------------------------------------------
+
+const RENDER_MODES = [
+  { mode: 'ascii', label: 'ASCII glyphs' },
+  { mode: 'tiles', label: 'Graphical tiles' },
+] as const
+
+function renderDisplaySection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Map display'))
+  body.appendChild(el('p', 'settings-hint',
+    'Applies right away; a two-finger long-press on the map also switches mid-game.'))
+  const seg = el('div', 'settings-seg seg')
+  seg.setAttribute('role', 'radiogroup')
+  seg.setAttribute('aria-label', 'Map display')
+  const active = getPref('mapRenderMode')
+  for (const { mode, label } of RENDER_MODES) {
+    const b = button(label, 'settings-btn' + (mode === active ? ' active' : ''), () => {
+      if (getPref('mapRenderMode') === mode) return
+      setPref('mapRenderMode', mode)  // fires RENDER_MODE_CHANGED_EVENT
+      for (const sib of seg.children) {
+        sib.classList.toggle('active', sib === b)
+        sib.setAttribute('aria-checked', String(sib === b))
+      }
+    })
+    b.setAttribute('role', 'radio')
+    b.setAttribute('aria-checked', String(mode === active))
+    seg.appendChild(b)
+  }
+  body.appendChild(seg)
+}
+
+// --- chat section ----------------------------------------------------------------
+
+function renderChatSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Chat'))
+  body.appendChild(el('p', 'settings-hint',
+    'Spectator names that don’t count as watchers — a lurking bot ' +
+    'won’t keep the watcher chip lit.'))
+  const chips = el('div', 'settings-chips')
+  const save = (names: string[]): void => {
+    setPref('ignoredSpectators', names)  // fires IGNORED_SPECTATORS_CHANGED_EVENT
+    renderChips()
+  }
+  function renderChips(): void {
+    chips.innerHTML = ''
+    for (const name of getPref('ignoredSpectators')) {
+      const chip = el('span', 'settings-chip')
+      chip.appendChild(el('span', 'settings-chip-name', name))
+      const x = button('✕', 'settings-chip-x', () =>
+        save(getPref('ignoredSpectators').filter(n => n !== name)))
+      x.setAttribute('aria-label', `Stop ignoring ${name}`)
+      chip.appendChild(x)
+      chips.appendChild(chip)
+    }
+    chips.hidden = chips.childElementCount === 0
+  }
+  const addRow = el('div', 'settings-add-row')
+  const input = noAutofix(el('input', 'settings-add-input settings-input'))
+  input.placeholder = 'bot name'
+  input.maxLength = 32
+  const add = (): void => {
+    const name = input.value.trim()
+    if (!name) return
+    const names = getPref('ignoredSpectators')
+    if (!names.some(n => n.toLowerCase() === name.toLowerCase())) save([...names, name])
+    input.value = ''
+  }
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add() } })
+  addRow.appendChild(input)
+  addRow.appendChild(button('Add', 'settings-btn', add))
+  renderChips()
+  body.appendChild(chips)
+  body.appendChild(addRow)
+}
+
+// --- help section --------------------------------------------------------------
+
+function renderHelpSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Help'))
+  const row = el('div', 'settings-actions')
+  // The docs mount their own card above this one (doc z-index > settings).
+  row.appendChild(button('About', 'settings-btn', openAboutDoc))
+  row.appendChild(button("What's new", 'settings-btn', openChangelogDoc))
+  row.appendChild(button('Gestures', 'settings-btn', openGesturesDoc))
+  body.appendChild(row)
 }
 
 // Copy the export string; iOS clipboard needs a user gesture, which this is.
@@ -163,7 +273,7 @@ function exportSet(set: ControlSet, btn: HTMLButtonElement, host: HTMLElement): 
   const fallback = (): void => {
     host.querySelector('.settings-export-out')?.remove()
     const out = el('div', 'settings-export-out')
-    const field = el('textarea', 'settings-import-field')
+    const field = el('textarea', 'settings-import-field settings-input')
     field.value = str
     field.readOnly = true
     field.rows = 3
@@ -188,8 +298,8 @@ interface TabModel {
 
 function padGrid(tab: ControlTabDef): (SlotDef | null)[] {
   const grid: (SlotDef | null)[] = []
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 4; c++) {
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < MAX_COLS; c++) {
       grid.push(c < tab.cols ? (tab.slots[r * tab.cols + c] ?? null) : null)
     }
   }
@@ -198,8 +308,8 @@ function padGrid(tab: ControlTabDef): (SlotDef | null)[] {
 
 function cropGrid(grid: (SlotDef | null)[], cols: 3 | 4): (SlotDef | null)[] {
   const slots: (SlotDef | null)[] = []
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < cols; c++) slots.push(grid[r * 4 + c])
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < cols; c++) slots.push(grid[r * MAX_COLS + c])
   }
   return slots
 }
@@ -219,7 +329,7 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
   body.appendChild(el('h2', 'settings-h', isNew ? 'New control set' : 'Edit control set'))
 
   const nameRow = el('label', 'ed-name-row', 'Name ')
-  const nameInput = el('input', 'ed-name-input')
+  const nameInput = el('input', 'ed-name-input settings-input')
   nameInput.value = set.name
   nameInput.maxLength = 48
   nameInput.spellcheck = false
@@ -240,21 +350,19 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
 
       const head = el('div', 'ed-tab-head')
       const charLabel = el('label', 'ed-tab-charlabel', 'Tab label ')
-      const charInput = el('input', 'ed-tab-char')
+      const charInput = noAutofix(el('input', 'ed-tab-char settings-input'))
       charInput.value = tab.name
       charInput.maxLength = 1
-      charInput.spellcheck = false
-      charInput.setAttribute('autocapitalize', 'off')
-      charInput.setAttribute('autocorrect', 'off')
       charInput.addEventListener('input', () => {
-        if (charInput.value) tab.name = charInput.value
+        if (charInput.value.trim()) tab.name = charInput.value
       })
-      // Blank stays whatever it was — a tab must keep a visible label.
+      // Blank or whitespace stays whatever it was — a tab must keep a
+      // visible label (import enforces the same rule).
       charInput.addEventListener('blur', () => { charInput.value = tab.name })
       charLabel.appendChild(charInput)
       head.appendChild(charLabel)
 
-      const sizeToggle = el('div', 'ed-size-toggle')
+      const sizeToggle = el('div', 'ed-size-toggle seg')
       for (const cols of [3, 4] as const) {
         const sb = button(`3×${cols}`, 'ed-size-btn' + (tab.cols === cols ? ' active' : ''), () => {
           tab.cols = cols
@@ -268,9 +376,9 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
 
       const grid = el('div', 'ed-grid')
       grid.style.gridTemplateColumns = `repeat(${tab.cols}, 1fr)`
-      for (let r = 0; r < 3; r++) {
+      for (let r = 0; r < GRID_ROWS; r++) {
         for (let c = 0; c < tab.cols; c++) {
-          const cell = r * 4 + c
+          const cell = r * MAX_COLS + c
           const slot = tab.grid[cell]
           const label = slot ? slotLabel(slot) : '·'
           const sb = button(label, 'ed-slot' + (slot ? '' : ' empty'), () => openPicker(ti, cell))
@@ -311,18 +419,15 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
     picker.innerHTML = ''
     if (!picking) return
     const tab = tabs[picking.tab]
-    const row = Math.floor(picking.cell / 4) + 1
-    const col = (picking.cell % 4) + 1
+    const row = Math.floor(picking.cell / MAX_COLS) + 1
+    const col = (picking.cell % MAX_COLS) + 1
     picker.appendChild(el('div', 'ed-picker-title',
       `Tab ${tab.name} · row ${row}, key ${col}`))
 
     const textRow = el('div', 'ed-picker-textrow')
-    const textInput = el('input', 'ed-picker-text')
+    const textInput = noAutofix(el('input', 'ed-picker-text settings-input'))
     textInput.maxLength = MAX_MACRO_LEN
     textInput.placeholder = 'key(s), e.g. o or za.'
-    textInput.spellcheck = false
-    textInput.setAttribute('autocapitalize', 'off')
-    textInput.setAttribute('autocorrect', 'off')
     const current = tab.grid[picking.cell]
     if (current?.text) textInput.value = current.text
     const setText = (): void => { if (textInput.value) assign({ text: textInput.value }) }
@@ -348,7 +453,7 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
   body.appendChild(picker)
 
   const foot = el('div', 'settings-actions')
-  foot.appendChild(button('Cancel', 'settings-btn', () => renderList(body)))
+  foot.appendChild(button('Cancel', 'settings-btn', () => renderHome(body)))
   foot.appendChild(button('Save', 'settings-btn settings-btn-primary', () => {
     const name = nameInput.value.trim() || set.name
     const saved: ControlSet = {
@@ -362,7 +467,7 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
     }
     saveControlSet(saved)
     if (isNew) setActiveControlSet(saved.id)  // you just built it — use it
-    renderList(body)
+    renderHome(body)
   }))
   body.appendChild(foot)
 

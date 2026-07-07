@@ -25,7 +25,7 @@ import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
-import { getPref, setPref } from '../prefs'
+import { getPref, setPref, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
   renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
@@ -375,7 +375,7 @@ export function buildGameView(
           btn.textContent = 'Back to lobby'
           btn.addEventListener('click', () => {
             conn.send({ msg: 'go_lobby' })
-            onLobby()
+            exitToLobby()
           })
           btnRow.appendChild(btn)
           body.append(p, btnRow)
@@ -611,7 +611,7 @@ export function buildGameView(
     exitBtn.textContent = '← Lobby'
     exitBtn.addEventListener('click', () => {
       conn.send({ msg: 'go_lobby' })
-      onLobby()
+      exitToLobby()
     })
     const chip = document.createElement('div')
     chip.className = 'lobby-account-chip is-guest'
@@ -663,7 +663,7 @@ export function buildGameView(
   // Swaps the active map view in place. Forces zoom on when switching INTO
   // tile mode (tiles at full 33×21 are ~10 px on a phone), and reuses the
   // current view-center so the swap doesn't flicker through an unset position.
-  // Not persisted: choice resets to ASCII on next session.
+  // Persists to prefs, so the choice sticks across sessions.
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
@@ -695,6 +695,30 @@ export function buildGameView(
     if (mode === 'tiles' && loader) void (mapView as TileMapView).preloadAtlases(loader)
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
+  }
+
+  // Live-apply when the settings page changes the render-mode pref while a
+  // game is up (the ⚙ key opens settings over the game). exitToLobby releases
+  // the listener on the normal way out; the isConnected self-unhook (same
+  // pattern as the touch panel's CONTROLS_CHANGED_EVENT listener) is the
+  // backstop for exits that skip it, e.g. socket loss — these events fire
+  // rarely, so a dead view must not wait on the next one to unhook.
+  function onRenderModePref(): void {
+    if (!view.isConnected) {
+      window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+      return
+    }
+    setRenderMode(getPref('mapRenderMode'))
+  }
+  window.addEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+
+  // Every deliberate return to the lobby funnels through here so this view's
+  // window listeners don't outlive it (each game builds a fresh view).
+  function exitToLobby(exit?: GameExit): void {
+    window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+    touchControls.destroy()
+    if (exit === undefined) onLobby()
+    else onLobby(exit)
   }
 
   // Save the player's current doll as a login-screen avatar recipe when their
@@ -791,7 +815,7 @@ export function buildGameView(
       if (e.key === 'Escape') {
         e.preventDefault()
         conn.send({ msg: 'go_lobby' })
-        onLobby()
+        exitToLobby()
       }
       return
     }
@@ -1353,7 +1377,7 @@ export function buildGameView(
         // re-harvest so neither carries into the next game.
         harvester.resetForNewGame()
         disarmCreationGuard()
-        onLobby()
+        exitToLobby()
         break
 
       case 'game_ended': {
@@ -1376,7 +1400,7 @@ export function buildGameView(
         // Forward exit details so the lobby renders the exit dialog after the
         // layer switch. The trailing go_lobby + lobby list (often batched with
         // this) land on the lobby's message handler, not ours.
-        onLobby({
+        exitToLobby({
           reason: msg.reason,
           message: msg.message,
           dump: msg.dump,

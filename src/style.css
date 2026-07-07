@@ -796,11 +796,13 @@ html, body {
 
 /* ── In-app document modal (About / What's new) ───────────── */
 /* Floats above login/lobby; rendered from ABOUT.md / CHANGELOG.md. Backdrop and
-   card mirror the exit dialog; z-index sits above it. */
+   card mirror the exit dialog. Docs are leaf modals — nothing ever opens on top
+   of one — so the z-index tops every opener, including the settings page (210),
+   whose Help section opens them. */
 .doc-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 220;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1651,20 +1653,18 @@ html, body {
   image-rendering: pixelated;
   background: #000;
 }
-/* .hud-place-chip is StatsView's tap-target hook for the minimap toggle
-   (its constructor delegates the tap; consumers use setOnPlaceTap), the
-   gesture documented in ABOUT.md's Gestures. Unlike the message-log and
-   monster-list taps — which expand already-visible content — this one
-   reveals an otherwise-hidden feature, so it carries a dotted underline as
-   a standing tap affordance the way those don't need to. The muted
-   lightgrey (#babdb6 @ 50%) keeps it from competing with the text. The
-   padding/negative-margin pair grows the hit area without moving the text —
-   abbreviated names ("@D:1") are otherwise a small target. */
+/* .hud-place-chip is visually undecorated on purpose: like the message-log
+   and monster-list taps, the minimap toggle is an unadorned tap surface,
+   documented in ABOUT.md's Gestures (also surfaced as Settings → Help →
+   Gestures). A dotted-underline affordance was tried twice and removed —
+   permanent HUD chrome isn't worth a learn-once fact. The class is
+   StatsView's own tap-target hook (its constructor delegates the tap;
+   consumers use setOnPlaceTap). The padding/negative-margin pair grows the
+   hit area without moving the text — abbreviated names ("@D:1") are
+   otherwise a small target. */
 .hud-place-chip {
   padding: 0.5rem;
   margin: -0.5rem;
-  text-decoration: underline dotted rgba(186, 189, 182, 0.5);
-  text-underline-offset: 2px;
 }
 
 /* Monster panel (full-screen takeover variant of #monster-list) */
@@ -3210,7 +3210,8 @@ html, body {
 
 /* ── Settings overlay (src/views/settings-view.ts) ───────────── */
 /* Reuses the doc-viewer shell (.doc-backdrop/.doc-card); above the in-game
-   virtual keyboard (z 200) since the ⚙ key there opens it. */
+   virtual keyboard (z 200) since the ⚙ key there opens it, below plain doc
+   modals (220) since the Help section opens those on top. */
 .settings-backdrop { z-index: 210; }
 .settings-card { max-width: 26rem; }
 .settings-body {
@@ -3224,6 +3225,8 @@ html, body {
   color: var(--accent);
   margin: 0.5rem 0 0.4rem;
 }
+/* Breathing room between stacked sections on the home page */
+.settings-h:not(:first-child) { margin-top: 1.6rem; }
 .settings-hint {
   color: var(--text-dim);
   font-size: 0.75rem;
@@ -3251,7 +3254,9 @@ html, body {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.set-row.active .set-row-main { border-color: var(--accent); }
+/* Selected = accent border + amber fill, matching the .settings-seg active
+   segment so selection reads the same everywhere on the page. */
+.set-row.active .set-row-main { border-color: var(--accent); background: rgba(245, 158, 11, 0.12); }
 .set-radio { color: var(--text-dim); flex-shrink: 0; }
 .set-row.active .set-radio { color: var(--accent); }
 .set-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3309,16 +3314,62 @@ html, body {
 .settings-btn:active { background: var(--surface); }
 .settings-btn-primary { border-color: var(--accent); color: var(--accent); }
 
-.settings-import { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
-.settings-import-field {
-  width: 100%;
-  box-sizing: border-box;
+/* Map display picker: a .seg (see below) at settings-btn size. The active
+   segment gets a fill so it reads as state, not as .settings-btn-primary's
+   press-me accent border. */
+.settings-seg { margin-top: 0.9rem; }
+.settings-seg .settings-btn {
+  background: transparent;
+  color: var(--text-dim);
+}
+.settings-seg .settings-btn.active { background: rgba(245, 158, 11, 0.12); }
+
+/* Ignored-spectators list (Chat section): removable name chips + an add row. */
+.settings-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.15rem 0.1rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.settings-chip-x {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.settings-chip-x:active { color: var(--text); }
+/* Shared look for every settings text field (chat add row, import/export
+   areas, editor inputs); per-field classes keep only their layout. */
+.settings-input {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+}
+
+.settings-add-row { display: flex; gap: 0.5rem; }
+.settings-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+}
+.settings-add-row .settings-btn { flex: 0 0 auto; padding: 0.55rem 1.1rem; }
+
+.settings-import { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.settings-import-field {
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.5rem;
   resize: vertical;
 }
@@ -3336,12 +3387,6 @@ html, body {
 }
 .ed-name-input {
   flex: 1;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
   padding: 0.4rem 0.55rem;
   min-width: 0;
 }
@@ -3361,16 +3406,11 @@ html, body {
 .ed-tab-char {
   width: 2rem;
   text-align: center;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
+  border-radius: 4px;  /* tighter than .settings-input: matches the ed-slot grid */
   padding: 0.25rem 0;
   margin-left: 0.35rem;
 }
-.ed-size-toggle { margin-left: auto; display: flex; }
+.ed-size-toggle { margin-left: auto; }
 .ed-size-btn {
   padding: 0.3rem 0.55rem;
   background: transparent;
@@ -3381,11 +3421,16 @@ html, body {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.ed-size-btn:first-child { border-radius: 5px 0 0 5px; }
-/* Segments overlap their shared edge by 1px; the active one wins it via
-   z-index so its accent border draws unbroken on either side. */
-.ed-size-btn:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
-.ed-size-btn.active {
+
+/* Fused segmented control (Map display picker, editor's 3×3/3×4 toggle):
+   segments overlap their 1px shared edge; the active one wins it via
+   z-index so its accent border draws unbroken on either side. Placed after
+   the per-control rules above so its radius/active rules win the tie. */
+.seg { display: flex; }
+.seg > * { margin-left: -1px; border-radius: 0; }
+.seg > :first-child { margin-left: 0; border-radius: 6px 0 0 6px; }
+.seg > :last-child { border-radius: 0 6px 6px 0; }
+.seg > .active {
   color: var(--accent);
   border-color: var(--accent);
   position: relative;
@@ -3419,12 +3464,6 @@ html, body {
 .ed-picker-text {
   flex: 1;
   min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
   padding: 0.4rem 0.55rem;
 }
 .ed-picker-set { flex: 0 0 auto; }

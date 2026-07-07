@@ -9,6 +9,7 @@ import { openSettings } from './settings-view'
 import {
   builtinSets, encodeControlSet, getActiveControlSet, listControlSets,
 } from '../game/input/control-sets'
+import { getPref, IGNORED_SPECTATORS_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 
 beforeEach(() => {
   localStorage.clear()
@@ -90,6 +91,12 @@ describe('settings overlay', () => {
     charInput.value = 'Q'
     charInput.dispatchEvent(new Event('input', { bubbles: true }))
 
+    // an appears-empty label (space) is ignored; blur restores the kept name
+    charInput.value = ' '
+    charInput.dispatchEvent(new Event('input', { bubbles: true }))
+    charInput.dispatchEvent(new Event('blur', { bubbles: true }))
+    expect(charInput.value).toBe('Q')
+
     // shrink the first tab to 3×3
     const firstTabBox = $('.ed-tab')!
     findButton('3×3', firstTabBox).click()
@@ -164,6 +171,89 @@ describe('settings overlay', () => {
     await vi.waitFor(() => expect(exp.textContent).toBe('Copied ✓'))
     expect(exp.classList.contains('flash')).toBe(true)
     expect(exp.disabled).toBe(true)
+  })
+
+  it('shows the home page as sections', () => {
+    openSettings()
+    const headings = $$('.settings-h').map(h => h.textContent)
+    expect(headings).toEqual(['Touch controls', 'Map display', 'Chat', 'Help'])
+  })
+
+  it('switches the render mode, persisting and firing the live-apply event', () => {
+    const fired = vi.fn()
+    window.addEventListener(RENDER_MODE_CHANGED_EVENT, fired)
+    try {
+      openSettings()
+      const [ascii, tiles] = [findButton('ASCII glyphs'), findButton('Graphical tiles')]
+      expect(ascii.classList.contains('active')).toBe(true)  // default pref
+      expect(ascii.getAttribute('aria-checked')).toBe('true')
+
+      tiles.click()
+      expect(getPref('mapRenderMode')).toBe('tiles')
+      expect(fired).toHaveBeenCalledTimes(1)
+      expect(tiles.classList.contains('active')).toBe(true)
+      expect(tiles.getAttribute('aria-checked')).toBe('true')
+      expect(ascii.classList.contains('active')).toBe(false)
+      expect(ascii.getAttribute('aria-checked')).toBe('false')
+
+      tiles.click()  // already active: no-op, no spurious event
+      expect(fired).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(RENDER_MODE_CHANGED_EVENT, fired)
+    }
+  })
+
+  it('manages the ignored-spectators list: seeded, add, dedupe, remove', () => {
+    const fired = vi.fn()
+    window.addEventListener(IGNORED_SPECTATORS_CHANGED_EVENT, fired)
+    try {
+      openSettings()
+      expect($$('.settings-chip-name').map(c => c.textContent)).toEqual(['beem'])
+
+      const input = $<HTMLInputElement>('.settings-add-input')!
+      input.value = 'MalBot'
+      findButton('Add').click()
+      expect(getPref('ignoredSpectators')).toEqual(['beem', 'MalBot'])
+      expect(fired).toHaveBeenCalledTimes(1)
+      expect(input.value).toBe('')
+
+      input.value = '  BEEM  '  // dupe (case-insensitive, trimmed): ignored
+      findButton('Add').click()
+      expect(getPref('ignoredSpectators')).toEqual(['beem', 'MalBot'])
+      expect(fired).toHaveBeenCalledTimes(1)
+
+      $$('.settings-chip-x')[0].click()  // remove beem
+      expect(getPref('ignoredSpectators')).toEqual(['MalBot'])
+      expect($$('.settings-chip-name').map(c => c.textContent)).toEqual(['MalBot'])
+    } finally {
+      window.removeEventListener(IGNORED_SPECTATORS_CHANGED_EVENT, fired)
+    }
+  })
+
+  it('hides the chip row once the ignore list is empty', () => {
+    openSettings()
+    $('.settings-chip-x')!.click()
+    expect(getPref('ignoredSpectators')).toEqual([])
+    expect($<HTMLElement>('.settings-chips')!.hidden).toBe(true)
+  })
+
+  it('opens the About doc on top of the settings card', () => {
+    openSettings()
+    findButton('About').click()
+    const backdrops = $$('.doc-backdrop')  // settings reuses the doc shell
+    expect(backdrops).toHaveLength(2)
+    expect(backdrops[1].querySelector('.doc-title')!.textContent).toBe('About')
+    expect(backdrops[1].classList.contains('settings-backdrop')).toBe(false)
+  })
+
+  it('opens the Gestures doc extracted from ABOUT.md', () => {
+    openSettings()
+    findButton('Gestures').click()
+    const doc = $$('.doc-backdrop')[1]
+    expect(doc.querySelector('.doc-title')!.textContent).toBe('Gestures')
+    // the extracted section, not the whole About doc
+    expect(doc.querySelector('.doc-body')!.textContent).toContain('minimap')
+    expect(doc.querySelector('.doc-body')!.textContent).not.toContain('unofficial')
   })
 
   it('exports to a visible fallback when the clipboard is unavailable', () => {
