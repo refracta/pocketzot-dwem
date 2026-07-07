@@ -2509,6 +2509,19 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
+/* A long watched-player name would otherwise push the pill past the screen
+   edge (flex min-width:auto floors every item at min-content, and an
+   unbroken username can't compress). Let the pill be the item that yields,
+   ellipsizing the name — the Lobby button and chat chip keep their width.
+   Truncation loses nothing: the HUD title line shows the full name. */
+#spectator-bar .lobby-account-chip { min-width: 0; }
+#spectator-bar .lobby-chip-tag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* D-pad: 3×3 CSS grid of large buttons */
 .tc-dpad {
   display: grid;
