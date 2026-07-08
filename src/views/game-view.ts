@@ -14,6 +14,7 @@ import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
 import { openSettings } from './settings-view'
+import { isOverlayOpen } from './overlay'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
@@ -810,6 +811,10 @@ export function buildGameView(
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
+    // A body-mounted overlay (Settings, docs, crypt) is open over the game and
+    // owns the keyboard: don't forward anything to the game underneath. Its own
+    // Escape listener (overlay.ts) handles dismissal, so no preventDefault here.
+    if (isOverlayOpen()) return
     if (isHarvesting()) { e.preventDefault(); return }  // suppress during silent harvest
     if (spectating) {
       if (e.key === 'Escape') {

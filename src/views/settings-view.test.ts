@@ -246,6 +246,21 @@ describe('settings overlay', () => {
     expect(backdrops[1].classList.contains('settings-backdrop')).toBe(false)
   })
 
+  it('closes one overlay layer per Escape, topmost first', () => {
+    openSettings()
+    findButton('About').click()
+    expect($$('.doc-backdrop')).toHaveLength(2)
+    const esc = () =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    esc()
+    // only the top (About) doc closes; the settings card underneath survives
+    const remaining = $$('.doc-backdrop')
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0].querySelector('.doc-title')!.textContent).toBe('Settings')
+    esc()
+    expect($$('.doc-backdrop')).toHaveLength(0)
+  })
+
   it('opens the Gestures doc extracted from ABOUT.md', () => {
     openSettings()
     findButton('Gestures').click()

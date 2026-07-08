@@ -3,16 +3,35 @@
 // Escape, and returns a close() that removes the node and detaches the listener.
 // Each caller supplies its own markup and any extra close triggers (a button, a
 // backdrop tap) by wiring them to the returned handle.
+// Open overlays, oldest first. A single shared Escape listener closes only the
+// topmost, so stacking (e.g. a Help doc over the Settings card) unwinds one
+// layer per press instead of collapsing the whole stack.
+const stack: Array<() => void> = []
+
+function onKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') stack[stack.length - 1]?.()
+}
+
+// Whether any body-mounted overlay is currently open. Surfaces underneath (the
+// game view's document keydown handler) consult this to stop forwarding keys to
+// content the overlay is covering.
+export function isOverlayOpen(): boolean {
+  return stack.length > 0
+}
+
 export function mountOverlay(el: HTMLElement): () => void {
   document.body.appendChild(el)
+  let closed = false
   function close(): void {
+    if (closed) return
+    closed = true
     el.remove()
-    document.removeEventListener('keydown', onKey)
+    const i = stack.indexOf(close)
+    if (i !== -1) stack.splice(i, 1)
+    if (stack.length === 0) document.removeEventListener('keydown', onKey)
   }
-  function onKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') close()
-  }
-  document.addEventListener('keydown', onKey)
+  if (stack.length === 0) document.addEventListener('keydown', onKey)
+  stack.push(close)
   return close
 }
 

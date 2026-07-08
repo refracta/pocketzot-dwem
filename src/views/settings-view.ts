@@ -12,7 +12,7 @@ import { mountCardOverlay } from './overlay'
 import {
   cloneSet, deleteControlSet, encodeControlSet, getActiveControlSet,
   importControlSet, listControlSets, newSetId, saveControlSet,
-  setActiveControlSet, slotLabel, slotTitle,
+  setActiveControlSet, slotLabel, slotTitle, STANDARD_ID,
   GRID_ROWS, MAX_COLS, MAX_MACRO_LEN, PICKER_KEYS,
 } from '../game/input/control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from '../game/input/control-sets'
@@ -82,7 +82,11 @@ function renderControlsSection(body: HTMLElement): void {
     'Control sets swap the buttons on the three control tabs.'))
 
   const sets = listControlSets()
-  const activeId = getActiveControlSet().id
+  // Reuse the list already built above rather than getActiveControlSet(), which
+  // would rebuild it; fall back to Standard exactly as getActiveControlSet does
+  // when the stored id no longer names a set.
+  const wanted = getPref('controlSetId')
+  const activeId = sets.some(s => s.id === wanted) ? wanted : STANDARD_ID
   const list = el('div', 'set-list')
   body.appendChild(list)
 
