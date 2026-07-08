@@ -99,6 +99,11 @@ export class MapStore {
   // at a cell whose original sighting had no client_id assigned yet.
   private lastMonAtCell = new Map<string, { mon: MonsterInfo; g: string }>()
   playerPos = { x: 0, y: 0 }
+  // Names of sensed invisible monsters with unknown position (trunk's map-msg
+  // `invis_mon_desc`). Sticky across map messages like the reference's
+  // display.js `inv_mons_msg` — updated only when the key is present, cleared
+  // by an explicit '' or a map clear. Rendered by MonsterListView.
+  invisMonDesc = ''
 
   // Ballistomycetes and tentacles have no_exp=true but are threatening and should display.
   private isDisplayMonster(mon: MonsterInfo): boolean {
@@ -336,6 +341,7 @@ export class MapStore {
     this.monsterGlyphs.clear()
     this.monsterRefs.clear()
     this.lastMonAtCell.clear()
+    this.invisMonDesc = ''
   }
 
   get size(): number {

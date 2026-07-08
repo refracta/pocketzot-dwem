@@ -5,7 +5,7 @@
 // AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
 import { TEX, type TileinfoModule, type TileLoader } from './tile-loader'
-import { buildStatusOverlays, mayHaveStatusOverlays, resolveOverlayId } from '../hud/monster-style'
+import { buildStatusOverlays, mayHaveStatusOverlays, resolveOverlayId, type StatusOverlayOpts } from '../hud/monster-style'
 import { buildStatusIconSizeMap } from '../map/icon-sizes'
 
 // Native cell size used by all DCSS sprite atlases. Each tile occupies a
@@ -139,7 +139,7 @@ export function appendIconOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[] = [],
   scale = 1,
-  opts: { includeMdam?: boolean } = {},
+  opts: StatusOverlayOpts = {},
 ): void {
   if (!loader) return
   // Skip the async module load for status-free monsters (the common case in a

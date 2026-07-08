@@ -908,6 +908,9 @@ export function buildGameView(
         // current view center; setViewCenter returns true only on a real
         // pan, so we can keep the dirty-render path live in steady state.
         const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
+        // Sticky like the reference's inv_mons_msg: only a present key
+        // changes it ('' clears); store.clear() above also resets it.
+        if (msg.invis_mon_desc !== undefined) store.invisMonDesc = msg.invis_mon_desc
         const dirty = store.merge(msg.cells ?? [])
         if (msg.clear || panned) scheduleRender()
         else scheduleRender(dirty)

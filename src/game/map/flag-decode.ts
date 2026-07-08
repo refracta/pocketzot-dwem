@@ -63,10 +63,15 @@ export interface FgFlags {
 
 // Named flags decoded from t.bg. Same conventions as FgFlags. ELDRITCH_* only
 // exist in the handful of versions that had them (removed in 0.30) — the
-// server backend sets them there, the 0.34 fallback never does.
+// server backend sets them there, the 0.34 fallback never does. INVIS /
+// REMEMBERED_INVIS are the other direction: added by the trunk invisibility
+// rework (post-0.34), so only the server backend of a new-enough version sets
+// them (INVIS marks a known-position invisible monster, REMEMBERED_INVIS a
+// cell one recently vacated).
 export interface BgFlags {
   value: number  // dngn tile id (raw lo & the version's bg mask)
   MM_UNSEEN: boolean; UNSEEN: boolean
+  INVIS?: boolean; REMEMBERED_INVIS?: boolean
   CURSOR1: boolean; CURSOR2: boolean; CURSOR3: boolean
   TUT_CURSOR: boolean
   TRAV_EXCL: boolean; EXCL_CTR: boolean

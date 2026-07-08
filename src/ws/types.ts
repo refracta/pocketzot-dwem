@@ -144,7 +144,10 @@ export type ServerMsg =
   | { msg: 'lobby_remove'; id: string; reason?: string }
   | { msg: 'lobby_complete' }
   | { msg: 'lobby_clear' }
-  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number } }
+  // invis_mon_desc: names of sensed invisible monsters whose position is
+  // unknown (trunk invisibility rework) — sticky until the next value arrives;
+  // '' clears. Shown as the monster list's first row.
+  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string }
   | { msg: 'player' } & PlayerMsg
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }

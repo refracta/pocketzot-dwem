@@ -126,6 +126,6 @@ export class MonsterPanelView {
     // Damage shows as the mp-hp bar above, so no MDAM overlay (includeMdam off).
     // appendIconOverlays self-defers on the icons tileinfo module, so layering
     // it here per row is equivalent to a separate second pass.
-    appendIconOverlays(this.loader, tileEl, cell?.fg, cell?.icons ?? [], TILE_SCALE)
+    appendIconOverlays(this.loader, tileEl, cell?.fg, cell?.icons ?? [], TILE_SCALE, { bg: cell?.t_bg })
   }
 }

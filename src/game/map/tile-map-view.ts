@@ -658,6 +658,11 @@ export class TileMapView {
       else if (bg.TRAV_EXCL) this.paintDngnName('TRAVEL_EXCLUSION_BG', px, py)
     }
 
+    // 'Remembered invisible' ground marker — a known-invisible monster stood
+    // here and has since moved (trunk invisibility rework). The reference
+    // draws it at the tail of draw_background, outside the explored-cell gate.
+    if (bg.REMEMBERED_INVIS) this.paintDngnName('REMEMBERED_INVIS', px, py)
+
     // ── after draw_background (do_render_cell:260-456) ─────────────────────
 
     // cell.cloud goes through the fg-flag decode like the reference's
@@ -735,7 +740,10 @@ export class TileMapView {
     // per-icon width sizing all live in the shared buildStatusOverlays, the same
     // decision the DOM list/panel/popup paths run. Only the paint primitive
     // (canvas paintIcon/paintTile here) differs by substrate.
-    const status = buildStatusOverlays(cell.fg, cell.icons ?? [], this.iconSizes)
+    // bg was already decoded at the top of this cell paint; reuse its
+    // REMEMBERED_INVIS to gate the opt so the common (flag-clear) cell doesn't
+    // re-decode t_bg inside buildStatusOverlays' per-cell fast path.
+    const status = buildStatusOverlays(cell.fg, cell.icons ?? [], this.iconSizes, bg.REMEMBERED_INVIS ? { bg: cell.t_bg } : undefined)
     for (const o of status.overlays) {
       const id = resolveOverlayId(o, this.icons)
       if (id !== undefined) this.paintTile(TEX.ICONS, id, px, py, o.xofs, o.yofs)

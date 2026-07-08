@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
+import { setEnumsModule } from '../map/flag-decode'
 import {
   decodeMdam, decodeFgStatuses, decodeFgThreatTier,
   buildStatusOverlays, mdamIconName, fgTileIndex,
@@ -335,6 +336,55 @@ describe('monsterSort', () => {
     const a = m({})
     const b = m({})
     expect(monsterSort(a, b)).toBe(0)
+  })
+})
+
+// ─── buildStatusOverlays — REMEMBERED_INVIS (trunk bg flag) ────────────────
+// The trunk invisibility rework marks cells a known-invisible monster vacated
+// with a bg flag (hi-word [0, 0x080] in trunk's enums.js), the one status
+// icon driven by t.bg rather than t.fg. Decoding needs the server enums
+// backend — the bundled 0.34 fallback predates the flag.
+
+describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
+  const noSizes = new Map<number, number>()
+  // Synthetic trunk-alike module (fg flags in lo bits like the flag-decode
+  // test fake; bg REMEMBERED_INVIS at the trunk hi-word position).
+  const trunkishEnums = {
+    prepare_fg_flags(raw: number | number[]) {
+      const lo = (typeof raw === 'number' ? raw : (raw[0] ?? 0)) >>> 0
+      return { value: lo >>> 8, PET: (lo & 0x01) !== 0, STAB: (lo & 0x02) !== 0 }
+    },
+    prepare_bg_flags(raw: number | number[]) {
+      const hi = Array.isArray(raw) ? (raw[1] ?? 0) : 0
+      const lo = ((Array.isArray(raw) ? raw[0] : raw) ?? 0) >>> 0
+      return { value: lo & 0xFFFF, INVIS: (hi & 0x040) !== 0, REMEMBERED_INVIS: (hi & 0x080) !== 0 }
+    },
+  }
+
+  afterEach(() => setEnumsModule(null))
+
+  it('inserts UNSEEN_INVIS_REMEMBERED between the attitude gem and the behaviour icon', () => {
+    setEnumsModule(trunkishEnums)
+    const { overlays, statusShift } = buildStatusOverlays(0x03, [], noSizes, { bg: [0, 0x080] })
+    expect(overlays).toEqual([
+      { name: 'FRIENDLY', xofs: 0, yofs: 0 },
+      { name: 'UNSEEN_INVIS_REMEMBERED', xofs: 0, yofs: 0 },
+      { name: 'STAB_BRAND', xofs: 0, yofs: 0 },
+    ])
+    expect(statusShift).toBe(12)
+  })
+
+  it('survives the empty-fg fast path (bg alone produces the overlay)', () => {
+    setEnumsModule(trunkishEnums)
+    expect(buildStatusOverlays(0, [], noSizes, { bg: [0, 0x080] }).overlays).toEqual([
+      { name: 'UNSEEN_INVIS_REMEMBERED', xofs: 0, yofs: 0 },
+    ])
+  })
+
+  it('is off on versions predating the flag (bundled 0.34 fallback)', () => {
+    // No server module installed → fallback backend, which never sets
+    // REMEMBERED_INVIS (trunk's hi 0x080 means nothing in the 0.34 layout).
+    expect(buildStatusOverlays(0, [], noSizes, { bg: [0, 0x080] }).overlays).toEqual([])
   })
 })
 

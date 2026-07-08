@@ -16,6 +16,13 @@ Notable changes to PocketZot, newest first.
   yourself works the same as before.
 - Examining (x or X) with the minimap open now closes the minimap, so the
   cursor can't end up hidden beneath it.
+- Tiles mode supports trunk's reworked monster invisibility: an invisible
+  monster whose position is known draws translucent with a "?" marker, a
+  tile one just left shows a grey ghost marker, and the new invisibility
+  status icons display.
+- The monster list warns about invisible monsters sensed nearby but not yet
+  located — a magenta row in both render modes, shown even when no monster
+  is visible.
 
 ## 2026-07-06
 
