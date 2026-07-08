@@ -122,3 +122,24 @@ describe('StatsView identity line', () => {
     expect(identityText(v)).toContain('*WIZARD*')
   })
 })
+
+describe('StatsView settings chip', () => {
+  it('fires onSettingsTap when the gear is tapped', () => {
+    const v = makeView()
+    let taps = 0
+    v.setOnSettingsTap(() => { taps++ })
+    const gear = v.element.querySelector<HTMLElement>('.hud-settings-chip')!
+    expect(gear).toBeTruthy()
+    gear.click()
+    expect(taps).toBe(1)
+  })
+
+  it('survives a repaint (delegated on the stable root)', () => {
+    const v = makeView()
+    let taps = 0
+    v.setOnSettingsTap(() => { taps++ })
+    v.update({ name: 'Zap', title: 'the Chiller', species: 'Human' })  // rewrites markup
+    v.element.querySelector<HTMLElement>('.hud-settings-chip')!.click()
+    expect(taps).toBe(1)
+  })
+})

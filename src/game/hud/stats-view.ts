@@ -32,6 +32,7 @@ export class StatsView {
   private layout: 'compact' | 'square'
   private mql: MediaQueryList | null
   private onPlaceTap: (() => void) | null = null
+  private onSettingsTap: (() => void) | null = null
 
   constructor(inv: InventoryStore) {
     this.inv = inv
@@ -43,7 +44,9 @@ export class StatsView {
     // markup have a single owner (same principle as cellKey/parseCellKey in
     // map-store). Consumers get a callback, not knowledge of our DOM.
     this.el.addEventListener('click', (e) => {
-      if (this.onPlaceTap && (e.target as HTMLElement).closest?.('.hud-place-chip')) this.onPlaceTap()
+      const t = e.target as HTMLElement
+      if (this.onPlaceTap && t.closest?.('.hud-place-chip')) this.onPlaceTap()
+      else if (this.onSettingsTap && t.closest?.('.hud-settings-chip')) this.onSettingsTap()
     })
     // Portrait gets the compact HUD (single nowrap rows); landscape gets the
     // square two-column HUD, which fits the 15rem sidebar without clipping.
@@ -63,6 +66,10 @@ export class StatsView {
 
   setOnPlaceTap(cb: () => void): void {
     this.onPlaceTap = cb
+  }
+
+  setOnSettingsTap(cb: () => void): void {
+    this.onSettingsTap = cb
   }
 
   // Swap templates on rotate and repaint from the accumulated state — render()
@@ -474,6 +481,18 @@ export class StatsView {
     return this.layout === 'square' ? this.squareTemplate() : this.compactTemplate()
   }
 
+  // The in-game Settings entry: a self-labeling gear parked at the right edge
+  // of the id line (same delegated-tap hook as the place chip, via
+  // setOnSettingsTap). Unlike the place chip it stays visibly tappable — it's
+  // the one surface a lost player must find without first reading the Gestures
+  // help, which itself lives inside Settings.
+  private settingsChip(): string {
+    // U+2699 GEAR + U+FE0E (text-presentation selector): iOS Safari otherwise
+    // renders the bare gear as a colour emoji, ignoring the CSS colour. FE0E
+    // forces the monochrome glyph so it inherits the fg14 line colour.
+    return `<span class="hud-settings-chip" role="button" aria-label="Settings" title="Settings">&#x2699;&#xFE0E;</span>`
+  }
+
   private wqQuiverRows(): string {
     return `
       <div class="hg-wq" id="hud-wq"></div>
@@ -484,7 +503,7 @@ export class StatsView {
 
   private compactTemplate(): string {
     return `
-      <div class="hs-id fg14"><span id="hud-id"></span><span class="hg-piety" id="hud-piety"></span></div>
+      <div class="hs-id fg14"><span id="hud-id"></span><span class="hg-piety" id="hud-piety"></span>${this.settingsChip()}</div>
       <div class="hg-bar-pair">
         <div class="hg-bar-row hg-hp">
           <div class="hg-bar-cell"><span class="hud-bar-seg hp-full"></span><span class="hud-bar-seg hp-poison"></span><span class="hud-bar-seg hp-decrease"></span><span class="hud-bar-seg hp-increase"></span></div>
@@ -522,7 +541,7 @@ export class StatsView {
   // sidebar width the way the compact template's nowrap rows do.
   private squareTemplate(): string {
     return `
-      <div class="hs-id fg14"><span id="hud-title"></span></div>
+      <div class="hs-id fg14"><span id="hud-title"></span>${this.settingsChip()}</div>
       <div class="hs-species fg14"><span id="hud-species"></span><span class="hg-piety" id="hud-piety"></span><span class="hud-sq-gold" id="hud-gold-ui" style="display:none"><span class="hg-caption">Gold:</span><span id="hud-gold"></span></span></div>
       <div class="hg-bar-row hud-sq-barline">
         <span class="hg-caption" id="hud-hp-caption">Health:</span>

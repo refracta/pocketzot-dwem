@@ -1667,6 +1667,23 @@ html, body {
   margin: -0.5rem;
 }
 
+/* Unlike the place chip, the settings gear is deliberately visible: it's the
+   in-game entry to Settings, the one surface a lost player must find without
+   first reading the (in-Settings) Gestures help. margin-left:auto parks it at
+   the id line's right edge; the padding with cancelling negative margins grows
+   the tap target without inflating the row height. */
+.hud-settings-chip {
+  margin: -0.4rem -0.4rem -0.4rem auto;
+  padding: 0.4rem;
+  align-self: center;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-dim);  /* quiet neutral, not the fg14 yellow of the name line */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.hud-settings-chip:active { opacity: 0.5; }  /* dim on press */
+
 /* Monster panel (full-screen takeover variant of #monster-list) */
 .mp-list {
   display: flex;

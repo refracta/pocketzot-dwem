@@ -80,7 +80,6 @@ const DPAD_LAYOUT: DpadDef[][] = [
 // [123]/[ABC] toggle. Replaces the touch-controls strip while open.
 function buildKeyboardOverlay(
   send: SendFn,
-  onOpenSettings?: () => void,
 ): { element: HTMLElement; open: () => void; close: () => void } {
   type Layer = 'letters' | 'symbols'
   let layer: Layer = 'letters'
@@ -311,12 +310,6 @@ function buildKeyboardOverlay(
     btns.push(makeBtn(switchLabel, 'wide flex', () => setLayer(nextLayer)))
     btns.push(makeBtn('⇥', 'wide flex glyph', () => dispatchKey(9)))
     btns.push(makeBtn('⏎', 'wide flex glyph', () => dispatchKey(13)))
-    // In-game settings entry (the control-set picker/editor lives there);
-    // game-view injects the opener so the input layer stays view-free. Close
-    // the kbd first so the settings overlay isn't fighting its z-index.
-    if (onOpenSettings) {
-      btns.push(makeBtn('⚙', 'wide flex glyph', () => { close(); onOpenSettings() }))
-    }
     btns.push(makeBtn('abc▾', 'wide flex', close))
     return btns
   }
@@ -364,7 +357,6 @@ function buildKeyboardOverlay(
 
 export interface TouchControlsOpts {
   spellTab?: SpellTabConfig
-  onOpenSettings?: () => void  // wired to the ⚙ key on the virtual keyboard
 }
 
 export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): TouchControls {
@@ -448,7 +440,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   root.id = 'touch-controls'
 
   // Keyboard overlay (fixed position, renders above everything)
-  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send, opts.onOpenSettings)
+  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send)
   root.appendChild(kbdEl)
 
   // --- D-pad ---

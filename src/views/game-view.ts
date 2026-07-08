@@ -199,6 +199,7 @@ export function buildGameView(
   // The place chip toggles the minimap. StatsView owns the chip's DOM and
   // tap detection (see its constructor); we only supply the behavior.
   statsView.setOnPlaceTap(() => minimapOpen ? closeMinimap() : openMinimap())
+  statsView.setOnSettingsTap(() => openSettings())
   // Fetch this version's enums.js flag tables and install them as the flag-
   // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
   // because the monster list/panel style attitude+threat from fg flags in
@@ -580,7 +581,6 @@ export function buildGameView(
     afterUserSend(msg)
   }, spectating ? {} : {
     spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
-    onOpenSettings: openSettings,
   })
 
   const menuControls = document.createElement('div')
