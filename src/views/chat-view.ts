@@ -75,6 +75,15 @@ function trimUrlTail(url: string): string {
   return url.slice(0, end)
 }
 
+// IRC-style `<name>` sender tag in accent color; shared by history lines and
+// the transient pill so the costume can't drift between them.
+function senderSpan(name: string): HTMLSpanElement {
+  const s = document.createElement('span')
+  s.className = 'chat-line-sender'
+  s.textContent = `<${name}>`
+  return s
+}
+
 function appendLinkified(el: HTMLElement, text: string): void {
   let last = 0
   for (const m of text.matchAll(URL_RE)) {
@@ -281,10 +290,7 @@ export class ChatView {
       // land on the same character, so no ':' glue is needed — and no game
       // message ever starts with '<', which keeps speech unmistakable.
       // (Meta lines keep the matching IRC convention: '* notice'.)
-      const s = document.createElement('span')
-      s.className = 'chat-line-sender'
-      s.textContent = `<${line.sender}>`
-      el.append(s, ' ')
+      el.append(senderSpan(line.sender), ' ')
       appendLinkified(el, line.text)
     }
     this.historyEl.appendChild(el)
@@ -298,12 +304,9 @@ export class ChatView {
     if (this.opts.pillAllowed && !this.opts.pillAllowed()) return
     // Same <name> costume as the sheet's history lines. The inner div
     // carries the two-line clamp (see .chat-pill-text in style.css).
-    const s = document.createElement('span')
-    s.className = 'chat-line-sender'
-    s.textContent = `<${line.sender}>`
     const text = document.createElement('div')
     text.className = 'chat-pill-text'
-    text.append(s, ` ${line.text}`)
+    text.append(senderSpan(line.sender), ` ${line.text}`)
     this.pill.replaceChildren(text)
     // A message landing mid-fade recovers: removing the class transitions
     // opacity back up, and the fresh timer restarts the full display window.
