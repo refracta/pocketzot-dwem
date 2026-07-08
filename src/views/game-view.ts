@@ -718,8 +718,7 @@ export function buildGameView(
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
     touchControls.destroy()
-    if (exit === undefined) onLobby()
-    else onLobby(exit)
+    onLobby(exit)
   }
 
   // Save the player's current doll as a login-screen avatar recipe when their

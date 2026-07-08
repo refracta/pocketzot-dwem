@@ -532,11 +532,13 @@ describe('lobby transitions', () => {
   it('go_lobby and close both return to the lobby with no exit payload', () => {
     const a = setup()
     a.dispatch({ msg: 'go_lobby' })
-    expect(a.onLobby).toHaveBeenCalledWith()
+    expect(a.onLobby).toHaveBeenCalledTimes(1)
+    expect(a.onLobby.mock.calls[0][0]).toBeUndefined()  // no exit payload
 
     const b = setup()
     b.dispatch({ msg: 'close' })
-    expect(b.onLobby).toHaveBeenCalledWith()
+    expect(b.onLobby).toHaveBeenCalledTimes(1)
+    expect(b.onLobby.mock.calls[0][0]).toBeUndefined()
   })
 })
 
