@@ -121,6 +121,23 @@ describe('wire parsing and rendering', () => {
       .toBe('<gammafunk> morgue at http://crawl.akrasiac.org/rawdata/rr/morgue-rr.txt, rip')
   })
 
+  it('keeps a balanced trailing paren inside the URL, sheds an unbalanced one', () => {
+    const { view } = make()
+    // A wiki link whose path legitimately ends in ')' must survive whole…
+    view.handleChat(
+      "<span class='chat_sender'>x</span>: <span class='chat_msg'>see https://crawl.chaosforge.org/Vault_(DCSS)</span>",
+      false,
+    )
+    // …while a link merely wrapped in parens sheds the stray closer.
+    view.handleChat(
+      "<span class='chat_sender'>x</span>: <span class='chat_msg'>(morgue: http://crawl.akrasiac.org/rawdata/rr/morgue-rr.txt)</span>",
+      false,
+    )
+    const [balanced, wrapped] = view.sheet.querySelectorAll('.chat-line a')
+    expect(balanced.getAttribute('href')).toBe('https://crawl.chaosforge.org/Vault_(DCSS)')
+    expect(wrapped.getAttribute('href')).toBe('http://crawl.akrasiac.org/rawdata/rr/morgue-rr.txt')
+  })
+
   it('does not linkify schemeless or non-http text', () => {
     const { view } = make()
     view.handleChat(

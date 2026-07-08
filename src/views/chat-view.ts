@@ -53,11 +53,32 @@ function parseChatContent(content: string): { sender: string; text: string } {
 // phone. Text-parsed with DOM-built anchors, so no HTML risk.
 const URL_RE = /https?:\/\/\S+/g
 
+// Trim trailing characters that belong to the surrounding sentence, not the
+// URL. Plain punctuation always goes; a closing bracket goes only when it's
+// unbalanced within the URL — so `…/Vault_(DCSS)` keeps its `)` while a link
+// wrapped like `(see …/foo)` sheds the stray one. (GitHub's autolink rule.)
+function trimUrlTail(url: string): string {
+  let end = url.length
+  while (end > 0) {
+    const c = url[end - 1]
+    if (')]'.includes(c)) {
+      const open = c === ')' ? '(' : '['
+      const inner = url.slice(0, end)
+      const opens = inner.split(open).length - 1
+      const closes = inner.split(c).length - 1
+      if (closes <= opens) break  // balanced — the bracket is part of the path
+    } else if (!`.,!?;:'"`.includes(c)) {
+      break
+    }
+    end--
+  }
+  return url.slice(0, end)
+}
+
 function appendLinkified(el: HTMLElement, text: string): void {
   let last = 0
   for (const m of text.matchAll(URL_RE)) {
-    // Trailing punctuation is nearly always the sentence's, not the URL's.
-    const url = m[0].replace(/[.,!?;:)\]'"]+$/, '')
+    const url = trimUrlTail(m[0])
     el.append(text.slice(last, m.index))
     const a = document.createElement('a')
     a.href = url
