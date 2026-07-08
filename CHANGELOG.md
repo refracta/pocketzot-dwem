@@ -39,8 +39,8 @@ Notable changes to PocketZot, newest first.
 - Control sets travel as text: Export copies a pocketzot-controls: string to
   the clipboard, and pasting one into Import brings it back — yours from
   another device, or another player's.
-- New Settings page, reachable from the login screen footer and the ⚙ key on
-  the in-game keyboard. Control-set changes apply immediately, mid-game.
+- New Settings page, reachable from the login screen footer and the ⚙ chip
+  in the in-game HUD. Control-set changes apply immediately, mid-game.
 - Long menus now keep scroll position after opening and closing an entry's
   description.
 - Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8

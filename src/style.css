@@ -3227,7 +3227,8 @@ html, body {
 
 /* ── Settings overlay (src/views/settings-view.ts) ───────────── */
 /* Reuses the doc-viewer shell (.doc-backdrop/.doc-card); above the in-game
-   virtual keyboard (z 200) since the ⚙ key there opens it, below plain doc
+   virtual keyboard (z 200) since the kbd can be open when the HUD ⚙ chip
+   is tapped (the HUD stays visible above the kbd), below plain doc
    modals (220) since the Help section opens those on top. */
 .settings-backdrop { z-index: 210; }
 .settings-card { max-width: 26rem; }

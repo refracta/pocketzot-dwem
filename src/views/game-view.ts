@@ -699,7 +699,7 @@ export function buildGameView(
   }
 
   // Live-apply when the settings page changes the render-mode pref while a
-  // game is up (the ⚙ key opens settings over the game). exitToLobby releases
+  // game is up (the HUD ⚙ chip opens settings over the game). exitToLobby releases
   // the listener on the normal way out; the isConnected self-unhook (same
   // pattern as the touch panel's CONTROLS_CHANGED_EVENT listener) is the
   // backstop for exits that skip it, e.g. socket loss — these events fire

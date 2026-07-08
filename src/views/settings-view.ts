@@ -1,6 +1,6 @@
 // Settings overlay: a body-mounted full-screen modal reusing the doc-viewer
-// shell classes, opened from the login footer and from the ⚙ key on the
-// in-game virtual keyboard. The home page is a stack of sections (touch
+// shell classes, opened from the login footer and from the HUD id line's
+// ⚙ chip in-game. The home page is a stack of sections (touch
 // controls, map display, chat, help); a section may take over the body for a
 // sub-page (the control-set editor) and return via renderHome. Changes apply
 // live via window events, fired by the stores themselves (control-sets.ts
