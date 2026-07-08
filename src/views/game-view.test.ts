@@ -1113,3 +1113,105 @@ describe('monster panel → server selection menu hand-off', () => {
     expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
   })
 })
+
+describe('minimap lens suspend/restore while spectating', () => {
+  const lens = (h: Harness) => h.view.querySelector<HTMLElement>('.minimap-lens')
+  // The real open path: a player frame renders the HUD place chip, tapping
+  // it toggles the lens (statsView.setOnPlaceTap wiring).
+  const openLens = (h: Harness) => {
+    h.dispatch({ msg: 'player', hp: 10, hp_max: 10, place: 'Dungeon', depth: 3 })
+    h.view.querySelector<HTMLElement>('.hud-place-chip')!.click()
+  }
+
+  it('restores the lens after a watched-player overlay comes and goes', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    expect(lens(h)).not.toBeNull()
+    // The watched player opens an item description — the overlay takes the
+    // screen and must evict the lens...
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 't', body: 'b' })
+    expect(lens(h)).toBeNull()
+    // ...but closing it returns the spectator to the overview.
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).not.toBeNull()
+  })
+
+  it('restores through the menu path too (inventory open/close)', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [] })
+    expect(lens(h)).toBeNull()
+    h.dispatch({ msg: 'close_menu' })
+    expect(lens(h)).not.toBeNull()
+  })
+
+  it('a stray close_all_menus does not end the spectator lens session', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    h.dispatch({ msg: 'close_all_menus' })
+    expect(lens(h)).not.toBeNull()
+  })
+
+  it('the spectator closing the lens themselves ends the session — no restore', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    lens(h)!.click()  // explicit dismiss
+    expect(lens(h)).toBeNull()
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 't', body: 'b' })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).toBeNull()
+  })
+
+  it('does not restore for the playing role (own action moved attention on)', () => {
+    const h = setup()
+    openLens(h)
+    expect(lens(h)).not.toBeNull()
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 't', body: 'b' })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).toBeNull()
+  })
+
+  it('X-mode entry closes the playing role\'s lens (no lens over an invisible cursor)', () => {
+    const h = setup()
+    openLens(h)
+    expect(lens(h)).not.toBeNull()
+    h.dispatch({ msg: 'cursor', id: 2, loc: { x: 5, y: 5 } })
+    expect(lens(h)).toBeNull()
+    // Own action ended the session — no restore on examine exit.
+    h.dispatch({ msg: 'cursor', id: 2 })
+    expect(lens(h)).toBeNull()
+  })
+
+  it('X-mode entry leaves the spectator\'s lens alone (watched player examining)', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    h.dispatch({ msg: 'cursor', id: 2, loc: { x: 5, y: 5 } })
+    expect(lens(h)).not.toBeNull()
+    h.dispatch({ msg: 'cursor', id: 2 })
+    expect(lens(h)).not.toBeNull()
+  })
+
+  it('survives an interleaved teardown: hide_dialog under a still-stacked ui-push', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 't', body: 'b' })
+    h.dispatch({ msg: 'show_dialog', html: '<p>Transfer save?</p>' })
+    // hide_dialog calls hideOverlay while the ui-push is still on the stack —
+    // the restore attempt is refused and must NOT consume the suspension.
+    h.dispatch({ msg: 'hide_dialog' })
+    expect(lens(h)).toBeNull()
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).not.toBeNull()
+  })
+
+  it('stays suspended across a stacked overlay run, restoring only at the end', () => {
+    const h = setup({ username: 'bob' })
+    openLens(h)
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 'a', body: 'b' })
+    h.dispatch({ msg: 'ui-push', type: 'describe-spell', title: 'c', body: 'd' })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).toBeNull()  // still one overlay up
+    h.dispatch({ msg: 'ui-pop' })
+    expect(lens(h)).not.toBeNull()
+  })
+})

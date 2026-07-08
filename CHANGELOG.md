@@ -9,6 +9,14 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-07
+
+- Spectators keep their minimap: menus and screens the watched player opens
+  no longer dismiss it — it comes back as soon as they close. Dismissing it
+  yourself works the same as before.
+- Examining (x or X) with the minimap open now closes the minimap, so the
+  cursor can't end up hidden beneath it.
+
 ## 2026-07-06
 
 - Long menus now keep scroll position after opening and closing an entry's

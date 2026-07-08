@@ -185,6 +185,11 @@ export function buildGameView(
   let monsterPanelOpen = false
   const minimap = new MinimapView(store)
   let minimapOpen = false
+  // While spectating, an overlay evicting the lens is the watched player's
+  // doing, not the spectator's — remember the eviction here so hideOverlay
+  // brings the lens back when the screen returns to the map. The spectator's
+  // own closes (lens tap, chip re-tap, Esc) end the session instead.
+  let minimapSuspended = false
   // Tap anywhere on the lens dismisses it (Esc and the place-chip toggle
   // are the other exits — no × needed). A future pan gesture will claim
   // drags on the canvas and leave taps as the dismissal.
@@ -1379,6 +1384,12 @@ export function buildGameView(
   // --- X mode (eXamine level map) ---
 
   function enterXMode(): void {
+    // The examine map is itself an overview — a player entering it has
+    // switched tools, and the lens would hide the cursor they're steering
+    // (keys pass through the lens, so X/x reach the server under it). A
+    // *spectator's* lens stays put: the watched player's examine pans vgrdc,
+    // which just glides the you-are-here rect across the minimap.
+    if (!spectating) closeMinimap()
     inXMode = true
     view.classList.add('x-mode')  // drops the map's log-strip padding (style.css)
     msgLog.style.display = 'none'
@@ -2496,7 +2507,9 @@ export function buildGameView(
   // the touch handler and docKeyHandler), and the map/player repaints below
   // keep the lens current — so the user can walk by the level overview.
   // Tap, ×, Esc, or re-tapping the place chip dismisses; any server overlay
-  // closes it via enterOverlayLayout.
+  // closes it via enterOverlayLayout. While spectating, an overlay eviction
+  // only *suspends* the lens (the watched player caused it, not the
+  // spectator) and hideOverlay reopens it when the map layout returns.
 
   function repaintMinimap(): void {
     const el = minimap.element
@@ -2531,9 +2544,10 @@ export function buildGameView(
     view.focus({ preventScroll: true })
   }
 
-  function closeMinimap(): void {
+  function closeMinimap(opts?: { suspend?: boolean }): void {
     if (!minimapOpen) return
     minimapOpen = false
+    minimapSuspended = !!(opts?.suspend && spectating)
     minimap.element.remove()
   }
 
@@ -2549,7 +2563,7 @@ export function buildGameView(
   // the redundant call under enterOverlayLayout's own closeMinimap is a no-op.
   function closeClientOverlays(): void {
     monsterPanelOpen = false
-    closeMinimap()
+    closeMinimap({ suspend: true })
   }
 
   // --- shared overlay helpers ---
@@ -2563,7 +2577,7 @@ export function buildGameView(
   function enterOverlayLayout(opts?: { touch?: boolean }): void {
     // Every server-driven overlay passes through here; the map-area minimap
     // lens must not linger over (or under) it.
-    closeMinimap()
+    closeMinimap({ suspend: true })
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
     mapView.element.style.display = 'none'
@@ -2755,8 +2769,22 @@ export function buildGameView(
       showHud()
     }
     touchControls.element.style.display = ''
+    // Spectator lens restore. Cleared only on a successful reopen: overlay
+    // teardown can interleave (hide_dialog fires under a still-stacked
+    // ui-push; close_menu doesn't clear dialogActive), so a refused attempt
+    // must keep the flag for the hideOverlay that actually returns the
+    // screen to the map. A set flag can't fire anywhere else — only this
+    // restore reads it — and every success means the map is back, which is
+    // exactly when the lens should return.
+    if (minimapSuspended) {
+      openMinimap()
+      if (minimapOpen) minimapSuspended = false
+    }
     requestAnimationFrame(() => {
       mapView.fitToContainer()
+      // The restore above painted against the pre-fit viewport; refresh the
+      // you-are-here rect now that fitToContainer has settled the real size.
+      if (minimapOpen) repaintMinimap()
       view.focus({ preventScroll: true })
     })
   }
