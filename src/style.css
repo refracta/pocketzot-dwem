@@ -2748,6 +2748,7 @@ html, body {
 }
 
 .kbd-key {
+  position: relative;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -2768,6 +2769,23 @@ html, body {
   flex-grow: 0;
   min-width: 0;
 }
+
+/* Hit-area tiling (iOS-keyboard style): each key's touch target extends
+   halfway into the surrounding gaps via an invisible pseudo-element, so
+   the visual gaps stay but no dead space is left between keys. Row
+   endpoints additionally reach outward across the row's side margin and
+   the overlay padding, so edge keys are hittable from the screen edge
+   (overshoot past the viewport is harmless). Extensions overlap their
+   neighbor's by 0.5px: boxes that only abut leave a hairline seam that
+   hit-tests to neither key; in the overlap strip the later-painted key
+   wins, which is fine. */
+.kbd-key::after {
+  content: '';
+  position: absolute;
+  inset: calc(var(--kbd-row-gap) / -2 - 0.5px) calc(var(--kbd-gap) / -2 - 0.5px);
+}
+.kbd-row > .kbd-key:first-child::after { left: -2rem; }
+.kbd-row > .kbd-key:last-child::after { right: -2rem; }
 
 .kbd-key:active { background: var(--surface); color: var(--accent); }
 
