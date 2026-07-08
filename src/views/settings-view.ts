@@ -1,7 +1,7 @@
 // Settings overlay: a body-mounted full-screen modal reusing the doc-viewer
 // shell classes, opened from the login footer and from the HUD id line's
-// ⚙ chip in-game. The home page is a stack of sections (touch
-// controls, map display, chat, help); a section may take over the body for a
+// ⚙ chip in-game. The home page is a stack of sections (map display,
+// chat, touch controls, help); a section may take over the body for a
 // sub-page (the control-set editor) and return via renderHome. Changes apply
 // live via window events, fired by the stores themselves (control-sets.ts
 // mutators, setPref in prefs.ts): CONTROLS_CHANGED_EVENT (touch panel
@@ -17,7 +17,7 @@ import {
 } from '../game/input/control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from '../game/input/control-sets'
 import { getPref, setPref } from '../prefs'
-import { openAboutDoc, openChangelogDoc, openGesturesDoc } from './docs'
+import { openGesturesDoc } from './docs'
 
 export function openSettings(): void {
   const { body } = mountCardOverlay('Settings', {
@@ -68,9 +68,9 @@ function freshName(): string {
 
 function renderHome(body: HTMLElement): void {
   body.innerHTML = ''
-  renderControlsSection(body)
   renderDisplaySection(body)
   renderChatSection(body)
+  renderControlsSection(body)
   renderHelpSection(body)
 }
 
@@ -251,8 +251,8 @@ function renderHelpSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Help'))
   const row = el('div', 'settings-actions')
   // The docs mount their own card above this one (doc z-index > settings).
-  row.appendChild(button('About', 'settings-btn', openAboutDoc))
-  row.appendChild(button("What's new", 'settings-btn', openChangelogDoc))
+  // About and What's new live on the login/lobby footers; in-game Help just
+  // surfaces the gesture cheatsheet.
   row.appendChild(button('Gestures', 'settings-btn', openGesturesDoc))
   body.appendChild(row)
 }

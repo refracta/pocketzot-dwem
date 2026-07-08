@@ -176,7 +176,7 @@ describe('settings overlay', () => {
   it('shows the home page as sections', () => {
     openSettings()
     const headings = $$('.settings-h').map(h => h.textContent)
-    expect(headings).toEqual(['Touch controls', 'Map display', 'Chat', 'Help'])
+    expect(headings).toEqual(['Map display', 'Chat', 'Touch controls', 'Help'])
   })
 
   it('switches the render mode, persisting and firing the live-apply event', () => {
@@ -237,23 +237,23 @@ describe('settings overlay', () => {
     expect($<HTMLElement>('.settings-chips')!.hidden).toBe(true)
   })
 
-  it('opens the About doc on top of the settings card', () => {
+  it('opens a help doc on top of the settings card', () => {
     openSettings()
-    findButton('About').click()
+    findButton('Gestures').click()
     const backdrops = $$('.doc-backdrop')  // settings reuses the doc shell
     expect(backdrops).toHaveLength(2)
-    expect(backdrops[1].querySelector('.doc-title')!.textContent).toBe('About')
+    expect(backdrops[1].querySelector('.doc-title')!.textContent).toBe('Gestures')
     expect(backdrops[1].classList.contains('settings-backdrop')).toBe(false)
   })
 
   it('closes one overlay layer per Escape, topmost first', () => {
     openSettings()
-    findButton('About').click()
+    findButton('Gestures').click()
     expect($$('.doc-backdrop')).toHaveLength(2)
     const esc = () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     esc()
-    // only the top (About) doc closes; the settings card underneath survives
+    // only the top (Gestures) doc closes; the settings card underneath survives
     const remaining = $$('.doc-backdrop')
     expect(remaining).toHaveLength(1)
     expect(remaining[0].querySelector('.doc-title')!.textContent).toBe('Settings')
