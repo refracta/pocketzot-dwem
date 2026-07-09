@@ -891,6 +891,11 @@ html, body {
      .tiles-mode override lightens it (set by setRenderMode in game-view.ts,
      which is also what swaps in TileMapView). */
   --msglog-bg: color-mix(in srgb, var(--bg) 30%, transparent);
+  /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
+     darkgrey) legible over bright floor tiles without raising the scrim — the
+     scrim level is tuned for layer separation, not contrast. Shared with the
+     floating chat chip so its legibility treatment can't drift from the log's. */
+  --msglog-text-shadow: 0 1px 2px #000, 0 0 3px #000;
   /* Spell-rail button band: 32px tile + 2×2px button padding + own 0.25rem
      padding. Shared so the rail's height, the log float that sits just above it,
      and the --more-- offset that clears both stay locked together. */
@@ -1056,11 +1061,8 @@ html, body {
   right: 0;
   z-index: 3;
   background: var(--msglog-bg);
-  /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
-     darkgrey) legible over bright floor tiles without raising the scrim —
-     the scrim level is tuned for layer separation, not contrast (see
-     --msglog-bg). Inherits to all log content. */
-  text-shadow: 0 1px 2px #000, 0 0 3px #000;
+  /* Inherits to all log content — see --msglog-text-shadow. */
+  text-shadow: var(--msglog-text-shadow);
   font-size: var(--msglog-font);
   line-height: var(--msglog-line);
   /* A fixed 5-line floating box; newest message pinned to the anchored edge
@@ -3538,14 +3540,22 @@ html, body {
 }
 
 /* Playing role: float over the map's top-right corner (same containing-block
-   trick as #more-btn). Below the version notice (6), above the log tier. */
+   trick as #more-btn). Below the version notice (6), above the log tier.
+   Over the map the opaque chip fill would fully blot out whichever cell sits
+   under it, so swap it for the message-log scrim (same var → tiles-mode
+   lightening applies here too) and let the log's text-shadow carry
+   legibility instead. */
 #chat-chip.chat-chip-float {
   grid-area: map;
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
   z-index: 5;
+  background: var(--msglog-bg);
+  text-shadow: var(--msglog-text-shadow);
 }
+/* The badge is dark-on-accent; the inherited black glow just smudges it. */
+#chat-chip.chat-chip-float .chat-chip-badge { text-shadow: none; }
 
 /* Transient preview of an incoming message while the sheet is closed.
    Sits just above the floating message log (and spell rail, for casters).
