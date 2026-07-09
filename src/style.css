@@ -41,13 +41,20 @@
      there. Applied per-component on the bottom-most interactive bars, not on
      #app — surfaces bleed to the screen edge, controls pad themselves. See
      dev-material/vertical-space-savings.md (safe-area migration). */
-  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 25px);
+  --safe-bottom-cap: 25px;
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), var(--safe-bottom-cap));
   /* Status-bar/Dynamic-Island clearance for surfaces that anchor to the
      screen's top edge (menus, floats). Raw env by default; in installed mode
      src/viewport-inset.ts overrides this inline with a persisted measurement,
      because iOS 26 reports env() flakily across cold starts (59px one
      launch, 0 the next) while the hardware obviously hasn't moved. */
   --safe-top: env(safe-area-inset-top, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* Full-screen surfaces (login/lobby views, modal backdrops): clear all
+     four insets with a 1rem aesthetic floor. */
+  --safe-frame-pad: max(1rem, var(--safe-top)) max(1rem, var(--safe-right))
+                    max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
   touch-action: manipulation;
 }
 
@@ -69,7 +76,7 @@ html, body {
    all zeros the next); tabs and other platforms keep the env-based min(). */
 @media (display-mode: standalone), (display-mode: fullscreen) {
   html, body, #app { height: 100vh; }
-  :root { --safe-bottom: 25px; }
+  :root { --safe-bottom: var(--safe-bottom-cap); }
 }
 
 /* JS toggles collapsibles via the hidden attribute; author display rules
@@ -90,8 +97,7 @@ html, body {
   display: flex;
   align-items: safe center;
   justify-content: center;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
-           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--safe-frame-pad);
   background: var(--bg);
   overflow-y: auto;
 }
@@ -240,8 +246,8 @@ html, body {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right))
-           0.5rem max(1rem, env(safe-area-inset-left));
+  padding: max(1rem, var(--safe-top)) max(1rem, var(--safe-right))
+           0.5rem max(1rem, var(--safe-left));
 }
 /* Mirrors .lobby-header's bar (1rem container padding + 36px centered row) so the
    "← Back" button lands in the same spot as the lobby/spectate back button. The
@@ -277,8 +283,8 @@ html, body {
   align-content: flex-start;
   align-items: flex-end;
   gap: 1rem 0.5rem;
-  padding: 1rem max(1rem, env(safe-area-inset-right))
-           max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  padding: 1rem max(1rem, var(--safe-right))
+           max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
 }
 
 .login-section { margin-bottom: 1.5rem; }
@@ -456,8 +462,7 @@ html, body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
-           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--safe-frame-pad);
   gap: 0.75rem;
   overflow-y: auto;
 }
@@ -757,8 +762,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
-           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--safe-frame-pad);
   background: rgba(0, 0, 0, 0.6);
 }
 .lobby-exit-card {
@@ -835,8 +839,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
-           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--safe-frame-pad);
   background: rgba(0, 0, 0, 0.6);
 }
 .doc-card {
@@ -2439,10 +2442,11 @@ html, body {
 
 /* Menu controls (replaces touch controls during menus) */
 #menu-controls {
+  --bar-pad: 0.4rem;
   grid-area: menu;
   display: flex;
   gap: 0.5rem;
-  padding: 0.4rem;
+  padding: var(--bar-pad);
   background: var(--bg);
   border-top: 1px solid var(--border);
   justify-content: center;
@@ -2555,12 +2559,13 @@ html, body {
    Layout mirrors the lobby header ("← Lobby" ghost button on the left,
    "Spectating · @user" pill on the right). */
 #spectator-bar {
+  --bar-pad: 0.3rem;
   grid-area: touch;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.3rem 0.55rem;
+  padding: var(--bar-pad) 0.55rem;
   background: var(--bg);
   border-top: 1px solid var(--border);
 }
@@ -2584,8 +2589,8 @@ html, body {
    in landscape these sit in the sidebar and clear the inset via their
    bottom margins there instead. */
 @media (orientation: portrait) {
-  #menu-controls { padding-bottom: calc(0.4rem + var(--safe-bottom)); }
-  #spectator-bar { padding-bottom: calc(0.3rem + var(--safe-bottom)); }
+  #menu-controls,
+  #spectator-bar { padding-bottom: calc(var(--bar-pad) + var(--safe-bottom)); }
 }
 
 /* D-pad: 3×3 CSS grid of large buttons */
@@ -3012,11 +3017,19 @@ html, body {
    the d-pad floats over the bottom-left corner.
    ──────────────────────────────────────────────────────────── */
 @media (orientation: landscape) {
+  /* Sidebar bottom lift (panel, menu controls, spectator bar; the d-pad
+     float uses a 0.3rem-floor variant matching its side margins): keeps
+     bottom-row buttons clear of the iOS home-indicator gesture zone, where
+     taps get swallowed by the swipe-up-home gesture. Landscape raw inset
+     is 21px on Face ID phones, so the capped --safe-bottom is a near no-op
+     there vs the old fixed 1.25rem — while home-button devices and desktop
+     drop to the small aesthetic floor. */
+  :root { --sidebar-lift: max(0.35rem, var(--safe-bottom)); }
   #game-view {
     /* Keep the sidebar clear of the notch/Dynamic Island ear when it's on
        the right (env resolves 0 when the phone is rotated the other way).
        The map edge under the opposite ear is fine — it's background. */
-    padding-right: env(safe-area-inset-right, 0px);
+    padding-right: var(--safe-right);
     grid-template-columns: minmax(0, 1fr) 16rem;
     /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
@@ -3132,8 +3145,9 @@ html, body {
     justify-self: start;
     position: relative;
     z-index: 3;
-    /* Bottom margin matches the sidebar panel's home-indicator lift (see
-       the .tc-panel comment below) so ↓/↘ taps don't ride the home swipe. */
+    /* Bottom margin is the --sidebar-lift variant with the floor lowered
+       to match the 0.3rem side margins, so ↓/↘ taps don't ride the home
+       swipe. */
     margin: 0.3rem 0.3rem max(0.3rem, var(--safe-bottom));
   }
   .tc-dpad-btn {
@@ -3152,16 +3166,10 @@ html, body {
     color: color-mix(in srgb, var(--text-dim) 55%, transparent);
   }
 
-  /* The bottom margins here (panel, menu controls, spectator bar, d-pad)
-     lift the bottom-row buttons clear of the iOS home-indicator gesture
-     zone, where taps get swallowed by the swipe-up-home gesture. Landscape
-     raw inset is 21px on Face ID phones, so the capped --safe-bottom is a
-     near no-op there vs the old fixed 1.25rem — while home-button devices
-     and desktop drop to the small aesthetic floor. */
   .tc-panel {
     grid-area: panel;
     padding: 0;
-    margin: 0.35rem 0 max(0.35rem, var(--safe-bottom)) 0;
+    margin: 0.35rem 0 var(--sidebar-lift) 0;
   }
   /* Footer keys are 1.4rem in portrait, where dead padding sits below
      them; flush against a screen edge they need real height to hit. */
@@ -3173,7 +3181,7 @@ html, body {
      while a CRT/menu is active. */
   #menu-controls {
     grid-area: panel;
-    margin-bottom: max(0.35rem, var(--safe-bottom));
+    margin-bottom: var(--sidebar-lift);
   }
 
   /* Spectator mode appends no touch/menu controls, so the panel slot is
@@ -3184,7 +3192,7 @@ html, body {
   #spectator-bar {
     grid-area: panel;
     border-top: 0;
-    margin-bottom: max(0.35rem, var(--safe-bottom));
+    margin-bottom: var(--sidebar-lift);
   }
   #spectator-bar .lobby-account-chip { display: none; }
 
@@ -3252,8 +3260,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
-           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--safe-frame-pad);
   background: rgba(0, 0, 0, 0.6);
 }
 .reconnect-card {

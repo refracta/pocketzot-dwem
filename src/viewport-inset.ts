@@ -16,42 +16,66 @@
  */
 const STORE_KEY = 'pocketzot:safe-top'
 
-export function calibrateSafeTop(): void {
-  const installed =
+/* Single source of truth for "running as an installed app" in TS; must stay
+ * in sync with the `@media (display-mode: standalone), (display-mode:
+ * fullscreen)` block in style.css. `navigator.standalone` is the legacy iOS
+ * fallback. */
+export function isInstalledDisplayMode(): boolean {
+  return (
     window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches ||
     ('standalone' in navigator && (navigator as { standalone?: boolean }).standalone === true)
-  if (!installed) return
+  )
+}
 
-  // env() isn't readable from JS — resolve it via computed padding. Reads
-  // the raw env, never the override, so calibration can't feed on itself.
-  const probe = document.createElement('div')
-  probe.style.cssText =
-    'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);'
+/* env()/viewport units aren't readable from JS directly — resolve them via
+ * computed style on a hidden fixed-position element. */
+export function hiddenProbe(style: string): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' + style
+  return el
+}
+
+export function calibrateSafeTop(): void {
+  if (!isInstalledDisplayMode()) return
+
+  // Reads the raw env, never the override, so calibration can't feed on
+  // itself.
+  const probe = hiddenProbe('padding-top:env(safe-area-inset-top,0px);')
   document.body.appendChild(probe)
+
+  const portrait = window.matchMedia('(orientation: portrait)')
+  let stored = 0
+  try {
+    stored = parseFloat(localStorage.getItem(STORE_KEY) ?? '') || 0
+  } catch {
+    /* storage unavailable — fall back to raw env */
+  }
+
+  let applied: string | null = null
+  const apply = (value: string | null): void => {
+    if (value === applied) return
+    applied = value
+    if (value === null) document.documentElement.style.removeProperty('--safe-top')
+    else document.documentElement.style.setProperty('--safe-top', value)
+  }
 
   const update = (): void => {
     // Portrait-only: the stored value is the portrait status-bar depth, and
     // in landscape the top inset is genuinely 0 (the island sits on a side).
-    if (!window.matchMedia('(orientation: portrait)').matches) {
-      document.documentElement.style.removeProperty('--safe-top')
+    if (!portrait.matches) {
+      apply(null)
       return
     }
     const measured = parseFloat(getComputedStyle(probe).paddingTop) || 0
-    let stored = 0
-    try {
-      stored = parseFloat(localStorage.getItem(STORE_KEY) ?? '') || 0
-      if (measured > stored) {
+    if (measured > stored) {
+      stored = measured
+      try {
         localStorage.setItem(STORE_KEY, String(measured))
-        stored = measured
+      } catch {
+        /* storage unavailable — the value still applies this session */
       }
-    } catch {
-      /* storage unavailable — fall back to raw env */
     }
-    if (stored > measured) {
-      document.documentElement.style.setProperty('--safe-top', `${stored}px`)
-    } else {
-      document.documentElement.style.removeProperty('--safe-top')
-    }
+    apply(stored > measured ? `${stored}px` : null)
   }
   update()
   window.addEventListener('resize', update)
