@@ -1685,7 +1685,6 @@ html, body {
 .hud-settings-chip {
   margin: -0.4rem -0.4rem -0.4rem auto;
   padding: 0.4rem;
-  align-self: center;
   font-size: 1rem;
   line-height: 1;
   color: var(--text-dim);  /* quiet neutral, not the fg14 yellow of the name line */
@@ -1753,7 +1752,7 @@ html, body {
   text-align: center;
 }
 
-.hs-id { font-size: 0.75rem; line-height: 1.2; display: flex; align-items: baseline; }
+.hs-id { font-size: 0.75rem; line-height: 1.2; display: flex; align-items: center; }
 .hs-id #hud-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .hg-piety { margin-left: 0.4em; flex-shrink: 0; }
 /* Under god's wrath the whole piety row reads red (reference
