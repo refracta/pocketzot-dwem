@@ -37,12 +37,13 @@ describe('built-in sets', () => {
     expect(bigkeys.tabs.map(t => t.cols)).toEqual([3, 3, 4])
   })
 
-  it('reproduces the original shipped @ tab exactly', () => {
+  it('pins the standard @ tab layout exactly', () => {
     const at = builtinSets()[0].tabs[0]
     expect(at.name).toBe('@')
     expect(at.slots[0]).toEqual({ key: 9 })  // Tab = auto-fight
+    // Slot 8 is ' (weapon swap a/b), not e — equip stays reachable on the > tab.
     expect(at.slots.slice(1).map(s => s!.text)).toEqual(
-      ['5', 'i', 'o', 'q', 'r', 'f', 'v', 'a', 'e', 'x', ','])
+      ['5', 'i', 'o', 'q', 'r', 'f', 'v', 'a', "'", 'x', ','])
   })
 })
 
@@ -146,7 +147,7 @@ describe('export / import string format', () => {
 
   it('is human-readable', () => {
     const str = encodeControlSet(builtinSets()[0])
-    expect(str).toContain('@4:{Tab} 5 i o q r f v a e x ,')
+    expect(str).toContain("@4:{Tab} 5 i o q r f v a ' x ,")
     expect(str).toContain(':Standard|')
     // set-name spaces stay literal (only key tokens need {sp})
     expect(encodeControlSet(builtinSets()[1])).toContain(':Larger keys|')

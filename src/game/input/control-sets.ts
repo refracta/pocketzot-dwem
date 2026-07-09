@@ -124,6 +124,7 @@ const TEXT_TITLES: Record<string, string> = {
   'q': 'Quaff potion',
   'r': 'Read scroll',
   'f': 'Fire / quivered',
+  'p': 'Auto-fire at nearest',
   'v': 'Evoke item',
   'a': 'Use ability',
   'e': 'Equip / unequip',
@@ -131,6 +132,7 @@ const TEXT_TITLES: Record<string, string> = {
   ',': 'Pick up item',
   'g': 'Pick up item',
   'w': 'Wield weapon',
+  "'": 'Swap weapon (a/b)',
   'R': 'Remove jewellery',
   't': 'Tell allies (tt to shout)',
   'P': 'Put on jewellery',
@@ -197,7 +199,7 @@ function builtinStandard(): ControlSet {
       { name: '@', cols: 4, slots: [
         k('Tab'), t('5'), t('i'), t('o'),
         t('q'), t('r'), t('f'), t('v'),
-        t('a'), t('e'), t('x'), t(','),
+        t('a'), t("'"), t('x'), t(','),
       ] },
       { name: '>', cols: 4, slots: [
         t('w'), t('R'), t('t'), t('P'),
@@ -217,12 +219,12 @@ function builtinBigKeys(): ControlSet {
     tabs: [
       { name: '@', cols: 3, slots: [
         k('Tab'), t('5'), t('o'),
-        t('q'), t('r'), t('f'),
-        t('a'), t('x'), t('i'),
+        t('f'), t('v'), t('p'),
+        t('a'), t("'"), t(','),
       ] },
       { name: '>', cols: 3, slots: [
-        t('w'), t('e'), t('d'),
-        k('^F'), t('G'), k('^O'),
+        t('d'), t('t'), t('i'),
+        t('e'), t('G'), k('^O'),
         t('X'), t('<'), t('>'),
       ] },
       { name: '?', cols: 4, slots: INFO_SLOTS() },
