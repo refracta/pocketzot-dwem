@@ -9,7 +9,7 @@ import { openSettings } from './settings-view'
 import {
   builtinSets, encodeControlSet, getActiveControlSet, listControlSets,
 } from '../game/input/control-sets'
-import { getPref, IGNORED_SPECTATORS_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
+import { getPref, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 
 beforeEach(() => {
   localStorage.clear()
@@ -176,7 +176,7 @@ describe('settings overlay', () => {
   it('shows the home page as sections', () => {
     openSettings()
     const headings = $$('.settings-h').map(h => h.textContent)
-    expect(headings).toEqual(['Map display', 'Chat', 'Touch controls', 'Help'])
+    expect(headings).toEqual(['Map display', 'Touch controls', 'Help'])
   })
 
   it('switches the render mode, persisting and firing the live-apply event', () => {
@@ -201,40 +201,6 @@ describe('settings overlay', () => {
     } finally {
       window.removeEventListener(RENDER_MODE_CHANGED_EVENT, fired)
     }
-  })
-
-  it('manages the ignored-spectators list: seeded, add, dedupe, remove', () => {
-    const fired = vi.fn()
-    window.addEventListener(IGNORED_SPECTATORS_CHANGED_EVENT, fired)
-    try {
-      openSettings()
-      expect($$('.settings-chip-name').map(c => c.textContent)).toEqual(['beem'])
-
-      const input = $<HTMLInputElement>('.settings-add-input')!
-      input.value = 'MalBot'
-      findButton('Add').click()
-      expect(getPref('ignoredSpectators')).toEqual(['beem', 'MalBot'])
-      expect(fired).toHaveBeenCalledTimes(1)
-      expect(input.value).toBe('')
-
-      input.value = '  BEEM  '  // dupe (case-insensitive, trimmed): ignored
-      findButton('Add').click()
-      expect(getPref('ignoredSpectators')).toEqual(['beem', 'MalBot'])
-      expect(fired).toHaveBeenCalledTimes(1)
-
-      $$('.settings-chip-x')[0].click()  // remove beem
-      expect(getPref('ignoredSpectators')).toEqual(['MalBot'])
-      expect($$('.settings-chip-name').map(c => c.textContent)).toEqual(['MalBot'])
-    } finally {
-      window.removeEventListener(IGNORED_SPECTATORS_CHANGED_EVENT, fired)
-    }
-  })
-
-  it('hides the chip row once the ignore list is empty', () => {
-    openSettings()
-    $('.settings-chip-x')!.click()
-    expect(getPref('ignoredSpectators')).toEqual([])
-    expect($<HTMLElement>('.settings-chips')!.hidden).toBe(true)
   })
 
   it('opens a help doc on top of the settings card', () => {

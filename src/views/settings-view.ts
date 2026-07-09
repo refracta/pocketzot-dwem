@@ -1,12 +1,11 @@
 // Settings overlay: a body-mounted full-screen modal reusing the doc-viewer
 // shell classes, opened from the login footer and from the HUD id line's
 // ⚙ chip in-game. The home page is a stack of sections (map display,
-// chat, touch controls, help); a section may take over the body for a
+// touch controls, help); a section may take over the body for a
 // sub-page (the control-set editor) and return via renderHome. Changes apply
 // live via window events, fired by the stores themselves (control-sets.ts
 // mutators, setPref in prefs.ts): CONTROLS_CHANGED_EVENT (touch panel
-// re-renders), RENDER_MODE_CHANGED_EVENT (game view swaps renderers),
-// IGNORED_SPECTATORS_CHANGED_EVENT (chat spectator count, once merged).
+// re-renders), RENDER_MODE_CHANGED_EVENT (game view swaps renderers).
 
 import { mountCardOverlay } from './overlay'
 import {
@@ -69,7 +68,6 @@ function freshName(): string {
 function renderHome(body: HTMLElement): void {
   body.innerHTML = ''
   renderDisplaySection(body)
-  renderChatSection(body)
   renderControlsSection(body)
   renderHelpSection(body)
 }
@@ -199,50 +197,6 @@ function renderDisplaySection(body: HTMLElement): void {
     seg.appendChild(b)
   }
   body.appendChild(seg)
-}
-
-// --- chat section ----------------------------------------------------------------
-
-function renderChatSection(body: HTMLElement): void {
-  body.appendChild(el('h2', 'settings-h', 'Chat'))
-  body.appendChild(el('p', 'settings-hint',
-    "Spectator names that won't be counted. Prevents bots " +
-    'from keeping the spectator chip lit.'))
-  const chips = el('div', 'settings-chips')
-  const save = (names: string[]): void => {
-    setPref('ignoredSpectators', names)  // fires IGNORED_SPECTATORS_CHANGED_EVENT
-    renderChips()
-  }
-  function renderChips(): void {
-    chips.innerHTML = ''
-    for (const name of getPref('ignoredSpectators')) {
-      const chip = el('span', 'settings-chip')
-      chip.appendChild(el('span', 'settings-chip-name', name))
-      const x = button('✕', 'settings-chip-x', () =>
-        save(getPref('ignoredSpectators').filter(n => n !== name)))
-      x.setAttribute('aria-label', `Stop ignoring ${name}`)
-      chip.appendChild(x)
-      chips.appendChild(chip)
-    }
-    chips.hidden = chips.childElementCount === 0
-  }
-  const addRow = el('div', 'settings-add-row')
-  const input = noAutofix(el('input', 'settings-add-input settings-input'))
-  input.placeholder = 'bot name'
-  input.maxLength = 32
-  const add = (): void => {
-    const name = input.value.trim()
-    if (!name) return
-    const names = getPref('ignoredSpectators')
-    if (!names.some(n => n.toLowerCase() === name.toLowerCase())) save([...names, name])
-    input.value = ''
-  }
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add() } })
-  addRow.appendChild(input)
-  addRow.appendChild(button('Add', 'settings-btn', add))
-  renderChips()
-  body.appendChild(chips)
-  body.appendChild(addRow)
 }
 
 // --- help section --------------------------------------------------------------

@@ -3371,31 +3371,8 @@ html, body {
 }
 .settings-seg .settings-btn.active { background: rgba(245, 158, 11, 0.12); }
 
-/* Ignored-spectators list (Chat section): removable name chips + an add row. */
-.settings-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
-.settings-chip {
-  display: inline-flex;
-  align-items: center;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.1rem 0.15rem 0.1rem 0.7rem;
-  font-size: 0.8rem;
-  color: var(--text);
-}
-.settings-chip-x {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  padding: 0.25rem 0.5rem;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.settings-chip-x:active { color: var(--text); }
-/* Shared look for every settings text field (chat add row, import/export
-   areas, editor inputs); per-field classes keep only their layout. */
+/* Shared look for every settings text field (import/export areas, editor
+   inputs); per-field classes keep only their layout. */
 .settings-input {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -3404,14 +3381,6 @@ html, body {
   font-family: var(--font-mono);
   font-size: 16px;  /* not rem: <16px inputs make iOS Safari auto-zoom on focus */
 }
-
-.settings-add-row { display: flex; gap: 0.5rem; }
-.settings-add-input {
-  flex: 1;
-  min-width: 0;
-  padding: 0.45rem 0.6rem;
-}
-.settings-add-row .settings-btn { flex: 0 0 auto; padding: 0.55rem 1.1rem; }
 
 .settings-import { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .settings-import-field {
