@@ -144,6 +144,136 @@ describe('settings overlay', () => {
     expect(faces[3].textContent).toBe('o')  // Standard @ row 1 col 4 restored
   })
 
+  it('views a built-in set read-only, narrating tapped keys', () => {
+    openSettings()
+    $$('.set-row-more')[1].click()
+    findButton('View', $$('.set-row-actions')[1]).click()
+
+    expect($('.settings-h')!.textContent).toContain('Larger keys')
+    expect($('.settings-h .set-badge')).not.toBeNull()
+    expect($('.ed-name-input')).toBeNull()          // read-only: no name field
+    expect($('.ed-size-btn')).toBeNull()            // …and no size toggles
+    expect($$('.ed-slot')).toHaveLength(9 + 9 + 12) // Larger keys' real grids
+
+    // tap ⇥ → description appears under that tab's grid; tap again → gone
+    const slot = $$('.ed-slot')[0]
+    expect(slot.textContent).toBe('⇥')
+    slot.click()
+    expect($('.ed-slot-info')!.textContent).toContain('auto-fight')
+    $$('.ed-slot')[0].click()
+    expect($('.ed-slot-info')).toBeNull()
+
+    findButton('Back').click()
+    expect($$('.settings-h').map(h => h.textContent)).toContain('Touch controls')
+  })
+
+  it('offers Duplicate & edit from a built-in view, saving nothing until Save', () => {
+    openSettings()
+    $$('.set-row-more')[0].click()
+    findButton('View', $$('.set-row-actions')[0]).click()
+    findButton('Duplicate & edit').click()
+    expect($('.settings-h')!.textContent).toBe('New control set')
+    expect(listControlSets()).toHaveLength(2)  // still unsaved
+    findButton('Save').click()
+    expect(listControlSets()).toHaveLength(3)
+  })
+
+  it('views a custom set with an Edit shortcut', () => {
+    openSettings()
+    $$('.set-row-more')[0].click()
+    findButton('Duplicate').click()
+    $$('.set-row-more')[2].click()
+    findButton('View', $$('.set-row-actions')[2]).click()
+    expect($('.settings-h')!.textContent).toBe('My controls')
+    expect($('.settings-h .set-badge')).toBeNull()
+    findButton('Edit').click()
+    expect($('.settings-h')!.textContent).toBe('Edit control set')
+  })
+
+  it('describes the current key and typed text in the picker info line', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    $$('.ed-slot')[0].click()  // Standard slot 1 = Tab
+    const info = $('.ed-picker-info')!
+    expect(info.textContent).toContain('auto-fight')
+
+    const pickerInput = $<HTMLInputElement>('.ed-picker-text')!
+    pickerInput.value = 'o'
+    pickerInput.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(info.textContent).toContain('Auto-explore')
+    pickerInput.value = ''
+    pickerInput.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(info.textContent).toContain('auto-fight')  // back to the current key
+  })
+
+  it('assigns a special key on the second tap only', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    $$('.ed-slot')[0].click()
+    const f1 = findButton('F1', $('.ed-picker-keys')!)
+    f1.click()
+    expect($$('.ed-slot')[0].textContent).toBe('⇥')  // armed, not assigned
+    expect(f1.classList.contains('armed')).toBe(true)
+    expect($('.ed-picker-info')!.textContent).toContain('tap again')
+    f1.click()
+    expect($$('.ed-slot')[0].textContent).toBe('F1')
+    expect($('.ed-picker')!.hidden).toBe(true)
+  })
+
+  it('marks the slot\'s current special key in the picker', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    $$('.ed-slot')[0].click()  // holds Tab
+    const marked = $$('.ed-key.current')
+    expect(marked).toHaveLength(1)
+    expect(marked[0].textContent).toBe('⇥')
+  })
+
+  it('moves a key by swapping it with a tapped destination', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    $$('.ed-slot')[0].click()
+    findButton('Move').click()
+    expect($('.ed-move-hint')!.hidden).toBe(false)
+    expect($('.ed-picker')!.hidden).toBe(true)
+    expect($$('.ed-slot')[0].classList.contains('picking')).toBe(true)
+
+    $$('.ed-slot')[1].click()  // swap ⇥ with 5
+    const faces = $$('.ed-slot').map(s => s.textContent)
+    expect(faces.slice(0, 2)).toEqual(['5', '⇥'])
+    expect($('.ed-move-hint')!.hidden).toBe(true)
+  })
+
+  it('cancels a move by tapping the source slot again', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    $$('.ed-slot')[0].click()
+    findButton('Move').click()
+    $$('.ed-slot')[0].click()
+    expect($('.ed-move-hint')!.hidden).toBe(true)
+    expect($$('.ed-slot')[0].textContent).toBe('⇥')  // unchanged
+  })
+
+  it('accepts a surrogate-pair emoji tab label but not two characters', () => {
+    openSettings()
+    findButton('＋ New set').click()
+    const charInput = $<HTMLInputElement>('.ed-tab-char')!
+
+    charInput.value = 'ab'
+    charInput.dispatchEvent(new Event('input', { bubbles: true }))
+    charInput.dispatchEvent(new Event('blur', { bubbles: true }))
+    expect(charInput.value).toBe('@')  // rejected, original kept
+
+    charInput.value = '🦋'
+    charInput.dispatchEvent(new Event('input', { bubbles: true }))
+    charInput.dispatchEvent(new Event('blur', { bubbles: true }))
+    expect(charInput.value).toBe('🦋')
+
+    findButton('Save').click()
+    const saved = listControlSets().find(s => s.name === 'My controls')!
+    expect(saved.tabs[0].name).toBe('🦋')
+  })
+
   it('deletes a custom set only after arming the button', () => {
     openSettings()
     $$('.set-row-more')[0].click()

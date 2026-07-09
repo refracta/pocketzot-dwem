@@ -10,7 +10,7 @@
 import { mountCardOverlay } from './overlay'
 import {
   cloneSet, deleteControlSet, encodeControlSet, getActiveControlSet,
-  importControlSet, listControlSets, newSetId, saveControlSet,
+  importControlSet, isValidTabName, listControlSets, newSetId, saveControlSet,
   setActiveControlSet, slotLabel, slotTitle, STANDARD_ID,
   GRID_ROWS, MAX_COLS, MAX_MACRO_LEN, PICKER_KEYS,
 } from '../game/input/control-sets'
@@ -63,6 +63,12 @@ function freshName(): string {
   }
 }
 
+// A clone with a new id and a fresh untaken name — the basis of Duplicate,
+// ＋ New set, and Duplicate & edit.
+function freshClone(base: ControlSet): ControlSet {
+  return cloneSet(base, newSetId(), freshName())
+}
+
 // --- home page ---------------------------------------------------------------
 
 function renderHome(body: HTMLElement): void {
@@ -107,11 +113,12 @@ function renderControlsSection(body: HTMLElement): void {
     row.appendChild(more)
     list.appendChild(row)
 
+    actions.appendChild(button('View', 'set-action', () => renderViewer(body, set)))
     if (!set.builtin) {
       actions.appendChild(button('Edit', 'set-action', () => renderEditor(body, set, false)))
     }
     actions.appendChild(button('Duplicate', 'set-action', () => {
-      saveControlSet(cloneSet(set, newSetId(), freshName()))
+      saveControlSet(freshClone(set))
       renderHome(body)
     }))
     const exp = button('Export', 'set-action', () => exportSet(set, exp, actions))
@@ -159,7 +166,7 @@ function renderControlsSection(body: HTMLElement): void {
 
   actionsBar.appendChild(button('＋ New set', 'settings-btn', () => {
     // Start from whatever is active — the closest thing to "what I have now".
-    renderEditor(body, cloneSet(getActiveControlSet(), newSetId(), freshName()), true)
+    renderEditor(body, freshClone(getActiveControlSet()), true)
   }))
   actionsBar.appendChild(button('Import…', 'settings-btn', () => {
     importWrap.hidden = !importWrap.hidden
@@ -244,6 +251,83 @@ function exportSet(set: ControlSet, btn: HTMLButtonElement, host: HTMLElement): 
   else fallback()
 }
 
+// --- read-only viewer ----------------------------------------------------------
+
+// iOS shows no title-attribute tooltips, so taps are the description surface:
+// the viewer's grids and the editor's picker both narrate keys through this.
+// Special-key titles already name the key ("Ctrl+P — Replay messages"), so
+// only text slots get the face-label prefix.
+function slotDesc(slot: SlotDef): string {
+  return slotTitle(slot) ?? `Send "${slot.text ?? ''}"`
+}
+
+// A slot's face label, or the empty-cell marker.
+function faceLabel(slot: SlotDef | null): string {
+  return slot ? slotLabel(slot) : '·'
+}
+
+function slotNarration(slot: SlotDef | null): string {
+  if (!slot) return 'Empty slot'
+  if (slot.key !== undefined) return slotDesc(slot)
+  return `${slotLabel(slot)} — ${slotDesc(slot)}`
+}
+
+function renderViewer(body: HTMLElement, set: ControlSet): void {
+  body.innerHTML = ''
+  // (tab, slot) currently narrated in that tab's info line; tap toggles
+  let sel: { tab: number; i: number } | null = null
+
+  const heading = el('h2', 'settings-h', set.name)
+  if (set.builtin) heading.appendChild(el('span', 'set-badge', 'built-in'))
+  body.appendChild(heading)
+  body.appendChild(el('p', 'settings-hint', 'Tap a key to see what it does.'))
+
+  const tabsHost = el('div', 'ed-tabs')
+  body.appendChild(tabsHost)
+
+  function render(): void {
+    tabsHost.innerHTML = ''
+    set.tabs.forEach((tab, ti) => {
+      const box = el('div', 'ed-tab')
+      const head = el('div', 'ed-tab-head')
+      head.appendChild(el('span', 'ed-tab-charlabel', `Tab ${tab.name}`))
+      box.appendChild(head)
+
+      const grid = el('div', 'ed-grid')
+      grid.style.gridTemplateColumns = `repeat(${tab.cols}, 1fr)`
+      tab.slots.forEach((slot, i) => {
+        const sb = button(faceLabel(slot), 'ed-slot' + (slot ? '' : ' empty'), () => {
+          sel = sel?.tab === ti && sel.i === i ? null : { tab: ti, i }
+          render()
+        })
+        if (sel?.tab === ti && sel.i === i) sb.classList.add('picking')
+        grid.appendChild(sb)
+      })
+      box.appendChild(grid)
+
+      if (sel?.tab === ti) {
+        box.appendChild(el('div', 'ed-slot-info', slotNarration(tab.slots[sel.i])))
+      }
+      tabsHost.appendChild(box)
+    })
+  }
+
+  const foot = el('div', 'settings-actions')
+  foot.appendChild(button('Back', 'settings-btn', () => renderHome(body)))
+  if (set.builtin) {
+    // Same path as ＋ New set: an unsaved clone, saved (and activated) only
+    // on the editor's own Save.
+    foot.appendChild(button('Duplicate & edit', 'settings-btn settings-btn-primary', () =>
+      renderEditor(body, freshClone(set), true)))
+  } else {
+    foot.appendChild(button('Edit', 'settings-btn settings-btn-primary', () =>
+      renderEditor(body, set, false)))
+  }
+  body.appendChild(foot)
+
+  render()
+}
+
 // --- editor ------------------------------------------------------------------
 
 interface TabModel {
@@ -282,6 +366,8 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
   }))
   // (tabIdx, cell) of the slot the picker is editing, or null when closed
   let picking: { tab: number; cell: number } | null = null
+  // Source slot of an armed move — the next slot tap swaps with it
+  let moving: { tab: number; cell: number } | null = null
 
   body.appendChild(el('h2', 'settings-h', isNew ? 'New control set' : 'Edit control set'))
 
@@ -296,6 +382,11 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
   const tabsHost = el('div', 'ed-tabs')
   body.appendChild(tabsHost)
 
+  // Move-in-progress banner, shown between the grids and the picker
+  const moveHint = el('div', 'ed-move-hint')
+  moveHint.hidden = true
+  body.appendChild(moveHint)
+
   // Key picker — one shared panel below the grids; assigns into `picking`.
   const picker = el('div', 'ed-picker')
   picker.hidden = true
@@ -309,9 +400,12 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
       const charLabel = el('label', 'ed-tab-charlabel', 'Tab label ')
       const charInput = noAutofix(el('input', 'ed-tab-char settings-input'))
       charInput.value = tab.name
-      charInput.maxLength = 1
+      // maxLength counts UTF-16 units, so 2 admits a surrogate-pair emoji;
+      // isValidTabName is the codepoint check enforcing "one visible
+      // character" — the same rule the importer applies.
+      charInput.maxLength = 2
       charInput.addEventListener('input', () => {
-        if (charInput.value.trim()) tab.name = charInput.value
+        if (isValidTabName(charInput.value)) tab.name = charInput.value
       })
       // Blank or whitespace stays whatever it was — a tab must keep a
       // visible label (import enforces the same rule).
@@ -337,13 +431,23 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
         for (let c = 0; c < tab.cols; c++) {
           const cell = r * MAX_COLS + c
           const slot = tab.grid[cell]
-          const label = slot ? slotLabel(slot) : '·'
-          const sb = button(label, 'ed-slot' + (slot ? '' : ' empty'), () => openPicker(ti, cell))
+          const sb = button(faceLabel(slot), 'ed-slot' + (slot ? '' : ' empty'), () => {
+            if (moving) {
+              if (moving.tab === ti && moving.cell === cell) { cancelMove(); return }
+              const src = tabs[moving.tab].grid[moving.cell]
+              tabs[moving.tab].grid[moving.cell] = tab.grid[cell]
+              tab.grid[cell] = src
+              cancelMove()
+              return
+            }
+            openPicker(ti, cell)
+          })
           if (slot) {
             const title = slotTitle(slot)
             if (title) sb.title = title
           }
-          if (picking && picking.tab === ti && picking.cell === cell) sb.classList.add('picking')
+          const marked = picking ?? moving
+          if (marked && marked.tab === ti && marked.cell === cell) sb.classList.add('picking')
           grid.appendChild(sb)
         }
       }
@@ -372,6 +476,26 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
     closePicker()
   }
 
+  // Turn the picked slot into a move source: the next slot tapped (any tab)
+  // swaps contents with it. Tapping the source again backs out.
+  function armMove(): void {
+    if (!picking) return
+    moving = picking
+    const slot = tabs[moving.tab].grid[moving.cell]
+    moveHint.innerHTML = ''
+    moveHint.appendChild(el('span', 'ed-move-hint-text',
+      `Moving ${faceLabel(slot)} — tap the key to swap it with.`))
+    moveHint.appendChild(button('Cancel', 'set-action', cancelMove))
+    moveHint.hidden = false
+    closePicker()  // re-renders tabs, now highlighting the move source
+  }
+
+  function cancelMove(): void {
+    moving = null
+    moveHint.hidden = true
+    renderTabs()
+  }
+
   function buildPicker(): void {
     picker.innerHTML = ''
     if (!picking) return
@@ -381,27 +505,62 @@ function renderEditor(body: HTMLElement, set: ControlSet, isNew: boolean): void 
     picker.appendChild(el('div', 'ed-picker-title',
       `Tab ${tab.name} · row ${row}, key ${col}`))
 
+    const current = tab.grid[picking.cell]
+
+    // Description line — the tooltip replacement (no title tooltips on iOS).
+    // Narrates the current assignment, the text being typed, or an armed
+    // special key, whichever the user touched last.
+    const info = el('div', 'ed-picker-info')
+    const setInfo = (slot: SlotDef | null, suffix = ''): void => {
+      info.textContent = slotNarration(slot) + suffix
+    }
+    setInfo(current)
+    picker.appendChild(info)
+
+    // Special keys arm on the first tap (described above) and send on the
+    // second — the two-tap confirm the newgame-choice grid uses.
+    let armed: HTMLButtonElement | null = null
+    function disarm(): void {
+      armed?.classList.remove('armed')
+      armed = null
+    }
+
     const textRow = el('div', 'ed-picker-textrow')
     const textInput = noAutofix(el('input', 'ed-picker-text settings-input'))
     textInput.maxLength = MAX_MACRO_LEN
     textInput.placeholder = "key(s), e.g. 'o' or 'za.'"
-    const current = tab.grid[picking.cell]
     if (current?.text) textInput.value = current.text
     const setText = (): void => { if (textInput.value) assign({ text: textInput.value }) }
     textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); setText() } })
+    textInput.addEventListener('input', () => {
+      disarm()
+      if (textInput.value) setInfo({ text: textInput.value })
+      else setInfo(current)
+    })
     textRow.appendChild(textInput)
     textRow.appendChild(button('Set', 'settings-btn ed-picker-set', setText))
     picker.appendChild(textRow)
 
     const keys = el('div', 'ed-picker-keys')
     for (const sk of PICKER_KEYS) {
-      const kb = button(sk.label, 'ed-key', () => assign({ key: sk.keycode }))
+      const kb = button(sk.label, 'ed-key', () => {
+        if (armed === kb) {
+          assign({ key: sk.keycode })
+          return
+        }
+        disarm()
+        armed = kb
+        kb.classList.add('armed')
+        setInfo({ key: sk.keycode }, ' · tap again to set')
+      })
       kb.title = sk.title
+      if (current?.key === sk.keycode) kb.classList.add('current')
       keys.appendChild(kb)
     }
     picker.appendChild(keys)
 
     const foot = el('div', 'ed-picker-foot')
+    if (current) foot.appendChild(button('Move', 'set-action', armMove))
     foot.appendChild(button('Clear key', 'set-action', () => assign(null)))
     foot.appendChild(button('Cancel', 'set-action', closePicker))
     picker.appendChild(foot)

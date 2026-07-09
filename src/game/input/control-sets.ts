@@ -400,6 +400,13 @@ export function encodeControlSet(set: ControlSet): string {
   return EXPORT_PREFIX + escName(set.name) + '|' + tabs.join('|')
 }
 
+// A tab button must show exactly one visible character. The spread counts
+// codepoints (so a surrogate-pair emoji is one), and trim() also rejects
+// exotic blanks (NBSP etc.). Shared by the importer and the editor's input.
+export function isValidTabName(name: string): boolean {
+  return [...name].length === 1 && name.trim() !== ''
+}
+
 export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
   // Collapse ALL whitespace runs to single spaces first: strings travel
   // through chat apps and email, which wrap long lines at spaces and
@@ -426,9 +433,7 @@ export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
     const m = /^(.*?)([34]):(.*)$/.exec(field)
     if (!m) throw new Error(`bad tab header in "${field.slice(0, 20)}"`)
     const tabName = unescText(m[1])
-    // trim() also catches exotic blanks (NBSP etc.) — a tab button must
-    // have a visible label.
-    if ([...tabName].length !== 1 || !tabName.trim()) {
+    if (!isValidTabName(tabName)) {
       throw new Error('tab name must be a single visible character')
     }
     const cols = Number(m[2]) as 3 | 4

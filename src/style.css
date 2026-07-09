@@ -3317,6 +3317,8 @@ html, body {
   border-radius: 4px;
   padding: 0.1rem 0.35rem;
 }
+/* Same badge inside the viewer's heading, where there's no flex row */
+.settings-h .set-badge { margin-left: 0.5rem; font-weight: normal; vertical-align: middle; }
 .set-row-more {
   width: 2.2rem;
   background: transparent;
@@ -3468,6 +3470,25 @@ html, body {
 .ed-slot.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
 .ed-slot.picking { border-color: var(--accent); color: var(--accent); }
 
+/* Viewer/editor key-description line (tooltips don't exist on touch) */
+.ed-slot-info { color: var(--text-dim); font-size: 0.75rem; margin-top: 0.45rem; line-height: 1.4; }
+
+/* Move-in-progress banner between the grids and the picker */
+.ed-move-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.45rem 0.6rem;
+  margin-top: 0.6rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+.ed-move-hint-text { flex: 1; }
+.ed-move-hint .set-action { flex: 0 0 auto; }
+
 /* Key picker: shared panel under the grids */
 .ed-picker {
   border: 1px solid var(--accent);
@@ -3502,6 +3523,10 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 .ed-key:active { background: var(--surface); color: var(--accent); }
+/* current = what the slot holds now; armed = first tap of the two-tap send */
+.ed-key.current { border-color: var(--text-dim); }
+.ed-key.armed { border-color: var(--accent); color: var(--accent); background: var(--surface); }
+.ed-picker-info { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 0.5rem; line-height: 1.4; }
 .ed-picker-foot { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
 
 /* 3-char macro faces on the touch panel shrink to fit the button */
