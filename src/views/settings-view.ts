@@ -77,7 +77,7 @@ function renderHome(body: HTMLElement): void {
 function renderControlsSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Touch controls'))
   body.appendChild(el('p', 'settings-hint',
-    'Control sets swap the buttons on the three control tabs.'))
+    'Control sets define the buttons on the three control tabs.'))
 
   const sets = listControlSets()
   // Reuse the list already built above rather than getActiveControlSet(), which
