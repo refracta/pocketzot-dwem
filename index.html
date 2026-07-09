@@ -7,8 +7,7 @@
          installed mode iOS then MISREPORTS every dynamic viewport height
          (innerHeight/100dvh/100svh say screen-minus-inset; the real window is
          full-screen — WebKit bug #254868), so style.css forces 100vh on
-         html/body/#app there and src/viewport-inset.ts sticky-calibrates
-         --safe-top around flaky env() readings. Full write-up:
+         html/body/#app there. Full write-up:
          dev-material/ios-safe-area-viewport.md. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

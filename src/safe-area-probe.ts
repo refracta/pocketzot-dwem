@@ -16,9 +16,25 @@
  * the chip whenever running standalone. Tap the chip to dismiss it (also
  * clears the persisted flag).
  */
-import { hiddenProbe, isInstalledDisplayMode } from './viewport-inset'
-
 const FLAG_KEY = 'pocketzot:safearea'
+
+/* "Running as an installed app"; must stay in sync with the `@media
+ * (display-mode: standalone), (display-mode: fullscreen)` block in style.css.
+ * `navigator.standalone` is the legacy iOS fallback. */
+function isInstalledDisplayMode(): boolean {
+  return (
+    window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches ||
+    ('standalone' in navigator && (navigator as { standalone?: boolean }).standalone === true)
+  )
+}
+
+/* env()/viewport units aren't readable from JS directly — resolve them via
+ * computed style on a hidden fixed-position element. */
+function hiddenProbe(style: string): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' + style
+  return el
+}
 
 export function maybeMountSafeAreaProbe(): void {
   const q = new URLSearchParams(location.search).get('safearea')

@@ -41,13 +41,14 @@
      there. Applied per-component on the bottom-most interactive bars, not on
      #app — surfaces bleed to the screen edge, controls pad themselves. See
      dev-material/vertical-space-savings.md (safe-area migration). */
-  --safe-bottom-cap: 25px;
-  --safe-bottom: min(env(safe-area-inset-bottom, 0px), var(--safe-bottom-cap));
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 25px);
   /* Status-bar/Dynamic-Island clearance for surfaces that anchor to the
-     screen's top edge (menus, floats). Raw env by default; in installed mode
-     src/viewport-inset.ts overrides this inline with a persisted measurement,
-     because iOS 26 reports env() flakily across cold starts (59px one
-     launch, 0 the next) while the hardware obviously hasn't moved. */
+     screen's top edge (menus, floats). Raw env. A sticky-calibration shim
+     (viewport-inset.ts) once guarded this against suspected cold-start env()
+     flakiness in installed mode; removed 2026-07-09 to playtest whether that
+     flakiness was real or an artifact of the migration debug session — if
+     top surfaces ever render under the island for a whole session, restore
+     it (dev-material/ios-safe-area-viewport.md, "sticky shim"). */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
@@ -71,12 +72,14 @@ html, body {
    full-screen — webkit.org bug #254868. 100vh is the one honest unit, and it
    must be forced on html/body too: at 100% they'd resolve to the misreported
    height and body's overflow:hidden would clip the app's bottom rows.
-   --safe-bottom is pinned to the field-tested flat 25px here because env()
-   itself reports flakily across cold starts on iOS 26 (59/34 one launch,
-   all zeros the next); tabs and other platforms keep the env-based min(). */
+   A flat --safe-bottom: 25px pin also lived here (guarding against suspected
+   cold-start env() flakiness); removed 2026-07-09 alongside the sticky top
+   shim to playtest whether that flakiness was real — if the bottom controls
+   ever sit flush against the physical bottom edge for a whole session
+   (taps colliding with the home swipe), restore it
+   (dev-material/ios-safe-area-viewport.md, "sticky shim"). */
 @media (display-mode: standalone), (display-mode: fullscreen) {
   html, body, #app { height: 100vh; }
-  :root { --safe-bottom: var(--safe-bottom-cap); }
 }
 
 /* JS toggles collapsibles via the hidden attribute; author display rules
