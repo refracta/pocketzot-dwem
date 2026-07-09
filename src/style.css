@@ -877,11 +877,14 @@ html, body {
      drift from what #game-messages actually renders at. */
   --msglog-font: 0.75rem;
   --msglog-line: 1.3;
-  /* Message-log height: 5 lines (≡ the old `5lh`, but usable from other
-     elements' contexts — `lh` would re-resolve against the consumer's own
-     line-height). A var so the spell-row rules below can offset #more-btn
-     by exactly the log's height. */
-  --msglog-h: calc(5 * var(--msglog-font) * var(--msglog-line));
+  /* Message-log height in lines (line-count × font × line-height rather than
+     `lh`, which would re-resolve against each consumer's own line-height).
+     A var so the spell-row rules below can offset #more-btn by exactly the
+     log's height. 4 lines still spans several turns (the server glues
+     same-turn messages onto one line) and tapping the log opens full
+     history; the line trimmed here comes back as clear map area, since
+     #map-grid reserves exactly this height above the floating log. */
+  --msglog-h: calc(4 * var(--msglog-font) * var(--msglog-line));
   /* Floating-log scrim. Text legibility comes from the text-shadow on
      #game-messages, so the scrim's job is figure/ground separation — dimming
      the map content behind the log. ASCII is the binding case: behind the log
@@ -1065,8 +1068,8 @@ html, body {
   text-shadow: var(--msglog-text-shadow);
   font-size: var(--msglog-font);
   line-height: var(--msglog-line);
-  /* A fixed 5-line floating box; newest message pinned to the anchored edge
-     via column-reverse below. */
+  /* A fixed --msglog-h floating box; newest message pinned to the anchored
+     edge via column-reverse below. */
   height: var(--msglog-h);
   overflow-y: auto;
   /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
@@ -1075,7 +1078,7 @@ html, body {
      px clear of the top edge. That gap absorbs WebKit's fractional column-reverse
      scroll offset (which Chrome rounds away but Safari/iOS doesn't), so the
      hidden row's descenders no longer bleed in at the top. It also makes the
-     content box no longer an exact 5×line-box multiple, removing the
+     content box no longer an exact line-box multiple, removing the
      boundary-aligned cut that made the artifact possible. */
   padding: 0.2rem 0.2rem;
   cursor: pointer;
@@ -1098,7 +1101,7 @@ html, body {
    each message line carries its own backing instead, so the map shows through
    wherever there's no text (short lines, quiet turns). Lines shrink to their
    text (align-self overrides the column-reverse stretch). Horizontal padding
-   only: vertical would break the 5-lines-in---msglog-h rhythm. */
+   only: vertical would break the whole-lines-in---msglog-h rhythm. */
 #game-view.msg-pill #game-messages { background: transparent; }
 #game-view.msg-pill .game-msg {
   align-self: flex-start;
@@ -1971,6 +1974,13 @@ html, body {
   height: 0.9rem;
   overflow: hidden;
 }
+/* No lights (the common quiet state) → give the row's height back to the
+   map instead of reserving an empty strip. StatusView.update rebuilds the
+   children from scratch each player message, leaving the element truly
+   empty (no text nodes) when no status has a light, so :empty is reliable.
+   The map refit this appear/disappear triggers is absorbed by #map-grid's
+   centering + the fitToContainer hysteresis. */
+#hud-status:empty { display: none; }
 
 .status-light {
   font-size: 0.72rem;
@@ -2464,7 +2474,11 @@ html, body {
 
 /* ── Unified touch controls ─────────────────────────────────── */
 #touch-controls {
-  --tc-dpad: 3.6rem;  /* d-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) */
+  /* D-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) — also sets the
+     whole strip's height via the max-height calc below. 3.3rem ≈ 53px,
+     still above the 44pt tap floor; was 3.6rem (see
+     dev-material/vertical-space-savings.md). */
+  --tc-dpad: 3.3rem;
   /* Resting palette one step darker than the app-wide tokens: at night the
      map is sparse dim glyphs on near-black, so --text/--surface2 buttons
      outshine the play area. Presses brighten (--tc-press + accent label) —
