@@ -840,13 +840,23 @@ export function buildGameView(
     // __dcssChatDemo() — replay a scripted burst of synthetic incoming chat
     // through the real message path (pill, unread badge, sheet history), for
     // eyeballing pill behavior in either role without a second chatter.
-    // Nothing touches the wire. The default script covers the interesting
-    // cases: a short line, a quick follow-up that replaces the pill
-    // mid-display, a long line that ellipsizes, and a fresh pill after the
-    // previous one expired. Pass your own lines (sent 2s apart) to override:
+    // Nothing touches the wire. First it fakes the demo chatters joining as
+    // spectators (so the ⊙N count chip appears, in the playing role too),
+    // then the default script covers the interesting cases: a short line, a
+    // quick follow-up that replaces the pill mid-display, a long line that
+    // ellipsizes, and a fresh pill after the previous one expired. Pass your
+    // own lines (sent 2s apart) to override:
     // __dcssChatDemo(['hi', 'a much longer message …'])
     ;(window as unknown as { __dcssChatDemo: (lines?: string[]) => void })
       .__dcssChatDemo = (lines?) => {
+        // Fake the audience joining. names arrives as the reference's wrapped
+        // HTML — each watcher a .watcher span, with an unwrapped Anon tail —
+        // so handleSpectators recovers the countable names exactly as on wire.
+        const watchers = lines ? ['gammafunk'] : ['gammafunk', 'rakuen']
+        const namesHtml = watchers
+          .map((n) => `<span class="watcher">${n}</span>`)
+          .join(', ') + ', and 1 Anon'
+        chatView.handleSpectators(watchers.length + 1, namesHtml)
         const script: Array<[number, string, string]> = lines
           ? lines.map((l, i) => [i * 2000, 'gammafunk', l])
           : [
