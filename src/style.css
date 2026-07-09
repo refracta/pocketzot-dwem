@@ -33,7 +33,21 @@
   --fs-overlay:        0.9rem;
   --fs-overlay-chrome: 0.8rem;
 
-  --app-bottom-pad: 25px;
+  /* Home-indicator clearance: the device's real bottom inset (viewport-fit=
+     cover makes env() reliable), capped at the field-tested 25px rather than
+     Apple's conservative 34 — months of on-device play prove 25 clears the
+     swipe-up-home gesture zone. Resolves to 0 on home-button phones, iPads,
+     Android, and Safari tabs (toolbar expanded), reclaiming the old flat pad
+     there. Applied per-component on the bottom-most interactive bars, not on
+     #app — surfaces bleed to the screen edge, controls pad themselves. See
+     dev-material/vertical-space-savings.md (safe-area migration). */
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 25px);
+  /* Status-bar/Dynamic-Island clearance for surfaces that anchor to the
+     screen's top edge (menus, floats). Raw env by default; in installed mode
+     src/viewport-inset.ts overrides this inline with a persisted measurement,
+     because iOS 26 reports env() flakily across cold starts (59px one
+     launch, 0 the next) while the hardware obviously hasn't moved. */
+  --safe-top: env(safe-area-inset-top, 0px);
   touch-action: manipulation;
 }
 
@@ -43,6 +57,19 @@ html, body {
   color: var(--text);
   font-family: var(--font-mono);
   overflow: hidden;
+}
+/* Installed-app (home screen) mode with viewport-fit=cover: iOS misreports
+   every dynamic viewport measure (100dvh/100svh, innerHeight,
+   visualViewport.height) as screen-minus-insets while the window is really
+   full-screen — webkit.org bug #254868. 100vh is the one honest unit, and it
+   must be forced on html/body too: at 100% they'd resolve to the misreported
+   height and body's overflow:hidden would clip the app's bottom rows.
+   --safe-bottom is pinned to the field-tested flat 25px here because env()
+   itself reports flakily across cold starts on iOS 26 (59/34 one launch,
+   all zeros the next); tabs and other platforms keep the env-based min(). */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html, body, #app { height: 100vh; }
+  :root { --safe-bottom: 25px; }
 }
 
 /* JS toggles collapsibles via the hidden attribute; author display rules
@@ -55,7 +82,6 @@ html, body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-bottom: var(--app-bottom-pad);
 }
 
 /* ── Login view ───────────────────────────────────────────── */
@@ -64,7 +90,8 @@ html, body {
   display: flex;
   align-items: safe center;
   justify-content: center;
-  padding: 1rem;
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
+           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
   background: var(--bg);
   overflow-y: auto;
 }
@@ -213,7 +240,7 @@ html, body {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right))
            0.5rem max(1rem, env(safe-area-inset-left));
 }
 /* Mirrors .lobby-header's bar (1rem container padding + 36px centered row) so the
@@ -429,7 +456,8 @@ html, body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 1rem;
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
+           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
   gap: 0.75rem;
   overflow-y: auto;
 }
@@ -729,7 +757,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
+           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
   background: rgba(0, 0, 0, 0.6);
 }
 .lobby-exit-card {
@@ -806,7 +835,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
+           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
   background: rgba(0, 0, 0, 0.6);
 }
 .doc-card {
@@ -935,7 +965,7 @@ html, body {
    nothing that matters — server overlays replace the map wholesale. */
 .version-notice {
   position: absolute;
-  top: 0.5rem;
+  top: max(0.5rem, var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 6;
@@ -1209,7 +1239,7 @@ html, body {
   z-index: 40;
   background: var(--bg);
   border-top: 1px solid var(--border);
-  padding: 0.5rem 0.5rem max(0.6rem, env(safe-area-inset-bottom));
+  padding: 0.5rem 0.5rem max(0.6rem, var(--safe-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1507,7 +1537,11 @@ html, body {
   #monster-list {
     grid-area: map;
     position: absolute;
-    top: 0.25rem;
+    /* Clear the status bar on notch devices (env-top fires under
+       viewport-fit=cover in standalone; 0 in a tab). Uncapped on purpose —
+       unlike the bottom gesture zone, the status bar genuinely covers
+       content. */
+    top: max(0.25rem, var(--safe-top));
     left: 0.25rem;
     max-width: calc(100% - 0.5rem);
   }
@@ -2009,7 +2043,11 @@ html, body {
   z-index: 5;
   overflow-y: auto;
   background: var(--bg);
-  padding: 0.75rem 0.5rem;
+  /* The map cell starts at the physical top of the screen (full-bleed), so
+     menu/prompt overlays covering it must clear the status bar / Dynamic
+     Island — unlike the map itself, their first line is content, not
+     ambience. */
+  padding: max(0.75rem, var(--safe-top)) 0.5rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -2493,7 +2531,10 @@ html, body {
   display: flex;
   flex-direction: row;
   gap: 0.35rem;
-  padding: 0.1rem 0.35rem;
+  /* The strip is the bottom-most bar in portrait play, so it carries the
+     home-indicator clearance itself (--safe-bottom; landscape ignores this
+     whole box via display:contents). */
+  padding: 0.1rem 0.35rem calc(0.1rem + var(--safe-bottom));
   background: var(--bg);
   /* Transparent (not removed): X-mode colors this border as its active-mode
      indicator (.x-mode rule below), and keeping the 1px avoids a layout
@@ -2504,7 +2545,7 @@ html, body {
      tall z spell grid scrolls inside the panel instead of growing the whole
      strip and eating the map. The flex chain below needs min-height:0 to let
      the grid shrink and scroll rather than forcing the panel taller. */
-  max-height: calc(var(--tc-dpad) * 3 + 4px + 0.4rem);
+  max-height: calc(var(--tc-dpad) * 3 + 4px + 0.4rem + var(--safe-bottom));
 }
 
 #touch-controls.x-mode { border-top-color: var(--accent); }
@@ -2535,6 +2576,16 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Whichever bar bottoms out the portrait column (menu controls replace the
+   touch strip during menus; the spectator bar takes the touch slot when
+   watching) carries the home-indicator clearance itself. Portrait-scoped:
+   in landscape these sit in the sidebar and clear the inset via their
+   bottom margins there instead. */
+@media (orientation: portrait) {
+  #menu-controls { padding-bottom: calc(0.4rem + var(--safe-bottom)); }
+  #spectator-bar { padding-bottom: calc(0.3rem + var(--safe-bottom)); }
 }
 
 /* D-pad: 3×3 CSS grid of large buttons */
@@ -2769,11 +2820,13 @@ html, body {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: var(--app-bottom-pad);
+  bottom: 0;
   z-index: 200;
   background: var(--bg);
   border-top: 2px solid var(--accent);
-  padding: 0.4rem 0.3rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+  /* Full-bleed to the screen edge; the capped inset rides inside as padding
+     so the bottom key row clears the home-indicator gesture zone. */
+  padding: 0.4rem 0.3rem calc(0.4rem + var(--safe-bottom));
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
@@ -2959,9 +3012,11 @@ html, body {
    the d-pad floats over the bottom-left corner.
    ──────────────────────────────────────────────────────────── */
 @media (orientation: landscape) {
-  #app { padding-bottom: 0; }
-
   #game-view {
+    /* Keep the sidebar clear of the notch/Dynamic Island ear when it's on
+       the right (env resolves 0 when the phone is rotated the other way).
+       The map edge under the opposite ear is fine — it's background. */
+    padding-right: env(safe-area-inset-right, 0px);
     grid-template-columns: minmax(0, 1fr) 16rem;
     /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
@@ -3079,7 +3134,7 @@ html, body {
     z-index: 3;
     /* Bottom margin matches the sidebar panel's home-indicator lift (see
        the .tc-panel comment below) so ↓/↘ taps don't ride the home swipe. */
-    margin: 0.3rem 0.3rem 1.25rem;
+    margin: 0.3rem 0.3rem max(0.3rem, var(--safe-bottom));
   }
   .tc-dpad-btn {
     background: color-mix(in srgb, var(--surface2) 20%, transparent);
@@ -3097,17 +3152,16 @@ html, body {
     color: color-mix(in srgb, var(--text-dim) 55%, transparent);
   }
 
-  /* The 1.25rem bottom margins here (panel, menu controls, spectator bar,
-     d-pad) lift the bottom-row buttons clear of the iOS home-indicator
-     gesture zone (~20px), where taps get swallowed by the swipe-up-home
-     gesture. Portrait gets this from #app's --app-bottom-pad, which this
-     block zeroes to keep the map full height — padding #app here instead
-     would shrink the height-bound map cells. (No viewport-fit=cover, so
-     env(safe-area-inset-bottom) is 0 and the gap must be a fixed value.) */
+  /* The bottom margins here (panel, menu controls, spectator bar, d-pad)
+     lift the bottom-row buttons clear of the iOS home-indicator gesture
+     zone, where taps get swallowed by the swipe-up-home gesture. Landscape
+     raw inset is 21px on Face ID phones, so the capped --safe-bottom is a
+     near no-op there vs the old fixed 1.25rem — while home-button devices
+     and desktop drop to the small aesthetic floor. */
   .tc-panel {
     grid-area: panel;
     padding: 0;
-    margin: 0.35rem 0 1.25rem 0;
+    margin: 0.35rem 0 max(0.35rem, var(--safe-bottom)) 0;
   }
   /* Footer keys are 1.4rem in portrait, where dead padding sits below
      them; flush against a screen edge they need real height to hit. */
@@ -3119,7 +3173,7 @@ html, body {
      while a CRT/menu is active. */
   #menu-controls {
     grid-area: panel;
-    margin-bottom: 1.25rem;
+    margin-bottom: max(0.35rem, var(--safe-bottom));
   }
 
   /* Spectator mode appends no touch/menu controls, so the panel slot is
@@ -3130,7 +3184,7 @@ html, body {
   #spectator-bar {
     grid-area: panel;
     border-top: 0;
-    margin-bottom: 1.25rem;
+    margin-bottom: max(0.35rem, var(--safe-bottom));
   }
   #spectator-bar .lobby-account-chip { display: none; }
 
@@ -3198,7 +3252,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: max(1rem, var(--safe-top)) max(1rem, env(safe-area-inset-right, 0px))
+           max(1rem, var(--safe-bottom)) max(1rem, env(safe-area-inset-left, 0px));
   background: rgba(0, 0, 0, 0.6);
 }
 .reconnect-card {
@@ -3586,7 +3641,7 @@ html, body {
 #chat-chip.chat-chip-float {
   grid-area: map;
   position: absolute;
-  top: 0.4rem;
+  top: max(0.4rem, var(--safe-top));
   right: 0.4rem;
   z-index: 5;
   background: var(--msglog-bg);
