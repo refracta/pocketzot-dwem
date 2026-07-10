@@ -1184,10 +1184,21 @@ html, body {
      player in the clear area above the floating log/rail, not in the geometric
      middle of the full element (which would drop the player — and the tiles
      around it — under the log). fitToContainer reads this asymmetry and still
-     fills rows on down behind the translucent log. Constant (log height only,
-     not + rail) so the rail's arrival doesn't re-center the map. `#game-view`
-     prefix outranks the base `#map-grid` padding regardless of source order. */
+     fills rows on down behind the translucent log. With the rail up the log
+     rides on top of it, so the reserve grows by the rail's height too —
+     tracking the ACTUAL top of messages. That makes the rail's post-harvest
+     arrival re-center the map by ~1 row (padding shrinks the content box, so
+     the #map-grid ResizeObserver refits); the earlier constant-reserve design
+     avoided that jump, but on-device it left the @ sitting ~1.5 tiles low for
+     casters the whole session (7 tiles to the messages, 10 to the island) —
+     a persistent off-center reads worse than one shift at rail fade-in.
+     `#game-view` prefix outranks the base `#map-grid` padding regardless of
+     source order; spell-row and x-mode never coexist (renderSpellRail drops
+     the class while examining), so the x-mode 2px rule below can't collide. */
   #game-view #map-grid { padding-bottom: calc(2px + var(--msglog-h)); }
+  #game-view.spell-row #map-grid {
+    padding-bottom: calc(2px + var(--msglog-h) + var(--spell-rail-h));
+  }
   /* Top-anchor the ASCII row stack: it deliberately overruns the content box
      DOWNWARD (whole rows filling behind the log — availHFit in
      MapView.fitToContainer), and the base justify-content:center would split
@@ -1211,12 +1222,11 @@ html, body {
      (padding would start the rows below the pill, blanking the underlay):
      a bare token both fit paths read (MapView/TileMapView.fitToContainer)
      and exclude from their centering/font region, while the band still
-     fills with overrun rows exactly like the log reserve above. Constant
-     per orientation (the boundary is the LOG top, not the spell rail's) for
-     the same no-rejump reason as the padding rule: the rail arrives a
-     round-trip after load, and re-centering then would jump the map.
-     Resolves to 0 on notchless devices and in Safari tabs (env is 0), so
-     this is a no-op everywhere the pill isn't. */
+     fills with overrun rows exactly like the log reserve above (whose
+     spell-row variant supplies the matching bottom boundary — the actual
+     top of messages, rail included when present). Resolves to 0 on
+     notchless devices and in Safari tabs (env is 0), so this is a no-op
+     everywhere the pill isn't. */
   #game-view #map-grid { --map-top-occlusion: var(--safe-top); }
   /* X-mode: log hidden, examine viewport pans anywhere, and the grid is
      symmetric-centered (rules above) — the biased-centering model doesn't

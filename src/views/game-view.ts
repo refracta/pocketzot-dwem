@@ -307,9 +307,12 @@ export function buildGameView(
   // Spell rail: a persistent row of quick-cast buttons floated over the map's
   // bottom edge in portrait (landscape slots it into the sidebar `spells`
   // row). The message log floats over the map too — always, casters or not —
-  // so the rail is out of flow and its appearance never resizes the map; the
-  // `spell-row` class on #game-view only lifts the log (and --more--) by the
-  // rail's height. Always visible during play once spells are harvested.
+  // so the rail is out of flow; the `spell-row` class on #game-view lifts the
+  // log (and --more--) by the rail's height AND grows the map's bottom
+  // centering reserve to match (see the #map-grid padding rules), so the @
+  // re-centers ~1 row upward when the rail fades in — a deliberate trade,
+  // accepted on-device over the @ sitting persistently low for casters.
+  // Always visible during play once spells are harvested.
   const spellRail = document.createElement('div')
   spellRail.id = 'spell-rail'
   spellRail.style.display = 'none'
@@ -2367,8 +2370,10 @@ export function buildGameView(
   // own guard keeps a tap during a menu/overlay/X-mode inert). The
   // `spell-row` class on the view tracks rail visibility: while set, CSS
   // lifts the floating message log (and --more--) by the rail's height so
-  // the rail fits beneath them — the rail itself floats over the map, so
-  // showing it never resizes the map.
+  // the rail fits beneath them, and grows the map's bottom centering
+  // reserve to match (the padding change refits the map via its
+  // ResizeObserver — a deliberate ~1-row re-center; see the #map-grid
+  // padding comment in style.css).
   // The cache array the rail's buttons were last built from. Every harvest
   // (and the dev fake-spells hook) assigns a NEW array inside the harvester,
   // so reference identity distinguishes "content changed, rebuild" from
