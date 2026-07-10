@@ -245,26 +245,21 @@ html, body {
   display: flex;
   flex-direction: column;
 }
-.crypt-header {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  padding: max(1rem, var(--safe-top)) max(1rem, var(--safe-right))
-           0.5rem max(1rem, var(--safe-left));
-}
-/* Mirrors .lobby-header's bar (1rem container padding + 36px centered row) so the
-   "← Back" button lands in the same spot as the lobby/spectate back button. The
-   margin-bottom separates the nav button from the heading so they don't cluster. */
-.crypt-topbar {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  margin-bottom: 1.25rem;
+/* .crypt-header shares its base (padding + 36px centered row) with .lobby-header
+   via the grouped rule in the Lobby section. Only the bar pins; the flavor
+   heading scrolls with the grid inside .crypt-scroll. */
+.crypt-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.5rem max(1rem, var(--safe-right))
+           max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
 }
 /* Rotating thematic line (src/views/crypt-flavor.ts): prose, clearly smaller than
    the logo wordmark. The crypt's sole heading. */
 .crypt-flavor {
-  margin: 0.4rem 0 0;
+  margin: 0;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 1.1rem;
@@ -277,17 +272,13 @@ html, body {
    last row of many centers too. align-content:flex-start keeps rows packed at the
    top (room to grow below); align-items:flex-end floor-aligns dolls within a row. */
 .crypt-grid {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-content: flex-start;
   align-items: flex-end;
   gap: 1rem 0.5rem;
-  padding: 1rem max(1rem, var(--safe-right))
-           max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
+  padding-top: 1rem;
 }
 
 .login-section { margin-bottom: 1.5rem; }
@@ -461,22 +452,51 @@ html, body {
 }
 
 /* ── Lobby view ───────────────────────────────────────────── */
+/* Frame: pinned nav bar + scrolling content. The bar (not the view) owns the
+   safe-top inset so scrolled content never rides up under the dynamic island,
+   and Back / the account chip stay reachable however long the spectate list. */
 #lobby-view {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: var(--safe-frame-pad);
-  gap: 0.75rem;
-  overflow-y: auto;
 }
 
 .lobby-header {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
   gap: 0.5rem;
-  min-height: 36px;
 }
+
+.lobby-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0 max(1rem, var(--safe-right))
+           max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
+}
+
+/* Pinned nav bar shared by the lobby and the crypt: a 36px centered row that
+   owns the safe-top inset (so scrolled content never rides under the dynamic
+   island) and lands the "← Back" button in the same spot in both views. The
+   is-scrolled hairline appears only while content is scrolled beneath — a
+   box-shadow rather than a border so its appearance costs no layout height
+   (class toggled by each view's scroll listener, src/util/scroll-cue.ts). */
+.lobby-header,
+.crypt-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: max(1rem, var(--safe-top)) max(1rem, var(--safe-right))
+           0.75rem max(1rem, var(--safe-left));
+  transition: box-shadow 150ms;
+}
+.lobby-header.is-scrolled,
+.crypt-header.is-scrolled { box-shadow: 0 1px 0 var(--border); }
 
 .lobby-account-chip-wrap {
   position: relative;

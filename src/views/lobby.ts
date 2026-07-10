@@ -9,6 +9,7 @@ import { openAboutDoc, openChangelogDoc } from './docs'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
 import { classifyTransition } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
+import { attachScrollCue } from '../util/scroll-cue'
 
 export function buildLobbyView(
   conn: WsConnection,
@@ -79,13 +80,22 @@ export function buildLobbyView(
       <button id="lobby-back" class="lobby-btn-ghost" aria-label="Back to login">← Back</button>
       ${headerRight}
     </div>
-    <div id="lobby-notice" class="lobby-notice" hidden></div>
-    ${gamesContainer}
-    <h2 class="lobby-section-title">Active Games</h2>
-    <div id="lobby-list" class="lobby-list">
-      <div class="lobby-loading">Loading…</div>
+    <div class="lobby-scroll">
+      <div id="lobby-notice" class="lobby-notice" hidden></div>
+      ${gamesContainer}
+      <h2 class="lobby-section-title">Active Games</h2>
+      <div id="lobby-list" class="lobby-list">
+        <div class="lobby-loading">Loading…</div>
+      </div>
     </div>
   `
+
+  // iOS-style scroll-edge cue: hairline under the pinned bar only while
+  // content is actually scrolled beneath it.
+  attachScrollCue(
+    view.querySelector<HTMLElement>('.lobby-header')!,
+    view.querySelector<HTMLElement>('.lobby-scroll')!,
+  )
 
   const listEl = view.querySelector<HTMLElement>('#lobby-list')!
   const gamesEl = view.querySelector<HTMLElement>('#lobby-games')
