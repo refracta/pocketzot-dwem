@@ -257,8 +257,13 @@ export class TileMapView {
     const padBottom = parseFloat(cs.paddingBottom)
     const padLeft = parseFloat(cs.paddingLeft)
     const padRight = parseFloat(cs.paddingRight)
+    // Occluded top band (Dynamic Island / notch pill, portrait only — see the
+    // --map-top-occlusion rules in style.css). The full-bleed canvas still
+    // covers it (ambience under the pill), but it's excluded from the clear
+    // area — mirrors MapView.fitToContainer.
+    const occl = parseFloat(cs.getPropertyValue('--map-top-occlusion')) || 0
     const availW = rect.width - padLeft - padRight
-    const availH = rect.height - padTop - padBottom
+    const availH = rect.height - padTop - padBottom - occl
     if (availW <= 0 || availH <= 0) return
 
     // Minimum viewport floor: 21×21 normal, 17×17 zoom. Cell size is picked
@@ -291,7 +296,7 @@ export class TileMapView {
     // cell change only adds/removes a clipped partial at an edge, so there's
     // no visible cell-drop to dampen.
     const x = pinAxis(padLeft + availW / 2, cell, rect.width, baseAxis)
-    const y = pinAxis(padTop + availH / 2, cell, rect.height, baseAxis)
+    const y = pinAxis(padTop + occl + availH / 2, cell, rect.height, baseAxis)
 
     const prevCenterCol = this.centerCol
     const prevCenterRow = this.centerRow

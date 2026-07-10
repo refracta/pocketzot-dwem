@@ -1204,6 +1204,24 @@ html, body {
      anchoring rule — the full-bleed canvas must stay top-left anchored. */
   #game-view.x-mode #map-grid { padding-bottom: 2px; }
   #game-view.x-mode #map-grid:not(.map-tile) { justify-content: center; }
+
+  /* Dynamic-Island/pill occlusion: the map renders under the pill (ambience)
+     but the @ should center in the VISIBLE clear area — between the pill's
+     bottom edge and the floating log's top edge. Deliberately NOT padding
+     (padding would start the rows below the pill, blanking the underlay):
+     a bare token both fit paths read (MapView/TileMapView.fitToContainer)
+     and exclude from their centering/font region, while the band still
+     fills with overrun rows exactly like the log reserve above. Constant
+     per orientation (the boundary is the LOG top, not the spell rail's) for
+     the same no-rejump reason as the padding rule: the rail arrives a
+     round-trip after load, and re-centering then would jump the map.
+     Resolves to 0 on notchless devices and in Safari tabs (env is 0), so
+     this is a no-op everywhere the pill isn't. */
+  #game-view #map-grid { --map-top-occlusion: var(--safe-top); }
+  /* X-mode: log hidden, examine viewport pans anywhere, and the grid is
+     symmetric-centered (rules above) — the biased-centering model doesn't
+     apply, so the token must be 0 there. */
+  #game-view.x-mode #map-grid { --map-top-occlusion: 0px; }
 }
 
 .game-msg { color: var(--text); line-height: var(--msglog-line); }
