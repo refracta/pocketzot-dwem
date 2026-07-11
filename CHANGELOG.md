@@ -9,46 +9,28 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
-## 2026-07-09
+## 2026-07-11
 
-- Spectator chat: a chat sheet slides up from the bottom, with a chip
-  showing how many people are watching and a pill that previews incoming
-  messages. Works whether you're playing to an audience or spectating
-  someone else.
-- Customizable control sets: edit the three control tabs' button grids.
-  The editor lets you assign any key, short macros up to three keys (e.g.
-  "za."), F-keys and Ctrl combos, rename the tabs, and pick a 3×3 or 3×4
-  grid per tab.
-- Export and import control-set strings to backup or share.
-- Settings page added. Control-set changes apply immediately, mid-game.
-- The map render mode (ASCII glyphs or graphical tiles) can now be switched
-  from Settings too, alongside the in-game two-finger long-press.
-- Spectators keep their minimap: menus and screens the watched player opens
-  no longer dismiss it — it comes back as soon as they close. Dismissing it
-  yourself works the same as before.
-- More of the dungeon now fits on screen: the status-light row collapses
-  when nothing's active, the message log shows a little more history, and
-  the d-pad is slightly slimmer.
-- The layout now respects the notch and home indicator on modern phones,
-  so the HUD and controls stay clear of the rounded corners and camera
-  cutout.
-- Tiles mode supports trunk's reworked monster invisibility: an invisible
-  monster whose position is known draws translucent with a "?" marker, a
-  tile one just left shows a grey ghost marker, and the new invisibility
-  status icons display.
+- Chat added: tap the ⊙ spectator count to read and send messages
+  while playing or spectating. When playing, the count appears once a
+  spectator is present. New messages show a brief preview. Tap the message
+  preview or the unread count to view.
+- Customizable control sets added: edit the control tabs' button grids,
+  including keys, short macros, Ctrl- and F-keys, tab names, and grid size.
+- Added support for exporting/importing control-set strings, to back up or
+  share.
+- While spectating, the minimap now remembers its open state, instead of
+  switching closed after the watched player views certain menus.
+- The map now extends up to the top edge of the screen, under camera
+  cutouts. Player centering is still based on the map clear area.
+- The status-light row now collapses when nothing's active.
+- Tiles mode supports trunk's reworked monster invisibility.
 - The monster list warns about invisible monsters sensed nearby but not yet
   located.
-- In tiles mode, oversized monster sprites (Pandemonium lords and the like)
-  now sit correctly on the map and scale to fit the monster list and
-  picker, instead of spilling out of their row.
-- The on-screen control buttons now claim the small gaps and edge margins
+- Improved tiles mode support for oversized monster sprites.
+- The on-screen keyboard buttons now claim the small gaps and edge margins
   between them, so a tap that lands just off a button still registers.
-- The player stays centered in the open map area between the top pill and
-  the message log, instead of drifting beneath them.
-- Examining (x or X) with the minimap open now closes the minimap, so the
-  cursor can't end up hidden beneath it.
-- The lobby and character-crypt nav bars now stay pinned while the content
-  below them scrolls.
+- Various other improvements.
 
 ## 2026-07-06
 
