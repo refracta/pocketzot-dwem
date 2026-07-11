@@ -12,8 +12,24 @@ import { buildStatusIconSizeMap } from '../map/icon-sizes'
 // 32x32 logical cell; the actual sprite within is positioned via per-tile
 // ox/oy. Menu and popup contexts pass centre=false (per menu.js:69 and
 // ui-layouts.js:61 in the reference client), so sprites land at their
-// authored offsets without further centring math.
+// authored offsets without further centring math — that's this file's
+// default. Map-mimicking surfaces (monster list/panel) pass centre=true to
+// get the reference map's draw_tile placement instead: the authored box
+// bottom-aligned and horizontally centred on the cell, which is what makes
+// 32×48 sprites (pan lords, bosses) poke above the cell.
 const CELL = 32
+
+// Rendering options threaded from appendTiles down to paintSprite.
+export interface TileDrawOpts {
+  // Reference draw_tile centring (see CELL comment above).
+  centre?: boolean
+  // Shrink oversized authored boxes (32×48 pan lords/bosses) to fit the cell,
+  // anchored at the cell's bottom-centre so the feet stay on the floor line
+  // and layered same-box parts (demon body/head/wings) shrink coherently.
+  // Our deviation from the reference monster list, which draws into a
+  // one-cell-tall canvas and just clips the head off. No-op for 32×32 boxes.
+  fit?: boolean
+}
 
 export interface TileRef {
   t: number
@@ -165,13 +181,13 @@ export function appendIconOverlays(
 // Adds tiles into an existing tile-stack wrapper. Used to layer extra
 // overlays (e.g. monster status icons that arrive after a constants
 // lookup) on top of an already-rendered base sprite.
-export function appendTiles(loader: TileLoader | null, wrap: HTMLElement, tiles: TileRef[], scale = 1): void {
+export function appendTiles(loader: TileLoader | null, wrap: HTMLElement, tiles: TileRef[], scale = 1, opts?: TileDrawOpts): void {
   if (!loader) return
   for (const t of tiles) {
     const child = document.createElement('div')
     child.className = 'tile'
     wrap.appendChild(child)
-    paintSprite(loader, child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0, t.ymax ?? 0)
+    paintSprite(loader, child, t.tex, t.t, scale, t.xofs ?? 0, t.yofs ?? 0, t.ymax ?? 0, opts)
   }
 }
 
@@ -207,30 +223,43 @@ export function prependDngnIndex(loader: TileLoader | null, wrap: HTMLElement, d
   }).catch((err) => console.warn('dngn tile load failed:', err))
 }
 
-function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number, ymax = 0): void {
+function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number, ymax = 0, opts?: TileDrawOpts): void {
   loader.getAsync(tex, id).then((s) => {
+    // Reference draw_tile centring, when requested (see TileDrawOpts).
+    const sizeOx = opts?.centre ? CELL / 2 - s.aw / 2 : 0
+    const sizeOy = opts?.centre ? CELL - s.ah : 0
     // ymax (atlas px from the cell top) crops the bottom of CUT_BOTTOM doll
     // parts: take only the top `ymax - dyTop` rows of the sprite by shrinking
     // the tile's height, matching tile-map-view's drawSprite. dyTop is where
     // this sprite starts; a clip at or above it hides the part entirely.
-    const dyTop = s.oy + yofs
+    const dyTop = s.oy + sizeOy + yofs
     let srcH = s.h
     if (ymax > 0 && ymax < dyTop + s.h) {
       if (ymax <= dyTop) return  // fully clipped — leave the empty placeholder
       srcH = ymax - dyTop
     }
-    const w = s.w * scale
-    const h = srcH * scale
-    const left = (s.ox + xofs) * scale
-    const top = dyTop * scale
+    // Fit-shrink oversized authored boxes about the cell's bottom-centre
+    // (atlas space), then apply the caller's display scale on top.
+    const fit = opts?.fit ? Math.min(1, CELL / s.aw, CELL / s.ah) : 1
+    let cx = s.ox + sizeOx + xofs
+    let cy = dyTop
+    if (fit !== 1) {
+      cx = CELL / 2 + (cx - CELL / 2) * fit
+      cy = CELL + (cy - CELL) * fit
+    }
+    const k = fit * scale
+    const w = s.w * k
+    const h = srcH * k
+    const left = cx * scale
+    const top = cy * scale
     child.style.width = `${w}px`
     child.style.height = `${h}px`
     child.style.left = `${left}px`
     child.style.top = `${top}px`
     child.style.backgroundImage = `url(${s.img.src})`
-    child.style.backgroundPosition = `${-s.sx * scale}px ${-s.sy * scale}px`
-    if (scale !== 1) {
-      child.style.backgroundSize = `${s.img.naturalWidth * scale}px ${s.img.naturalHeight * scale}px`
+    child.style.backgroundPosition = `${-s.sx * k}px ${-s.sy * k}px`
+    if (k !== 1) {
+      child.style.backgroundSize = `${s.img.naturalWidth * k}px ${s.img.naturalHeight * k}px`
     }
     const wrap = child.parentElement
     if (wrap?.dataset.expand) {

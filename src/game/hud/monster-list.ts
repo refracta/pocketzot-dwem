@@ -508,7 +508,10 @@ export class MonsterListView {
         doll: cell?.doll,
         mcache: cell?.mcache,
       })
-      if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE)
+      // centre + fit: reference-map placement, with oversized 32×48 sprites
+      // (pan lords, bosses) shrunk to the cell instead of the reference
+      // monster list's head-clipping canvas (see monster-panel.ts).
+      if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE, { centre: true, fit: true })
       if (cell?.highlighted_summoner) prependDngnLayer(this.loader, stack, 'HALO_SUMMONER', TILE_SCALE)
       const threat = fgThreatDngnName(cell?.fg)
       if (threat) prependDngnLayer(this.loader, stack, threat, TILE_SCALE)

@@ -9,38 +9,49 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
-## 2026-07-07
+## 2026-07-09
 
+- Spectator chat: a chat sheet slides up from the bottom, with a chip
+  showing how many people are watching and a pill that previews incoming
+  messages. Works whether you're playing to an audience or spectating
+  someone else.
+- Customizable control sets: edit the three control tabs' button grids.
+  The editor lets you assign any key, short macros up to three keys (e.g.
+  "za."), F-keys and Ctrl combos, rename the tabs, and pick a 3×3 or 3×4
+  grid per tab.
+- Export and import control-set strings to backup or share.
+- Settings page added. Control-set changes apply immediately, mid-game.
+- The map render mode (ASCII glyphs or graphical tiles) can now be switched
+  from Settings too, alongside the in-game two-finger long-press.
 - Spectators keep their minimap: menus and screens the watched player opens
   no longer dismiss it — it comes back as soon as they close. Dismissing it
   yourself works the same as before.
-- Examining (x or X) with the minimap open now closes the minimap, so the
-  cursor can't end up hidden beneath it.
+- More of the dungeon now fits on screen: the status-light row collapses
+  when nothing's active, the message log shows a little more history, and
+  the d-pad is slightly slimmer.
+- The layout now respects the notch and home indicator on modern phones,
+  so the HUD and controls stay clear of the rounded corners and camera
+  cutout.
 - Tiles mode supports trunk's reworked monster invisibility: an invisible
   monster whose position is known draws translucent with a "?" marker, a
   tile one just left shows a grey ghost marker, and the new invisibility
   status icons display.
 - The monster list warns about invisible monsters sensed nearby but not yet
-  located — a magenta row in both render modes, shown even when no monster
-  is visible.
-- The map render mode (ASCII glyphs or graphical tiles) can now be switched
-  from Settings too, alongside the in-game two-finger long-press. Applies
-  immediately, even mid-game.
-- Settings' Help section now includes a Gestures page listing the touch
-  gestures (zoom, render-mode switch, minimap, Shift lock, and friends).
+  located.
+- In tiles mode, oversized monster sprites (Pandemonium lords and the like)
+  now sit correctly on the map and scale to fit the monster list and
+  picker, instead of spilling out of their row.
+- The on-screen control buttons now claim the small gaps and edge margins
+  between them, so a tap that lands just off a button still registers.
+- The player stays centered in the open map area between the top pill and
+  the message log, instead of drifting beneath them.
+- Examining (x or X) with the minimap open now closes the minimap, so the
+  cursor can't end up hidden beneath it.
+- The lobby and character-crypt nav bars now stay pinned while the content
+  below them scrolls.
 
 ## 2026-07-06
 
-- Custom control sets: the three control tabs' button grids are now yours to
-  change. Two built-ins ship — Standard (12 per tab) and Larger keys (9 bigger
-  buttons on the first two tabs) — and the editor lets you assign any key,
-  short macros up to three keys (e.g. "za."), F-keys and Ctrl combos, rename
-  the tabs, and pick a 3×3 or 3×4 grid per tab.
-- Control sets travel as text: Export copies a pocketzot-controls: string to
-  the clipboard, and pasting one into Import brings it back — yours from
-  another device, or another player's.
-- New Settings page, reachable from the login screen footer and the ⚙ chip
-  in the in-game HUD. Control-set changes apply immediately, mid-game.
 - Long menus now keep scroll position after opening and closing an entry's
   description.
 - Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8

@@ -991,20 +991,31 @@ export class TileMapView {
     // and sizes pass through unscaled — the canvas itself is CSS-scaled to the
     // display size, which keeps tile edges aligned.
     //
+    // Centring, per the reference's draw_tile (centre=true on every map-path
+    // draw — draw_dngn/draw_main/draw_player/draw_icon all leave it defaulted):
+    // the sprite's authored box is bottom-aligned and horizontally centred on
+    // the 32×32 cell. A no-op for the usual 32×32 box; the 32×48 boxes (pan
+    // lord parts, boss monsters) get sizeOy = -16, spilling the head into the
+    // cell above — which render()'s row-major order and the dirty-halo repaint
+    // both already accommodate.
+    const sizeOx = ATLAS_CELL / 2 - s.aw / 2
+    const sizeOy = ATLAS_CELL - s.ah
+    //
     // `ymax` is a cell-relative clip line (in atlas pixels, 0..ATLAS_CELL); 0
     // means no clip. When set, only the top `ymax - dyTop` rows of the sprite
     // are taken from the atlas — matches the `y_max` clamp in cell_renderer.js
     // `draw_tile` and the doll-part CUT_BOTTOM mechanic used for naga/merfolk
     // torsos. Mirrors the reference behavior of reducing both source and
     // destination height by the same amount, never letting the lower edge of
-    // the sprite spill below the clip line.
-    const dyTop = s.oy + yofs
+    // the sprite spill below the clip line. (Like the reference, the clip line
+    // is compared against the centred position.)
+    const dyTop = s.oy + sizeOy + yofs
     let h = s.h
     if (ymax > 0 && ymax < dyTop + s.h) {
       if (ymax <= dyTop) return
       h = ymax - dyTop
     }
-    this.ctx.drawImage(s.img, s.sx, s.sy, s.w, h, px + s.ox + xofs, py + dyTop, s.w, h)
+    this.ctx.drawImage(s.img, s.sx, s.sy, s.w, h, px + s.ox + sizeOx + xofs, py + dyTop, s.w, h)
   }
 
   // Mirrors cell_renderer.js render_cursors (line 171): if this cell is the

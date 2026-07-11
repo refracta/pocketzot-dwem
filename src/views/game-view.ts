@@ -125,6 +125,11 @@ export function buildGameView(
   // black-tile-after-version-switch class is gone by construction. Tile views
   // only paint once they're handed this loader.
   let loader: TileLoader | null = initialLoader ?? null
+  // Dev hook: the live per-version TileLoader, for console tile-id lookups
+  // (e.g. loader.getModule('player') → demon part ids when fabricating pan
+  // lord cells via __dcssSimulateIn). Also re-set on game_client, which is
+  // where the loader lands when it wasn't forwarded from the lobby.
+  if (import.meta.env.DEV && loader) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
   let mapView: MapView | TileMapView = new MapView(store)
   // Coalesced map rendering. A turn's `player` and `map` (plus any animation
   // frames) usually arrive in one WS batch and dispatch within one task;
@@ -1016,6 +1021,8 @@ export function buildGameView(
           // tile-mode view (built before game_client) or a pre-game_client
           // gesture toggle gets its loader and starts painting.
           loader = getTileLoader(conn.httpBase, msg.version)
+          // Dev hook — see the initialLoader assignment near the top.
+          if (import.meta.env.DEV) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
           monsterListView.setLoader(loader)
           monsterPanel.setLoader(loader)
           adoptEnums(loader)
