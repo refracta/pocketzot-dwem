@@ -253,10 +253,13 @@ function exportSet(set: ControlSet, btn: HTMLButtonElement, host: HTMLElement): 
 
 // --- read-only viewer ----------------------------------------------------------
 
-// iOS shows no title-attribute tooltips, so taps are the description surface:
-// the viewer's grids and the editor's picker both narrate keys through this.
-// Special-key titles already name the key ("Ctrl+P — Replay messages"), so
-// only text slots get the face-label prefix.
+// iOS shows no title-attribute tooltips, so the editor's picker narrates the
+// touched key through this. Only there: the glosses state a key's *default*
+// meaning, which is the honest claim while choosing what to assign — but not
+// while viewing a finished layout, where a slot may exist for its submenu or
+// Shift/Ctrl-prefixed role and the bare gloss would misdescribe it (so the
+// read-only viewer shows faces only). Special-key titles already name the key
+// ("Ctrl+P — Replay messages"), so only text slots get the face-label prefix.
 function slotDesc(slot: SlotDef): string {
   return slotTitle(slot) ?? `Send "${slot.text ?? ''}"`
 }
@@ -274,42 +277,27 @@ function slotNarration(slot: SlotDef | null): string {
 
 function renderViewer(body: HTMLElement, set: ControlSet): void {
   body.innerHTML = ''
-  // (tab, slot) currently narrated in that tab's info line; tap toggles
-  let sel: { tab: number; i: number } | null = null
 
   const heading = el('h2', 'settings-h', set.name)
   if (set.builtin) heading.appendChild(el('span', 'set-badge', 'built-in'))
   body.appendChild(heading)
-  body.appendChild(el('p', 'settings-hint', 'Tap a key to see what it does.'))
 
   const tabsHost = el('div', 'ed-tabs')
   body.appendChild(tabsHost)
 
-  function render(): void {
-    tabsHost.innerHTML = ''
-    set.tabs.forEach((tab, ti) => {
-      const box = el('div', 'ed-tab')
-      const head = el('div', 'ed-tab-head')
-      head.appendChild(el('span', 'ed-tab-charlabel', `Tab ${tab.name}`))
-      box.appendChild(head)
+  for (const tab of set.tabs) {
+    const box = el('div', 'ed-tab')
+    const head = el('div', 'ed-tab-head')
+    head.appendChild(el('span', 'ed-tab-charlabel', `Tab ${tab.name}`))
+    box.appendChild(head)
 
-      const grid = el('div', 'ed-grid')
-      grid.style.gridTemplateColumns = `repeat(${tab.cols}, 1fr)`
-      tab.slots.forEach((slot, i) => {
-        const sb = button(faceLabel(slot), 'ed-slot' + (slot ? '' : ' empty'), () => {
-          sel = sel?.tab === ti && sel.i === i ? null : { tab: ti, i }
-          render()
-        })
-        if (sel?.tab === ti && sel.i === i) sb.classList.add('picking')
-        grid.appendChild(sb)
-      })
-      box.appendChild(grid)
-
-      if (sel?.tab === ti) {
-        box.appendChild(el('div', 'ed-slot-info', slotNarration(tab.slots[sel.i])))
-      }
-      tabsHost.appendChild(box)
-    })
+    const grid = el('div', 'ed-grid')
+    grid.style.gridTemplateColumns = `repeat(${tab.cols}, 1fr)`
+    for (const slot of tab.slots) {
+      grid.appendChild(el('div', 'ed-slot static' + (slot ? '' : ' empty'), faceLabel(slot)))
+    }
+    box.appendChild(grid)
+    tabsHost.appendChild(box)
   }
 
   const foot = el('div', 'settings-actions')
@@ -324,8 +312,6 @@ function renderViewer(body: HTMLElement, set: ControlSet): void {
       renderEditor(body, set, false)))
   }
   body.appendChild(foot)
-
-  render()
 }
 
 // --- editor ------------------------------------------------------------------

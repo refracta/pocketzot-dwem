@@ -3596,9 +3596,8 @@ html, body {
 }
 .ed-slot.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
 .ed-slot.picking { border-color: var(--accent); color: var(--accent); }
-
-/* Viewer/editor key-description line (tooltips don't exist on touch) */
-.ed-slot-info { color: var(--text-dim); font-size: 0.75rem; margin-top: 0.45rem; line-height: 1.4; }
+/* Read-only viewer slots are inert divs, not buttons */
+.ed-slot.static { display: grid; place-items: center; cursor: default; }
 
 /* Move-in-progress banner between the grids and the picker */
 .ed-move-hint {
@@ -3631,6 +3630,9 @@ html, body {
   min-width: 0;
   padding: 0.4rem 0.55rem;
 }
+/* Typed text must stay 16px (iOS focus auto-zoom), but the long placeholder
+   hint reads better at the picker's own text scale */
+.ed-picker-text::placeholder { font-size: 0.78rem; }
 .ed-picker-set { flex: 0 0 auto; }
 .ed-picker-keys {
   display: grid;

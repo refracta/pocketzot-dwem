@@ -114,46 +114,87 @@ const KEY_BY_TOKEN = new Map(SPECIAL_KEYS.map(k => [k.token, k]))
 // --- Labels & titles -------------------------------------------------------
 
 // Known single-char commands → descriptions, used for button tooltips and the
-// editor. Unknown commands simply get no description.
+// editor picker's gloss line. Covers every printable top-level default from
+// crawl's cmd-keys.h (identical in 0.34 and trunk); unknown commands simply
+// get no description. These state each key's *default* meaning — server-side
+// keymaps can rebind anything, which is one reason the read-only set viewer
+// doesn't narrate finished layouts with them.
 const TEXT_TITLES: Record<string, string> = {
   '5': 'Rest until healed',
   '.': 'Wait one turn',
   's': 'Wait one turn',
-  'i': 'Inventory',
-  'o': 'Auto-explore',
-  'q': 'Quaff potion',
-  'r': 'Read scroll',
-  'f': 'Fire / quivered',
-  'p': 'Auto-fire at nearest',
-  'v': 'Evoke item',
   'a': 'Use ability',
+  'c': 'Unequip item',
+  'd': 'Drop',
+  'D': 'Drop last picked up',
   'e': 'Equip / unequip',
-  'x': 'Examine surroundings',
+  'f': 'Fire / quivered action',
+  'F': 'Fire item (bypassing quiver)',
   ',': 'Pick up item',
   'g': 'Pick up item',
+  'i': 'Inventory',
+  'o': 'Auto-explore',
+  'p': 'Auto-fire at nearest',
+  'q': 'Quaff potion',
+  'Q': 'Quiver an action',
+  '(': 'Cycle quiver backward',
+  ')': 'Cycle quiver forward',
+  ']': 'Swap to recent quiver',
+  'r': 'Read scroll',
+  't': 'Shout / order allies',
+  'v': 'Primary weapon attack',
+  'V': 'Evoke item',
   'w': 'Wield weapon',
   "'": 'Swap weapon (a/b)',
-  'R': 'Remove jewellery',
-  't': 'Tell allies (tt to shout)',
+  'W': 'Wear armour',
+  'T': 'Take off armour',
   'P': 'Put on jewellery',
-  'd': 'Drop',
-  'G': 'Go to level / branch',
+  'R': 'Remove jewellery',
+  'z': 'Cast spell',
+  'Z': 'Cast spell (bypass warnings)',
+  'x': 'Examine surroundings',
   'X': 'Examine level map',
   '<': 'Ascend stairs',
   '>': 'Descend stairs',
-  'z': 'Cast spell',
+  'G': 'Go to level / branch',
+  'C': 'Close door',
+  'O': 'Open door',
   '@': 'Character status',
   '%': 'Character overview',
   '^': 'Religion / deity',
-  '=': 'Reassign inventory/spell letters',
-  'A': 'Abilities/mutations',
+  'A': 'Mutations & innate abilities',
+  'E': 'Experience & play time',
   'm': 'Skills screen',
+  '=': 'Reassign inventory/spell letters',
   '}': 'Runes collected',
   '\\': 'Item knowledge',
+  '"': 'Show worn jewellery',
+  '[': 'Show worn armour',
+  '{': 'Inscribe item',
   '$': 'Gold / shopping list',
-  'M': 'Spell library',
+  'M': 'Memorise from spell library',
   'I': 'List memorised spells',
+  ':': 'Add a note',
+  '#': 'Save character dump',
+  '!': 'Annotate level',
+  '_': 'Message history',
+  '|': 'Show terrain only',
+  ';': 'Examine floor beneath you',
+  '`': 'Repeat last command',
+  '0': 'Repeat next command N times',
+  '~': 'Game menu',
+  'S': 'Save and exit',
   '?': 'Help',
+}
+
+// Vi-style movement: lowercase walks, uppercase runs.
+const DIR_WORD: Record<string, string> = {
+  h: 'left', j: 'down', k: 'up', l: 'right',
+  y: 'up-left', u: 'up-right', b: 'down-left', n: 'down-right',
+}
+for (const [key, dir] of Object.entries(DIR_WORD)) {
+  TEXT_TITLES[key] = `Move ${dir}`
+  TEXT_TITLES[key.toUpperCase()] = `Run ${dir}`
 }
 
 export function slotLabel(slot: SlotDef): string {

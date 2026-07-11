@@ -216,4 +216,12 @@ describe('labels and titles', () => {
     expect(slotTitle({ text: 'za.' })).toBe('Send "za."')
     expect(slotLabel({ text: ' ' })).toBe('␣')
   })
+
+  it('glosses every printable top-level default from cmd-keys.h', () => {
+    expect(slotTitle({ text: 'T' })).toBe('Take off armour')
+    expect(slotTitle({ text: 'v' })).toBe('Primary weapon attack')  // evoke is V
+    expect(slotTitle({ text: 'V' })).toBe('Evoke item')
+    expect(slotTitle({ text: 'h' })).toBe('Move left')
+    expect(slotTitle({ text: 'N' })).toBe('Run down-right')
+  })
 })

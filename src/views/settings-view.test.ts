@@ -144,7 +144,7 @@ describe('settings overlay', () => {
     expect(faces[3].textContent).toBe('o')  // Standard @ row 1 col 4 restored
   })
 
-  it('views a built-in set read-only, narrating tapped keys', () => {
+  it('views a built-in set read-only with inert key faces', () => {
     openSettings()
     $$('.set-row-more')[1].click()
     findButton('View', $$('.set-row-actions')[1]).click()
@@ -155,12 +155,11 @@ describe('settings overlay', () => {
     expect($('.ed-size-btn')).toBeNull()            // …and no size toggles
     expect($$('.ed-slot')).toHaveLength(9 + 9 + 12) // Larger keys' real grids
 
-    // tap ⇥ → description appears under that tab's grid; tap again → gone
+    // slots are inert faces — no buttons, no tap-narration
     const slot = $$('.ed-slot')[0]
     expect(slot.textContent).toBe('⇥')
+    expect(slot.tagName).toBe('DIV')
     slot.click()
-    expect($('.ed-slot-info')!.textContent).toContain('auto-fight')
-    $$('.ed-slot')[0].click()
     expect($('.ed-slot-info')).toBeNull()
 
     findButton('Back').click()
