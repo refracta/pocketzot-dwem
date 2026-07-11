@@ -7,7 +7,8 @@ vi.stubGlobal('localStorage', fakeStorage())
 
 import { openSettings } from './settings-view'
 import {
-  builtinSets, encodeControlSet, getActiveControlSet, listControlSets,
+  builtinSets, cloneSet, encodeControlSet, getActiveControlSet,
+  listControlSets, newSetId, saveControlSet,
 } from '../game/input/control-sets'
 import { getPref, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 
@@ -28,21 +29,33 @@ function findButton(label: string, root: ParentNode = document): HTMLButtonEleme
   return btn as HTMLButtonElement
 }
 
+// A saved custom set whose first two tabs are 3×3 — a second list row to
+// switch to, and a 3-col source for the editor's grid-widening tests.
+function seedThreeColSet() {
+  const set = cloneSet(builtinSets()[0], newSetId(), 'Three cols')
+  for (const tab of set.tabs.slice(0, 2)) {
+    tab.cols = 3
+    tab.slots = tab.slots.slice(0, 9)
+  }
+  saveControlSet(set)
+  return set
+}
+
 describe('settings overlay', () => {
-  it('lists the built-in sets with the active one marked', () => {
+  it('lists the built-in set with the active one marked', () => {
     openSettings()
     const rows = $$('.set-row')
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(1)
     expect(rows[0].classList.contains('active')).toBe(true)
     expect(rows[0].querySelector('.set-name')!.textContent).toBe('Standard')
-    expect(rows[1].querySelector('.set-name')!.textContent).toBe('Larger keys')
-    expect($$('.set-badge')).toHaveLength(2)
+    expect($$('.set-badge')).toHaveLength(1)
   })
 
   it('activates a set when its row is tapped', () => {
+    const custom = seedThreeColSet()
     openSettings()
     $$('.set-row-main')[1].click()
-    expect(getActiveControlSet().id).toBe('bigkeys')
+    expect(getActiveControlSet().id).toBe(custom.id)
     expect($$('.set-row')[1].classList.contains('active')).toBe(true)
   })
 
@@ -58,7 +71,7 @@ describe('settings overlay', () => {
 
     findButton('Import…').click()  // list re-rendered the collapsed area; reopen
     const field2 = $<HTMLTextAreaElement>('.settings-import-field')!
-    field2.value = encodeControlSet({ ...builtinSets()[1], name: 'Imported set' })
+    field2.value = encodeControlSet({ ...builtinSets()[0], name: 'Imported set' })
     findButton('Import').click()
 
     const names = $$('.set-name').map(e => e.textContent)
@@ -70,8 +83,8 @@ describe('settings overlay', () => {
     openSettings()
     $$('.set-row-more')[0].click()
     findButton('Duplicate').click()
-    expect(listControlSets()).toHaveLength(3)
-    const custom = listControlSets()[2]
+    expect(listControlSets()).toHaveLength(2)
+    const custom = listControlSets()[1]
     expect(custom.builtin).toBeUndefined()
     expect(custom.name).toBe('My controls')
     expect(custom.tabs).toEqual(builtinSets()[0].tabs)
@@ -122,15 +135,16 @@ describe('settings overlay', () => {
   })
 
   it('a new set opens with every tab at 3×4 even when cloned from a 3×3 set', () => {
+    seedThreeColSet()
     openSettings()
-    $$('.set-row-main')[1].click()  // activate Big keys (3×3 first tabs)
+    $$('.set-row-main')[1].click()  // activate the custom set (3×3 first tabs)
     findButton('＋ New set').click()
     for (const tab of $$('.ed-tab')) {
       expect(tab.querySelectorAll('.ed-slot')).toHaveLength(12)
     }
     // the 3×3 source keys occupy the first three columns; col 4 is empty
     const faces = [...$$('.ed-tab')[0].querySelectorAll('.ed-slot')].map(s => s.textContent)
-    expect(faces.slice(0, 4)).toEqual(['⇥', '5', 'o', '·'])
+    expect(faces.slice(0, 4)).toEqual(['⇥', '5', 'i', '·'])
   })
 
   it('toggling a tab 4→3→4 in the editor keeps the 4th-column keys', () => {
@@ -146,14 +160,14 @@ describe('settings overlay', () => {
 
   it('views a built-in set read-only with inert key faces', () => {
     openSettings()
-    $$('.set-row-more')[1].click()
-    findButton('View', $$('.set-row-actions')[1]).click()
+    $$('.set-row-more')[0].click()
+    findButton('View', $$('.set-row-actions')[0]).click()
 
-    expect($('.settings-h')!.textContent).toContain('Larger keys')
+    expect($('.settings-h')!.textContent).toContain('Standard')
     expect($('.settings-h .set-badge')).not.toBeNull()
     expect($('.ed-name-input')).toBeNull()          // read-only: no name field
     expect($('.ed-size-btn')).toBeNull()            // …and no size toggles
-    expect($$('.ed-slot')).toHaveLength(9 + 9 + 12) // Larger keys' real grids
+    expect($$('.ed-slot')).toHaveLength(3 * 12)     // Standard's real grids
 
     // slots are inert faces — no buttons, no tap-narration
     const slot = $$('.ed-slot')[0]
@@ -172,17 +186,17 @@ describe('settings overlay', () => {
     findButton('View', $$('.set-row-actions')[0]).click()
     findButton('Duplicate & edit').click()
     expect($('.settings-h')!.textContent).toBe('New control set')
-    expect(listControlSets()).toHaveLength(2)  // still unsaved
+    expect(listControlSets()).toHaveLength(1)  // still unsaved
     findButton('Save').click()
-    expect(listControlSets()).toHaveLength(3)
+    expect(listControlSets()).toHaveLength(2)
   })
 
   it('views a custom set with an Edit shortcut', () => {
     openSettings()
     $$('.set-row-more')[0].click()
     findButton('Duplicate').click()
-    $$('.set-row-more')[2].click()
-    findButton('View', $$('.set-row-actions')[2]).click()
+    $$('.set-row-more')[1].click()
+    findButton('View', $$('.set-row-actions')[1]).click()
     expect($('.settings-h')!.textContent).toBe('My controls')
     expect($('.settings-h .set-badge')).toBeNull()
     findButton('Edit').click()
@@ -277,15 +291,15 @@ describe('settings overlay', () => {
     openSettings()
     $$('.set-row-more')[0].click()
     findButton('Duplicate').click()
-    expect(listControlSets()).toHaveLength(3)
+    expect(listControlSets()).toHaveLength(2)
 
-    $$('.set-row-more')[2].click()
+    $$('.set-row-more')[1].click()
     const del = findButton('Delete')
     del.click()
-    expect(listControlSets()).toHaveLength(3)  // armed, not deleted
+    expect(listControlSets()).toHaveLength(2)  // armed, not deleted
     expect(del.textContent).toBe('Really delete?')
     del.click()
-    expect(listControlSets()).toHaveLength(2)
+    expect(listControlSets()).toHaveLength(1)
   })
 
   it('morphs the Export button to "Copied ✓" on clipboard success', async () => {

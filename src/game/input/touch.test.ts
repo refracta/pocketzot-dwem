@@ -26,6 +26,18 @@ function setup() {
   return { tc, sent }
 }
 
+// A saved custom set whose first two tabs are 3×3 (info tab stays 3×4),
+// standing in for the removed "Larger keys" built-in in switch tests.
+function saveThreeColSet(): string {
+  const set = cloneSet(builtinSets()[0], newSetId(), 'Three cols')
+  for (const tab of set.tabs.slice(0, 2)) {
+    tab.cols = 3
+    tab.slots = tab.slots.slice(0, 9)
+  }
+  saveControlSet(set)
+  return set.id
+}
+
 // button.tc-btn: spacer divs also carry the .tc-btn class for layout
 const tabButtons = (root: HTMLElement) =>
   [...root.querySelectorAll<HTMLElement>('.tc-content button.tc-btn')]
@@ -47,9 +59,9 @@ describe('control-set-driven rendering', () => {
     expect(sent.pop()).toEqual({ msg: 'input', text: 'q' })
   })
 
-  it('re-renders live when the active set changes (3×3 Big keys grid)', () => {
+  it('re-renders live when the active set changes (3×3 grid)', () => {
     const { tc } = setup()
-    setActiveControlSet('bigkeys')
+    setActiveControlSet(saveThreeColSet())
     const btns = tabButtons(tc.element)
     expect(btns).toHaveLength(9)
     const rows = tc.element.querySelectorAll('.tc-content .tc-row')
@@ -89,17 +101,18 @@ describe('control-set-driven rendering', () => {
     infoTab.click()
     expect(infoTab.classList.contains('active')).toBe(true)
 
-    setActiveControlSet('bigkeys')
+    setActiveControlSet(saveThreeColSet())
     const infoAfter = tc.element.querySelector<HTMLElement>('.tc-tab[data-tab="info"]')!
     expect(infoAfter.classList.contains('active')).toBe(true)
-    expect(tabButtons(tc.element)).toHaveLength(12)  // Big keys info tab keeps 3×4
+    expect(tabButtons(tc.element)).toHaveLength(12)  // the set's info tab keeps 3×4
   })
 
   it('unhooks its live-apply listener after the panel is discarded', () => {
+    const id = saveThreeColSet()
     const { tc } = setup()
     tc.element.remove()
     // Fires the change event with the panel gone: listener must self-remove
     // without touching the dead DOM (and without throwing).
-    expect(() => setActiveControlSet('bigkeys')).not.toThrow()
+    expect(() => setActiveControlSet(id)).not.toThrow()
   })
 })

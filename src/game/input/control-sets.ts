@@ -3,7 +3,7 @@
 // and the three tab labels — the d-pad, Esc/Enter, Shift/Ctrl and the abc▴
 // keyboard toggle are fixed chrome and never part of a set.
 //
-// Two built-in sets are always available and immutable; custom sets persist
+// The built-in Standard set is always available and immutable; custom sets persist
 // in localStorage and travel between installs as a human-readable
 // `pocketzot-controls:1:` string (see encode/decode below).
 
@@ -228,8 +228,7 @@ const INFO_SLOTS = (): SlotDef[] => [
 ]
 
 export const STANDARD_ID = 'standard'
-export const BIGKEYS_ID = 'bigkeys'
-const BUILTIN_IDS = new Set([STANDARD_ID, BIGKEYS_ID])
+const BUILTIN_IDS = new Set([STANDARD_ID])
 
 function builtinStandard(): ControlSet {
   return {
@@ -252,29 +251,8 @@ function builtinStandard(): ControlSet {
   }
 }
 
-function builtinBigKeys(): ControlSet {
-  return {
-    id: BIGKEYS_ID,
-    name: 'Larger keys',
-    builtin: true,
-    tabs: [
-      { name: '@', cols: 3, slots: [
-        k('Tab'), t('5'), t('o'),
-        t('f'), t('v'), t('p'),
-        t('a'), t("'"), t(','),
-      ] },
-      { name: '>', cols: 3, slots: [
-        t('d'), t('t'), t('i'),
-        t('e'), t('G'), k('^O'),
-        t('X'), t('<'), t('>'),
-      ] },
-      { name: '?', cols: 4, slots: INFO_SLOTS() },
-    ],
-  }
-}
-
 export function builtinSets(): ControlSet[] {
-  return [builtinStandard(), builtinBigKeys()]
+  return [builtinStandard()]
 }
 
 // --- Persistence -----------------------------------------------------------

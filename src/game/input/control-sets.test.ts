@@ -22,19 +22,17 @@ function customSet(over: Partial<ControlSet> = {}): ControlSet {
 }
 
 describe('built-in sets', () => {
-  it('ships Standard (3×12) and Larger keys (9+9+12), Standard first and active by default', () => {
+  it('ships Standard (3×12), active by default', () => {
     const sets = listControlSets()
-    expect(sets.map(s => s.id)).toEqual([STANDARD_ID, 'bigkeys'])
+    expect(sets.map(s => s.id)).toEqual([STANDARD_ID])
     expect(sets.every(s => s.builtin)).toBe(true)
     expect(getActiveControlSet().id).toBe(STANDARD_ID)
 
-    const [standard, bigkeys] = sets
+    const [standard] = sets
     for (const tab of standard.tabs) {
       expect(tab.cols).toBe(4)
       expect(tab.slots).toHaveLength(12)
     }
-    expect(bigkeys.tabs.map(t => t.slots.length)).toEqual([9, 9, 12])
-    expect(bigkeys.tabs.map(t => t.cols)).toEqual([3, 3, 4])
   })
 
   it('pins the standard @ tab layout exactly', () => {
@@ -49,10 +47,12 @@ describe('built-in sets', () => {
 
 describe('activation and persistence', () => {
   it('activates a set, persists it, and fires the change event', () => {
+    const set = customSet()
+    saveControlSet(set)
     const fired = vi.fn()
     window.addEventListener(CONTROLS_CHANGED_EVENT, fired)
-    setActiveControlSet('bigkeys')
-    expect(getActiveControlSet().id).toBe('bigkeys')
+    setActiveControlSet(set.id)
+    expect(getActiveControlSet().id).toBe(set.id)
     expect(fired).toHaveBeenCalledTimes(1)
     window.removeEventListener(CONTROLS_CHANGED_EVENT, fired)
   })
@@ -96,7 +96,7 @@ describe('activation and persistence', () => {
 })
 
 describe('export / import string format', () => {
-  it('round-trips both built-ins', () => {
+  it('round-trips the built-in', () => {
     for (const set of builtinSets()) {
       const str = encodeControlSet(set)
       expect(str.startsWith('pocketzot-controls:1:')).toBe(true)
@@ -150,7 +150,7 @@ describe('export / import string format', () => {
     expect(str).toContain("@4:{Tab} 5 i o q r f v a ' x ,")
     expect(str).toContain(':Standard|')
     // set-name spaces stay literal (only key tokens need {sp})
-    expect(encodeControlSet(builtinSets()[1])).toContain(':Larger keys|')
+    expect(encodeControlSet(customSet({ name: 'My keys' }))).toContain(':My keys|')
   })
 
   it('rejects malformed strings with useful errors', () => {
@@ -193,11 +193,11 @@ describe('export / import string format', () => {
   })
 
   it('importControlSet stores a fresh custom set', () => {
-    const str = encodeControlSet(builtinSets()[1])
+    const str = encodeControlSet(builtinSets()[0])
     const set = importControlSet(str)
-    expect(set.id).not.toBe('bigkeys')
+    expect(set.id).not.toBe(STANDARD_ID)
     expect(listControlSets().map(s => s.id)).toContain(set.id)
-    expect(set.tabs).toEqual(builtinSets()[1].tabs)
+    expect(set.tabs).toEqual(builtinSets()[0].tabs)
   })
 })
 
