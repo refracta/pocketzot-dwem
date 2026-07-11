@@ -1276,11 +1276,11 @@ export function buildGameView(
         if (!activeMenu) break
         if (m.more !== undefined) {
           activeMenu.more = m.more
-          const footerEl = uiOverlay.querySelector('.overlay-footer')
+          const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
           if (footerEl) {
             const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
             const pos = listEl ? computeScrollPos(listEl) : 'top'
-            footerEl.innerHTML = formatMoreHtml(m.more, pos)
+            setMenuFooter(footerEl, m.more, pos)
             syncAcceptBtn(formatMore(m.more, pos))
           }
         }
@@ -2417,6 +2417,17 @@ export function buildGameView(
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
   }
 
+  // Fill the menu's `--more--` footer, hiding it entirely when the text is
+  // empty: the bare element would still paint its hairline border, which
+  // reads as a stray mini-bar at the overlay's bottom edge (starkest while
+  // spectating, where only black separates it from the spectator bar). The
+  // element stays in the DOM — update_menu and the XXX scroll handler
+  // re-fill it and visibility must come back with the text.
+  function setMenuFooter(footerEl: HTMLElement, more: string, pos: string): void {
+    footerEl.innerHTML = formatMoreHtml(more, pos)
+    footerEl.style.display = formatMore(more, pos) ? '' : 'none'
+  }
+
   function showMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
       captureMenuScroll()  // before reassignment: keyed to the covered menu
@@ -2431,7 +2442,7 @@ export function buildGameView(
       renderMenuItems(msg.items ?? [])
       const footerEl = document.createElement('div')
       footerEl.className = 'overlay-footer'
-      footerEl.innerHTML = formatMoreHtml(msg.more ?? '', 'top')
+      setMenuFooter(footerEl, msg.more ?? '', 'top')
       uiOverlay.appendChild(footerEl)
     })
     if (msg.tag === 'shop' || msg.tag === 'stash' || msg.tag === 'acquirement') {
@@ -2447,7 +2458,7 @@ export function buildGameView(
         listEl.addEventListener('scroll', () => {
           if (activeMenu?.more) {
             const pos = computeScrollPos(listEl)
-            footerEl.innerHTML = formatMoreHtml(activeMenu.more, pos)
+            setMenuFooter(footerEl, activeMenu.more, pos)
           }
         }, { passive: true })
       }
