@@ -2062,14 +2062,6 @@ html, body {
   height: 0.9rem;
   overflow: hidden;
 }
-/* No lights (the common quiet state) → give the row's height back to the
-   map instead of reserving an empty strip. StatusView.update rebuilds the
-   children from scratch each player message, leaving the element truly
-   empty (no text nodes) when no status has a light, so :empty is reliable.
-   The map refit this appear/disappear triggers is absorbed by #map-grid's
-   centering + the fitToContainer hysteresis. */
-#hud-status:empty { display: none; }
-
 .status-light {
   font-size: 0.72rem;
   line-height: 1;
