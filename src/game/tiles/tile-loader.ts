@@ -250,11 +250,18 @@ export class TileLoader {
     if (cached) return cached
     const p = new Promise<TileinfoModule>((resolve, reject) => {
       this.moduleResolvers.set(name, resolve)
-      pendingModules.set(`${this.base}/${name}`, this)
       const s = document.createElement('script')
       s.src = `${this.base}/${file}`
+      // Key the pending entry by the RESOLVED base: the define shim routes
+      // via document.currentScript.src, which the browser always reports
+      // absolute. Keying by this.base therefore misses whenever the base is
+      // relative — the module promise (and every ensureLoaded awaiting it)
+      // hangs forever, silently pinning tile mode to its ASCII fallback.
+      // Reading s.src back gives the resolved form.
+      const pendingKey = `${s.src.slice(0, s.src.lastIndexOf('/'))}/${name}`
+      pendingModules.set(pendingKey, this)
       s.onerror = () => {
-        pendingModules.delete(`${this.base}/${name}`)
+        pendingModules.delete(pendingKey)
         this.moduleResolvers.delete(name)
         reject(new Error(`failed to load ${file}`))
       }
