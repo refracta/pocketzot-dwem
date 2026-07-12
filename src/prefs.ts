@@ -9,30 +9,54 @@ const KEY = 'pocketzot:prefs'
 // Lets a live game view swap renderers immediately when the settings page
 // (or the two-finger gesture) changes mapRenderMode.
 export const RENDER_MODE_CHANGED_EVENT = 'pocketzot:render-mode-changed'
+// Same live-apply contract for the monster-list mode (settings ⇄ the in-game
+// chevron, which only walks collapsed⇄full) and the login-screen character
+// sprites (settings opens over the still-mounted login view).
+export const MONSTER_LIST_MODE_CHANGED_EVENT = 'pocketzot:monster-list-mode-changed'
+export const LOGIN_SPRITES_CHANGED_EVENT = 'pocketzot:login-sprites-changed'
 
 const PREF_EVENTS: Partial<Record<keyof Prefs, string>> = {
   mapRenderMode: RENDER_MODE_CHANGED_EVENT,
+  monsterListMode: MONSTER_LIST_MODE_CHANGED_EVENT,
+  loginSprites: LOGIN_SPRITES_CHANGED_EVENT,
 }
+
+// 'hidden' is reachable only from the settings page — once hidden there is no
+// in-game chip left to tap, so the chevron never cycles into it.
+export type MonsterListMode = 'hidden' | 'collapsed' | 'full'
 
 export interface Prefs {
   lastGuestSpectateWsUrl: string | null
-  monsterListCollapsed: boolean
+  monsterListMode: MonsterListMode
   mapRenderMode: 'ascii' | 'tiles'
   controlSetId: string
+  // Character-sprite shelf on the login screen (and with it the crypt, whose
+  // only entry point it is). Avatar recipes keep being captured while off, so
+  // re-enabling restores a fully populated shelf.
+  loginSprites: boolean
 }
 
 const DEFAULTS: Prefs = {
   lastGuestSpectateWsUrl: null,
-  monsterListCollapsed: false,
+  monsterListMode: 'full',
   mapRenderMode: 'ascii',
   controlSetId: 'standard',
+  loginSprites: true,
 }
 
 function load(): Prefs {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return { ...DEFAULTS }
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Prefs>) }
+    const parsed = JSON.parse(raw) as Partial<Prefs> & { monsterListCollapsed?: boolean }
+    const prefs = { ...DEFAULTS, ...parsed }
+    // Migrate the pre-tri-state boolean; the stale key lingers in storage
+    // harmlessly. Only while the new key is absent — a later explicit choice
+    // must not be overridden by the old flag.
+    if (parsed.monsterListMode === undefined && parsed.monsterListCollapsed !== undefined) {
+      prefs.monsterListMode = parsed.monsterListCollapsed ? 'collapsed' : 'full'
+    }
+    return prefs
   } catch {
     return { ...DEFAULTS }
   }

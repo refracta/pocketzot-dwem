@@ -10,7 +10,10 @@ import {
   builtinSets, cloneSet, encodeControlSet, getActiveControlSet,
   listControlSets, newSetId, saveControlSet,
 } from '../game/input/control-sets'
-import { getPref, RENDER_MODE_CHANGED_EVENT } from '../prefs'
+import {
+  getPref, LOGIN_SPRITES_CHANGED_EVENT, MONSTER_LIST_MODE_CHANGED_EVENT,
+  RENDER_MODE_CHANGED_EVENT,
+} from '../prefs'
 
 beforeEach(() => {
   localStorage.clear()
@@ -319,7 +322,9 @@ describe('settings overlay', () => {
   it('shows the home page as sections', () => {
     openSettings()
     const headings = $$('.settings-h').map(h => h.textContent)
-    expect(headings).toEqual(['Map display', 'Touch controls', 'Help'])
+    expect(headings).toEqual([
+      'Map display', 'Monster list', 'Character sprites', 'Touch controls', 'Help',
+    ])
   })
 
   it('switches the render mode, persisting and firing the live-apply event', () => {
@@ -343,6 +348,45 @@ describe('settings overlay', () => {
       expect(fired).toHaveBeenCalledTimes(1)
     } finally {
       window.removeEventListener(RENDER_MODE_CHANGED_EVENT, fired)
+    }
+  })
+
+  it('switches the monster-list mode, persisting and firing the live-apply event', () => {
+    const fired = vi.fn()
+    window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, fired)
+    try {
+      openSettings()
+      const [hidden, full] = [findButton('Hidden'), findButton('Full')]
+      expect(full.classList.contains('active')).toBe(true)  // default pref
+
+      hidden.click()
+      expect(getPref('monsterListMode')).toBe('hidden')
+      expect(fired).toHaveBeenCalledTimes(1)
+      expect(hidden.classList.contains('active')).toBe(true)
+      expect(full.classList.contains('active')).toBe(false)
+
+      hidden.click()  // already active: no-op, no spurious event
+      expect(fired).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, fired)
+    }
+  })
+
+  it('switches character sprites, persisting and firing the live-apply event', () => {
+    const fired = vi.fn()
+    window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, fired)
+    try {
+      openSettings()
+      const [enable, disable] = [findButton('Enable'), findButton('Disable')]
+      expect(enable.classList.contains('active')).toBe(true)  // default pref
+
+      disable.click()
+      expect(getPref('loginSprites')).toBe(false)
+      expect(fired).toHaveBeenCalledTimes(1)
+      expect(disable.classList.contains('active')).toBe(true)
+      expect(enable.classList.contains('active')).toBe(false)
+    } finally {
+      window.removeEventListener(LOGIN_SPRITES_CHANGED_EVENT, fired)
     }
   })
 

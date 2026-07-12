@@ -69,6 +69,21 @@ describe('paintAvatars', () => {
     expect(dolls(container)).toEqual(['dead', 'live']) // rescued AND in list order
   })
 
+  it('suppresses placement when the signal aborts mid-resolution', async () => {
+    // The login strip's disable path: the caller aborts and clears the
+    // container while an atlas is still resolving — the late resolve must
+    // not append into the cleared strip.
+    let release!: (l: TileLoader) => void
+    resolveMock.mockImplementation(() => new Promise((r) => { release = r }))
+    const container = document.createElement('div')
+    const ctl = new AbortController()
+    const done = paintAvatars(container, [avatar('a', 'v1')], 1, 'x', ctl.signal)
+    ctl.abort()
+    release(LOADER)
+    await done
+    expect(container.children).toHaveLength(0)
+  })
+
   it('does not retry entries with no cached fingerprint', async () => {
     resolveMock.mockResolvedValue(null)
     const container = document.createElement('div')

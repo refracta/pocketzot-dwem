@@ -15,7 +15,7 @@ import {
   GRID_ROWS, MAX_COLS, MAX_MACRO_LEN, PICKER_KEYS,
 } from '../game/input/control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from '../game/input/control-sets'
-import { getPref, setPref } from '../prefs'
+import { getPref, setPref, type Prefs } from '../prefs'
 import { openGesturesDoc } from './docs'
 
 export function openSettings(): void {
@@ -74,6 +74,8 @@ function freshClone(base: ControlSet): ControlSet {
 function renderHome(body: HTMLElement): void {
   body.innerHTML = ''
   renderDisplaySection(body)
+  renderMonsterListSection(body)
+  renderSpritesSection(body)
   renderControlsSection(body)
   renderHelpSection(body)
 }
@@ -175,35 +177,67 @@ function renderControlsSection(body: HTMLElement): void {
   body.appendChild(importWrap)
 }
 
-// --- map display section -------------------------------------------------------
+// --- display sections ----------------------------------------------------------
 
-const RENDER_MODES = [
-  { mode: 'ascii', label: 'ASCII' },
-  { mode: 'tiles', label: 'Tiles' },
-] as const
-
-function renderDisplaySection(body: HTMLElement): void {
-  body.appendChild(el('h2', 'settings-h', 'Map display'))
-  body.appendChild(el('p', 'settings-hint',
-    'A two-finger long-press on the map also toggles this mid-game.'))
+// Segmented radio bound to an enum- or bool-valued pref. setPref fires the
+// pref's live-apply event itself (prefs.ts PREF_EVENTS), so a mounted
+// game/login view picks the change up immediately.
+function segPref<K extends 'mapRenderMode' | 'monsterListMode' | 'loginSprites'>(
+  ariaLabel: string,
+  prefKey: K,
+  options: ReadonlyArray<{ value: Prefs[K]; label: string }>,
+): HTMLElement {
   const seg = el('div', 'settings-seg seg')
   seg.setAttribute('role', 'radiogroup')
-  seg.setAttribute('aria-label', 'Map display')
-  const active = getPref('mapRenderMode')
-  for (const { mode, label } of RENDER_MODES) {
-    const b = button(label, 'settings-btn' + (mode === active ? ' active' : ''), () => {
-      if (getPref('mapRenderMode') === mode) return
-      setPref('mapRenderMode', mode)  // fires RENDER_MODE_CHANGED_EVENT
+  seg.setAttribute('aria-label', ariaLabel)
+  const active = getPref(prefKey)
+  for (const { value, label } of options) {
+    const b = button(label, 'settings-btn' + (value === active ? ' active' : ''), () => {
+      if (getPref(prefKey) === value) return
+      setPref(prefKey, value)
       for (const sib of seg.children) {
         sib.classList.toggle('active', sib === b)
         sib.setAttribute('aria-checked', String(sib === b))
       }
     })
     b.setAttribute('role', 'radio')
-    b.setAttribute('aria-checked', String(mode === active))
+    b.setAttribute('aria-checked', String(value === active))
     seg.appendChild(b)
   }
-  body.appendChild(seg)
+  return seg
+}
+
+function renderDisplaySection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Map display'))
+  body.appendChild(el('p', 'settings-hint',
+    'A two-finger long-press on the map also toggles this mid-game.'))
+  body.appendChild(segPref('Map display', 'mapRenderMode', [
+    { value: 'ascii', label: 'ASCII' },
+    { value: 'tiles', label: 'Tiles' },
+  ]))
+}
+
+function renderMonsterListSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Monster list'))
+  body.appendChild(el('p', 'settings-hint',
+    'In-game list of monsters in view.'))
+  body.appendChild(segPref('Monster list', 'monsterListMode', [
+    { value: 'hidden', label: 'Hidden' },
+    { value: 'collapsed', label: 'Collapsed' },
+    { value: 'full', label: 'Full' },
+  ]))
+}
+
+// Enable/Disable segments rather than a lone checkbox: matches the page's
+// segmented idiom.
+function renderSpritesSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Character sprites'))
+  body.appendChild(el('p', 'settings-hint',
+    'Recently played characters shown on the login screen.'))
+  body.appendChild(segPref('Character sprites', 'loginSprites', [
+    { value: true, label: 'Enable' },
+    { value: false, label: 'Disable' },
+  ]))
 }
 
 // --- help section --------------------------------------------------------------

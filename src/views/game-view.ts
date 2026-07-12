@@ -26,7 +26,7 @@ import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
-import { getPref, setPref, RENDER_MODE_CHANGED_EVENT } from '../prefs'
+import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
   renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
@@ -830,10 +830,22 @@ export function buildGameView(
   }
   window.addEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
 
+  // Same live-apply for the monster-list mode (the in-game chevron writes the
+  // pref too, but setListMode no-ops when the value matches).
+  function onMonsterListModePref(): void {
+    if (!view.isConnected) {
+      window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+      return
+    }
+    monsterListView.setListMode(getPref('monsterListMode'))
+  }
+  window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+    window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
     touchControls.destroy()
     onLobby(exit)
   }

@@ -14,11 +14,17 @@ import { renderTiles, dollTileSpec } from '../game/tiles/tile-view'
 // build. A doll is appended only once a compatible atlas resolves, so a pruned
 // or unreachable version is skipped outright rather than appended as a blank
 // box. Append order follows the list order.
+// `signal`: aborting it stops any not-yet-resolved dolls from being appended.
+// The loads (already in flight) are left to settle; only the insert is skipped.
+// Callers that repaint the same container (the login strip toggling its pref)
+// pass a fresh signal each time and abort the previous paint, so a slow atlas
+// from a superseded call can't land in — or duplicate — the current render.
 export async function paintAvatars(
   container: HTMLElement,
   avatars: Avatar[],
   scale: number,
   cls: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const entries = avatars
     .map((a) => ({ spec: dollTileSpec({ doll: a.doll, mcache: a.mcache }), httpBase: a.httpBase, version: a.version }))
@@ -31,6 +37,7 @@ export async function paintAvatars(
   // which atlas wins the race.
   const placed: HTMLElement[] = []
   const place = (i: number, loader: TileLoader): void => {
+    if (signal?.aborted) return
     const el = renderTiles(loader, entries[i].spec, scale)
     el.classList.add(cls)
     // Insert before the nearest already-placed later doll to preserve list order.

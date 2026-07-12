@@ -18,7 +18,7 @@ import {
 } from '../tiles/tile-view'
 import { TEX, type TileLoader } from '../tiles/tile-loader'
 import { bgFlags } from '../map/flag-decode'
-import { getPref, setPref } from '../../prefs'
+import { getPref, setPref, type MonsterListMode } from '../../prefs'
 
 // Up to MAX_ROWS top-sorted groups are listed. When more groups exist, the
 // last visible row carries an inline right-aligned "+N" suffix (same
@@ -82,14 +82,15 @@ export class MonsterListView {
   private lastHtml: string | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
   // Sticky across map updates, encounter cycles, empty-view intervals,
-  // and page reloads (persisted via prefs.ts → localStorage). Only the
-  // user's toggle tap flips it. Chevron follows spatial-motion
-  // convention to match the virtual-keyboard button: ▴ when expanded
-  // (tap collapses upward), ▾ when collapsed (tap expands downward).
-  private collapsed = getPref('monsterListCollapsed')
+  // and page reloads (persisted via prefs.ts → localStorage). The in-game
+  // chevron only walks collapsed⇄full; 'hidden' comes from the settings
+  // page (setListMode). Chevron follows spatial-motion convention to match
+  // the virtual-keyboard button: ▴ when expanded (tap collapses upward),
+  // ▾ when collapsed (tap expands downward).
+  private listMode: MonsterListMode = getPref('monsterListMode')
   // Short landscape (phone) forces the single-line collapsed rendition (see
   // setCompact): there the sidebar has no vertical room for the multi-row
-  // expanded list. Independent of `collapsed` so flipping orientation
+  // expanded list. Independent of `listMode` so flipping orientation
   // doesn't disturb the user's expand/collapse pref.
   private compact = false
   private readonly toggleEl: HTMLElement
@@ -109,10 +110,25 @@ export class MonsterListView {
       // Panel-level click (game-view.ts) opens the full monster panel on
       // tap-anywhere; stop here so the chevron only toggles.
       e.stopPropagation()
-      this.collapsed = !this.collapsed
-      setPref('monsterListCollapsed', this.collapsed)
+      this.listMode = this.listMode === 'collapsed' ? 'full' : 'collapsed'
+      // Fires MONSTER_LIST_MODE_CHANGED_EVENT; game-view's listener calls
+      // setListMode back with the value just set, which no-ops.
+      setPref('monsterListMode', this.listMode)
       if (this.lastMonsters) this.update(this.lastMonsters)
     })
+  }
+
+  // Called by game-view when the settings page changes the monsterListMode
+  // pref while a game is up. Same wipe-and-replay as setCompact: the cached
+  // rows/HTML describe the previous mode's DOM.
+  setListMode(mode: MonsterListMode): void {
+    if (this.listMode === mode) return
+    this.listMode = mode
+    this.rows.length = 0
+    this.lastHtml = null
+    this.element.innerHTML = ''
+    this.element.classList.remove('has-hostile')
+    if (this.lastMonsters) this.update(this.lastMonsters)
   }
 
   // Called by game-view when the map render mode flips. Resets the DOM and
@@ -162,6 +178,20 @@ export class MonsterListView {
 
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
     this.lastMonsters = monsterCells
+
+    // Hidden: no list, no chevron, no has-hostile outline — and with the
+    // element :empty, game-view's tap-through to the monster panel is dead
+    // too (accepted; re-enable lives on the settings page). Wins over the
+    // landscape compact force-collapse. lastMonsters keeps tracking above
+    // so flipping back mid-encounter replays the current state.
+    if (this.listMode === 'hidden') {
+      this.rows.length = 0
+      this.lastHtml = null
+      this.element.innerHTML = ''
+      this.element.classList.remove('has-hostile')
+      return
+    }
+
     const groups = groupMonsters(filterAndSortMonsters(monsterCells))
     // Sensed invisible monsters with unknown position render as a synthetic
     // first row (reference monster_list.js `update(show_inv)`), so the view
@@ -190,7 +220,7 @@ export class MonsterListView {
     }
     this.element.classList.toggle('has-hostile', hasHostile)
 
-    if (this.collapsed || this.compact) {
+    if (this.listMode === 'collapsed' || this.compact) {
       // Wipe the expanded-mode caches: a re-expand needs to rebuild from
       // scratch since the DOM no longer holds the cached tile rows.
       this.rows.length = 0
@@ -225,7 +255,7 @@ export class MonsterListView {
     // so the chevron would be a no-op tap target.
     const firstRow = this.element.firstElementChild
     if (groups.length + (invisDesc ? 1 : 0) > 1 && !this.compact && firstRow) {
-      this.toggleEl.textContent = this.collapsed ? '▾' : '▴'
+      this.toggleEl.textContent = this.listMode === 'collapsed' ? '▾' : '▴'
       // First-in-source right floats sit rightmost, so on the collapsed
       // single line the chevron lands at the far right edge, with the
       // "+N" suffix to its left.

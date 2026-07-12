@@ -1,9 +1,14 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { fakeStorage } from '../../test/fake-storage'
+
+vi.stubGlobal('localStorage', fakeStorage())
+
 import { MonsterListView } from './monster-list'
 import { MapStore } from '../map/map-store'
 import { getTileLoader, type TileLoader } from '../tiles/tile-loader'
+import { getPref } from '../../prefs'
 
 // Regression coverage for the cache-key collision in renderTiles. Setup:
 // MapStore populated with three monsters that monsterSort splits into three
@@ -320,5 +325,74 @@ describe('MonsterListView — invis row', () => {
     expect(rows.length).toBe(1)
     expect(rows[0].classList.contains('ml-invis')).toBe(false)
     expect(rows[0].querySelector('.ml-name')?.textContent).toBe('ogre')
+  })
+})
+
+describe('MonsterListView list modes', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  // Two groups incl. a hostile — enough for a chevron and the outline.
+  function seededStore(): MapStore {
+    const store = new MapStore()
+    store.merge([
+      { x: 1, y: 1, g: 'C', mon: {
+        id: 1, name: 'Lodul', att: 0, type: 5,
+        typedata: { avghp: 100 }, clientid: 42,
+      } },
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+    ])
+    return store
+  }
+
+  it('hidden renders nothing — no rows, chevron, or hostile outline', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.setListMode('hidden')
+    view.update(store.getMonsters())
+
+    expect(view.element.childElementCount).toBe(0)
+    expect(view.element.classList.contains('has-hostile')).toBe(false)
+
+    // Flipping back mid-encounter replays the tracked snapshot immediately.
+    view.setListMode('full')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(2)
+    expect(view.element.classList.contains('has-hostile')).toBe(true)
+  })
+
+  it('hidden wins over the landscape compact force-collapse', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.setCompact(true)
+    view.setListMode('hidden')
+    view.update(store.getMonsters())
+    expect(view.element.childElementCount).toBe(0)
+  })
+
+  it('the chevron walks collapsed⇄full and persists, never entering hidden', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const toggle = view.element.querySelector<HTMLElement>('.ml-toggle')
+    toggle!.click()
+    expect(getPref('monsterListMode')).toBe('collapsed')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(1)
+
+    view.element.querySelector<HTMLElement>('.ml-toggle')!.click()
+    expect(getPref('monsterListMode')).toBe('full')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(2)
+  })
+
+  it('a fresh view starts in the persisted mode', () => {
+    localStorage.setItem('pocketzot:prefs', JSON.stringify({ monsterListMode: 'hidden' }))
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+    expect(view.element.childElementCount).toBe(0)
   })
 })
