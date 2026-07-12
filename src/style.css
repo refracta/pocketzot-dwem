@@ -630,6 +630,17 @@ html, body {
   align-items: center;
   gap: 0.2rem;
   min-height: 32px;
+  position: relative;
+}
+/* All three uses (lobby "← Login", crypt "← Back", spectator "← Lobby") sit
+   at screen edges where taps are least accurate, and the visible pill is only
+   ~32px tall — an invisible hit extension catches near-miss taps. Vertically
+   free (nothing adjacent); horizontally capped at 7px to stay inside the
+   0.5rem flex gaps to sibling tap targets (chat chip, account chip). */
+.lobby-btn-ghost::after {
+  content: '';
+  position: absolute;
+  inset: -10px -7px;
 }
 .lobby-btn-ghost:hover {
   background: var(--surface);

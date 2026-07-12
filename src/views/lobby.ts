@@ -77,7 +77,7 @@ export function buildLobbyView(
 
   view.innerHTML = `
     <div class="lobby-header">
-      <button id="lobby-back" class="lobby-btn-ghost" aria-label="Back to login">← Back</button>
+      <button id="lobby-back" class="lobby-btn-ghost" aria-label="Back to login">← Login</button>
       ${headerRight}
     </div>
     <div class="lobby-scroll">
