@@ -449,6 +449,79 @@ export function buildGameView(
     }
   })
 
+  // X-mode describe strip. Trunk (post-0.34) describes the cell under the
+  // level-map cursor via temporary messages (viewmap.cc _describe_cell):
+  // each cursor move sends one msgs batch — rollback of the previous cell's
+  // lines, a channel-2 keyboard prompt ("Press: ? - help, v - describe,
+  // . - travel"), then the Here:/items/feature/cloud lines on the examine
+  // channels. enterXMode hides the real log (the map goes full-bleed), so
+  // this strip mirrors each batch in the log's usual floating position,
+  // swapping the keyboard prompt for tappable buttons. Populated purely from
+  // wire traffic — servers that don't describe (≤0.34) never show it.
+  const xdescStrip = document.createElement('div')
+  xdescStrip.id = 'xdesc-strip'
+  xdescStrip.style.display = 'none'
+  const xdescLines = document.createElement('div')
+  const xdescActions = document.createElement('div')
+  xdescActions.className = 'xdesc-actions'
+  xdescActions.style.display = 'none'
+  xdescStrip.append(xdescLines, xdescActions)
+
+  function xdescReset(): void {
+    xdescLines.textContent = ''
+    xdescActions.style.display = 'none'
+    xdescStrip.style.display = 'none'
+  }
+
+  // Rebuild the actions row from the wire prompt ("Press: ? - help,
+  // v - describe, . - travel"): the intro stays plain text and each
+  // "key - label" token becomes a button whose face IS that token, so the
+  // row reads like the reference line. Parsing the text (instead of a
+  // hardcoded row) keeps it honest against trunk rewording — an unparsable
+  // token stays text, and no buttons at all → false, so the caller renders
+  // the whole line as a plain one.
+  function xdescPromptRow(text: string): boolean {
+    const parsed = parsePromptText(text)
+    const intro = /^[^,<]*?:\s*/.exec(parsed.body)?.[0] ?? ''
+    const tokens = parsed.body.slice(intro.length).split(/,\s*/).map((tok) => {
+      const plain = tok.replace(/<[^>]*>/g, '').trim()
+      return { tok: tok.trim(), key: /^(\S)\s*-\s+\S/.exec(plain)?.[1] }
+    })
+    if (!tokens.some((t) => t.key)) return false
+    xdescActions.textContent = ''
+    xdescActions.style.color = parsed.color ?? ''
+    if (intro) {
+      const span = document.createElement('span')
+      span.textContent = intro
+      xdescActions.appendChild(span)
+    }
+    for (const t of tokens) {
+      if (t.key) appendActionBtn(xdescActions, t.tok, t.key)
+      else {
+        const span = document.createElement('span')
+        span.innerHTML = dcssToHtml(t.tok)
+        xdescActions.appendChild(span)
+      }
+    }
+    xdescActions.style.display = ''
+    return true
+  }
+
+  function xdescAdd(text: string, channel?: number): void {
+    // The keyboard-hint prompt becomes the tappable row; match a substring
+    // of the wire text (same-turn messages can arrive glued onto one line),
+    // with markup stripped in case a future trunk decorates the hotkeys.
+    const isPrompt = channel === 2
+      && text.replace(/<[^>]*>/g, '').includes('v - describe')
+    if (!isPrompt || !xdescPromptRow(text)) {
+      const line = document.createElement('div')
+      line.className = 'xdesc-line'
+      line.innerHTML = dcssToHtml(text)
+      xdescLines.appendChild(line)
+    }
+    xdescStrip.style.display = ''
+  }
+
   const mapWrap = document.createElement('div')
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
@@ -634,6 +707,7 @@ export function buildGameView(
   // sidebar between HUD and spell rail.
   view.appendChild(monsterListView.element)
   view.appendChild(msgLog)
+  view.appendChild(xdescStrip)
   view.appendChild(spellRail)
   view.appendChild(moreBtn)
   view.appendChild(hud)
@@ -1400,6 +1474,9 @@ export function buildGameView(
           // rollback (remove the last N appended) walks the DOM head.
           let n = msg.rollback
           while (n-- > 0 && msgLog.firstChild) msgLog.firstChild.remove()
+          // A rollback while examining is the cursor leaving a cell — the
+          // strip rebuilds from this batch's lines alone.
+          if (inXMode) xdescReset()
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
@@ -1411,6 +1488,10 @@ export function buildGameView(
           // assigned to…" / "Your memory of … unravels") and flags the rail
           // stale; reharvestIfDirty after this loop resolves it.
           if (harvester.onMsgLine(m.text)) continue
+          // Mirror into the X-mode describe strip; the line ALSO takes the
+          // normal path below into the (hidden) real log, which is what
+          // keeps the server's rollback counts consistent on X-mode exit.
+          if (inXMode) xdescAdd(m.text, m.channel)
           if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
@@ -1433,6 +1514,11 @@ export function buildGameView(
         const cursorId = (msg as unknown as { id: number }).id
         cursorLoc = msg.loc ?? null
         mapView.setCursor(msg.loc)
+        // Track the d-pad's steering-a-cursor state for the non-X cursors
+        // too (x examine, targeting). X mode (id 2) is excluded: its own
+        // x-mode class carries that state, and paths that leave X without a
+        // cursor-clear (e.g. exit-for-text-input) must not strand this one.
+        touchControls.setCursorMode(cursorId !== 2 && !!msg.loc)
         if (cursorId === 2) {
           if (msg.loc && !inXMode) enterXMode()
           else if (!msg.loc && inXMode) exitXMode()
@@ -1557,6 +1643,7 @@ export function buildGameView(
   function exitXMode(): void {
     inXMode = false
     view.classList.remove('x-mode')
+    xdescReset()
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
     requestAnimationFrame(() => mapView.fitToContainer())

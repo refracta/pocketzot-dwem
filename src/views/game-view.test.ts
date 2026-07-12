@@ -157,6 +157,100 @@ describe('map message → store merge', () => {
   })
 })
 
+describe('X-mode describe strip', () => {
+  const strip = (h: Harness) => h.view.querySelector<HTMLElement>('#xdesc-strip')!
+  const enterX = (h: Harness) => h.dispatch({ msg: 'cursor', id: 2, loc: { x: 5, y: 5 } })
+  // Trunk's per-cursor-move batch (viewmap.cc _describe_cell): keyboard
+  // prompt on channel 2, then EXAMINE (23) / EXAMINE_FILTER (24) lines.
+  const describeBatch = (rollback: number, here: string, feat: string) => ({
+    msg: 'msgs',
+    rollback,
+    messages: [
+      { text: '<cyan>Press: <w>?</w> - help, <w>v</w> - describe, <w>.</w> - travel</cyan>', channel: 2 },
+      { text: `<cyan>Here:</cyan> ${here}`, channel: 23 },
+      { text: feat, channel: 24 },
+    ],
+  })
+
+  it('stays hidden on entry and outside X mode, even when messages flow', () => {
+    const h = setup()
+    h.dispatch({ msg: 'msgs', messages: [{ text: 'You hit the kobold.' }] })
+    expect(isHidden(strip(h))).toBe(true)
+    enterX(h)
+    expect(isHidden(strip(h))).toBe(true)
+  })
+
+  it('mirrors examine lines and renders the keyboard prompt as buttons wearing the wire text', () => {
+    const h = setup()
+    enterX(h)
+    h.dispatch(describeBatch(0, 'A kobold.', 'Floor.'))
+    expect(isHidden(strip(h))).toBe(false)
+    expect(strip(h).textContent).toContain('Here: A kobold.')
+    expect(strip(h).textContent).toContain('Floor.')
+    // The intro stays as plain text ahead of the buttons.
+    expect(strip(h).textContent).toContain('Press:')
+    const btns = [...strip(h).querySelectorAll<HTMLButtonElement>('.action-btn')]
+    expect(btns.map(b => b.textContent)).toEqual(['? - help', 'v - describe', '. - travel'])
+    btns[0].click()
+    expect(sent(h)).toContainEqual({ msg: 'input', text: '?' })
+    btns[1].click()
+    expect(sent(h)).toContainEqual({ msg: 'input', text: 'v' })
+    btns[2].click()
+    expect(sent(h)).toContainEqual({ msg: 'input', text: '.' })
+  })
+
+  it('falls back to a plain text line when a reworded prompt has no parsable key tokens', () => {
+    const h = setup()
+    enterX(h)
+    h.dispatch({ msg: 'msgs', messages: [
+      { text: '<cyan>Some future v - describe wording without hint tokens</cyan>', channel: 2 },
+    ] })
+    expect(strip(h).querySelectorAll('.action-btn').length).toBe(0)
+    expect(strip(h).textContent).toContain('Some future')
+  })
+
+  it('rebuilds from scratch on each rollback batch (cursor move)', () => {
+    const h = setup()
+    enterX(h)
+    h.dispatch(describeBatch(0, 'A kobold.', 'Floor.'))
+    h.dispatch(describeBatch(4, 'An orc.', 'A stone staircase leading down.'))
+    expect(strip(h).textContent).toContain('An orc.')
+    expect(strip(h).textContent).not.toContain('kobold')
+  })
+
+  it('clears and hides on X-mode exit, leaving the real log rolled back clean', () => {
+    const h = setup()
+    h.dispatch({ msg: 'msgs', messages: [{ text: 'You enter the dungeon.' }] })
+    enterX(h)
+    h.dispatch(describeBatch(0, 'A kobold.', 'Floor.'))
+    // Server exit sequence: roll back the temporary lines, then clear the cursor.
+    h.dispatch({ msg: 'msgs', rollback: 3, messages: [] })
+    h.dispatch({ msg: 'cursor', id: 2 })
+    expect(isHidden(strip(h))).toBe(true)
+    expect(strip(h).querySelectorAll('.xdesc-line').length).toBe(0)
+    expect(msgTexts(h)).toEqual(['You enter the dungeon.'])
+  })
+})
+
+describe('cursor-mode d-pad state class (x examine / targeting)', () => {
+  const touch = (h: Harness) => h.view.querySelector<HTMLElement>('#touch-controls')!
+
+  it('sets on a non-X cursor and clears when the cursor clears', () => {
+    const h = setup()
+    h.dispatch({ msg: 'cursor', id: 0, loc: { x: 3, y: 4 } })
+    expect(touch(h).classList.contains('cursor-mode')).toBe(true)
+    h.dispatch({ msg: 'cursor', id: 0 })
+    expect(touch(h).classList.contains('cursor-mode')).toBe(false)
+  })
+
+  it('does not add cursor-mode for the X-mode cursor (x-mode class covers it)', () => {
+    const h = setup()
+    h.dispatch({ msg: 'cursor', id: 2, loc: { x: 3, y: 4 } })
+    expect(touch(h).classList.contains('cursor-mode')).toBe(false)
+    expect(touch(h).classList.contains('x-mode')).toBe(true)
+  })
+})
+
 describe('ui-push / ui-pop overlay stack', () => {
   it('renders a pushed overlay with title + body and shows the overlay', () => {
     const h = setup()

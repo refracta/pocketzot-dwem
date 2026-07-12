@@ -16,6 +16,10 @@
   --danger:    #ef4444;
   --warn:      #facc15;
   --ok:        #84cc16;
+  /* The examine/targeting map cursor (DCSS `yellow`), used by the ASCII
+     cursor square. The tiles-mode canvas fallback stroke (tile-map-view.ts
+     paintCursorIfHere) hardcodes the same value. */
+  --map-cursor: #fce94f;
   --border:    rgba(245, 158, 11, 0.12);
 
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, 'Courier New', monospace;
@@ -1064,9 +1068,9 @@ html, body {
   position: absolute;
   inset: 0;
   z-index: -1;
-  outline: 1px solid #fce94f;
+  outline: 1px solid var(--map-cursor);
   outline-offset: -1px;
-  background-color: rgba(252, 233, 79, 0.15);
+  background-color: color-mix(in srgb, var(--map-cursor) 15%, transparent);
   pointer-events: none;
 }
 
@@ -1151,6 +1155,36 @@ html, body {
 
 /* Tile rendering: lighter scrim — see --msglog-bg. */
 #game-view.tiles-mode { --msglog-bg: color-mix(in srgb, var(--bg) 15%, transparent); }
+
+/* X-mode describe strip: mirrors trunk's under-cursor describe messages in
+   the floating log's position while the real log is hidden (see xdescStrip
+   in game-view.ts). Same scrim/typography as #game-messages, but
+   content-sized — a describe batch is 1–4 short lines, rebuilt wholesale per
+   cursor move, so no fixed height, scroll, or column-reverse machinery.
+   Anchored bottom in BOTH orientations (X mode hides the landscape sidebar
+   log too, and the strip belongs next to the d-pad steering the cursor).
+   spell-row can't coexist (renderSpellRail drops the rail in X mode), so no
+   rail offset variant is needed. */
+#xdesc-strip {
+  grid-area: map;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  background: var(--msglog-bg);
+  text-shadow: var(--msglog-text-shadow);
+  font-size: var(--msglog-font);
+  line-height: var(--msglog-line);
+  padding: 0.2rem 0.2rem;
+}
+#xdesc-strip .xdesc-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-top: 0.2rem;
+}
 
 /* Per-line scrim ("pill") variant — toggle live via the dev hook
    __dcssMsgPill() in game-view.ts. The strip scrim goes fully transparent and
@@ -2583,10 +2617,6 @@ html, body {
      whole box via display:contents). */
   padding: 0.1rem 0.35rem calc(0.1rem + var(--safe-bottom));
   background: var(--bg);
-  /* Transparent (not removed): X-mode colors this border as its active-mode
-     indicator (.x-mode rule below), and keeping the 1px avoids a layout
-     shift when entering/leaving X-mode. */
-  border-top: 1px solid transparent;
   align-items: stretch;
   /* Cap the strip to the d-pad's height (3 cells + 2 gaps + own padding) so a
      tall z spell grid scrolls inside the panel instead of growing the whole
@@ -2595,7 +2625,11 @@ html, body {
   max-height: calc(var(--tc-dpad) * 3 + 4px + 0.4rem + var(--safe-bottom));
 }
 
-#touch-controls.x-mode { border-top-color: var(--accent); }
+/* Cursor modes (X level map / x examine / targeting) deliberately add NO
+   d-pad styling: the modes are brief and self-initiated, and the map cursor
+   appearing/moving is its own feedback. The x-mode/cursor-mode root classes
+   still track the state; a shelved corner-bracket "reticle" treatment that
+   attaches to them lives in dev-material/cursor-mode-reticle.md. */
 
 /* Spectator bar: occupies the same `touch` slot the d-pad would, so swapping
    from playing to spectating doesn't change overall vertical layout.
@@ -2871,7 +2905,9 @@ html, body {
   bottom: 0;
   z-index: 200;
   background: var(--bg);
-  border-top: 2px solid var(--accent);
+  /* Standard region-seam hairline (see the chat-sheet comment) — the old
+     2px accent seam out-shouted every other edge on screen. */
+  border-top: 1px solid var(--border);
   /* Full-bleed to the screen edge; the capped inset rides inside as padding
      so the bottom key row clears the home-indicator gesture zone. */
   padding: 0.4rem 0.3rem calc(0.4rem + var(--safe-bottom));
@@ -3761,10 +3797,9 @@ html, body {
   /* Content-sized: hugs a short conversation instead of claiming a fixed
      40% of the screen. The history's max-height caps the rise (~8 lines). */
   background: var(--surface);
-  /* Standard region-seam hairline, same as the HUD/spectator-bar/touch
-     edges — a full-accent line here out-shouted every other seam on screen
-     (accent borders mean "special mode": x-mode d-pad, kbd overlay). Chat's
-     accent identity lives in the #chat title, chip outline, and ». */
+  /* Standard region-seam hairline, same as the HUD/spectator-bar/kbd
+     edges — a full-accent line here out-shouted every other seam on screen.
+     Chat's accent identity lives in the #chat title, chip outline, and ». */
   border-top: 1px solid var(--border);
 }
 

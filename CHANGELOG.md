@@ -19,11 +19,13 @@ Notable changes to PocketZot, newest first.
   including keys, short macros, Ctrl- and F-keys, tab names, and grid size.
 - Added support for exporting/importing control-set strings, to back up or
   share.
+- The level map (X) supports trunk's new X-mode descriptions, showing
+  what's under the cursor as you move it, with tappable describe / travel /
+  help buttons.
 - While spectating, the minimap now remembers its open state, instead of
   switching closed after the watched player views certain menus.
 - The map now extends up to the top edge of the screen, under camera
   cutouts. Player centering is still based on the map clear area.
-- The status-light row now collapses when nothing's active.
 - Tiles mode supports trunk's reworked monster invisibility.
 - The monster list warns about invisible monsters sensed nearby but not yet
   located.

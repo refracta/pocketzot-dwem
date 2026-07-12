@@ -1038,7 +1038,7 @@ export class TileMapView {
     }
     this.ctx.save()
     try {
-      this.ctx.strokeStyle = '#fce94f'
+      this.ctx.strokeStyle = '#fce94f' // --map-cursor in style.css (canvas can't read CSS vars cheaply)
       this.ctx.lineWidth = 2
       this.ctx.strokeRect(px + 1, py + 1, ATLAS_CELL - 2, ATLAS_CELL - 2)
     } finally {

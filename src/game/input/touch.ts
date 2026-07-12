@@ -44,6 +44,12 @@ export interface TouchControls {
   element: HTMLElement
   enterXMode(): void
   exitXMode(): void
+  // Tracks "steering a cursor" state (root class `cursor-mode`) for the
+  // non-X server cursors (x examine, targeting); X mode's own class covers
+  // the level-map cursor. Deliberately unstyled (the map cursor is its own
+  // feedback) — the state hook stays for the shelved reticle treatment in
+  // dev-material/cursor-mode-reticle.md.
+  setCursorMode(on: boolean): void
   openKbd(): void
   closeKbd(): void
   refreshSpellTab(): void  // re-render the z tab if it is the active tab
@@ -669,9 +675,13 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
     clearAllMods()
   }
 
+  function setCursorMode(on: boolean): void {
+    root.classList.toggle('cursor-mode', on)
+  }
+
   // Initial render
   buildDpad()
   applyControlSet()
 
-  return { element: root, enterXMode, exitXMode, openKbd, closeKbd, refreshSpellTab, destroy }
+  return { element: root, enterXMode, exitXMode, setCursorMode, openKbd, closeKbd, refreshSpellTab, destroy }
 }
