@@ -145,7 +145,7 @@ function renderControlsSection(body: HTMLElement): void {
   const importWrap = el('div', 'settings-import')
   importWrap.hidden = true
   const importField = noAutofix(el('textarea', 'settings-import-field settings-input'))
-  importField.placeholder = 'Paste a pocketzot-controls:… string'
+  importField.placeholder = 'Paste a pocketzot-controls{…} string'
   importField.rows = 3
   const importErr = el('div', 'settings-error')
   importErr.hidden = true

@@ -5,7 +5,7 @@
 //
 // The built-in Standard set is always available and immutable; custom sets persist
 // in localStorage and travel between installs as a human-readable
-// `pocketzot-controls:1:` string (see encode/decode below).
+// `pocketzot-controls{v1|…}` string (see encode/decode below).
 
 import { ctrlKeycode, fnKeycode } from './keyboard'
 import { getPref, setPref } from '../../prefs'
@@ -38,12 +38,21 @@ export const MAX_MACRO_LEN = 3
 export const CONTROLS_CHANGED_EVENT = 'pocketzot:controls-changed'
 
 const SETS_KEY = 'pocketzot:control-sets'
-// Export strings open with the fixed marker, then the format version:
-// "pocketzot-controls:1:…" — so the marker stands out and a future format
-// bump (:2:) stays distinguishable from garbage on import.
-const EXPORT_MARKER = 'pocketzot-controls:'
+// Export strings are the marker followed by a brace-enclosed envelope whose
+// fields — version first — share the format's one field separator:
+// "pocketzot-controls{v1|<name>|<tab>|<tab>|<tab>}". The envelope is braced
+// (NOT the earlier colon form "pocketzot-controls:1:") on purpose: that form
+// parsed as a custom-scheme URI, and the iOS pasteboard (and link-detecting
+// chat apps) percent-encode URIs on paste (space→%20, {→%7B, …), mangling
+// imports — a "{" before any colon makes the string unparseable as a URI, so
+// it travels as plain text. Full enclosure also gives the blob an explicit
+// terminator: the importer extracts marker→matching close brace and ignores
+// surrounding prose, and a copy that lost the tail fails with a clear
+// missing-"}" error. A future format bump ({v2|…}) stays distinguishable
+// from garbage on import.
+const EXPORT_MARKER = 'pocketzot-controls'
 const EXPORT_VERSION = 1
-const EXPORT_PREFIX = `${EXPORT_MARKER}${EXPORT_VERSION}:`
+const EXPORT_PREFIX = `${EXPORT_MARKER}{v${EXPORT_VERSION}|`
 
 // --- Special keys ---------------------------------------------------------
 
@@ -334,7 +343,7 @@ export function deleteControlSet(id: string): void {
 
 // --- Export / import string format ------------------------------------------
 //
-//   pocketzot-controls:1:<name>|<tab>|<tab>|<tab>
+//   pocketzot-controls{v1|<name>|<tab>|<tab>|<tab>}
 //   tab   := <namechar><cols>:<tok> <tok> …   (3*cols tokens, row-major)
 //   tok   := {}            empty slot
 //          | {Tab} {Ent} {Esc} {F1}…{F12} {^A}…   special key
@@ -416,7 +425,7 @@ function decodeToken(tok: string): SlotDef | null {
 export function encodeControlSet(set: ControlSet): string {
   const tabs = set.tabs.map(tab =>
     escText(tab.name) + tab.cols + ':' + tab.slots.map(encodeToken).join(' '))
-  return EXPORT_PREFIX + escName(set.name) + '|' + tabs.join('|')
+  return EXPORT_PREFIX + escName(set.name) + '|' + tabs.join('|') + '}'
 }
 
 // A tab button must show exactly one visible character. The spread counts
@@ -433,36 +442,76 @@ export function decodeControlSet(raw: string): Omit<ControlSet, 'id'> {
   // escaped as {sp}), so this only ever repairs transit damage — the one
   // casualty is a double space inside a set name.
   const s = raw.trim().replace(/\s+/g, ' ')
-  if (!s.startsWith(EXPORT_MARKER)) {
-    throw new Error(`not a control-set string (expected it to start with "${EXPORT_MARKER}")`)
+  // Locate the envelope. The marker anchor is REQUIRED; anything before it
+  // (prose from pasting a whole chat message) is ignored.
+  const open = s.indexOf(`${EXPORT_MARKER}{`)
+  if (open < 0) {
+    throw new Error(`not a control-set string (expected "${EXPORT_MARKER}{…}")`)
   }
-  const ver = /^(\d+):/.exec(s.slice(EXPORT_MARKER.length))
-  if (!ver) throw new Error('missing format version (expected "pocketzot-controls:1:…")')
-  if (Number(ver[1]) !== EXPORT_VERSION) {
-    throw new Error(`format version ${ver[1]} is newer than this app understands (version ${EXPORT_VERSION})`)
+  // Balance braces to the envelope's close. Payload braces only occur as
+  // balanced {token} pairs (bare { and } are escaped as {lb}/{rb} on the
+  // wire), so the first return to depth 0 is the terminator. Prose after it
+  // is ignored too — if a paste carries several strings, the first wins.
+  const start = open + EXPORT_MARKER.length
+  let depth = 0
+  let end = -1
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '{') depth++
+    else if (s[i] === '}' && --depth === 0) { end = i; break }
   }
+  if (end < 0) throw new Error('missing the closing "}" — was the end cut off when copying?')
+
   // Fields and token lists tolerate surrounding spaces (hand-edits, transit
   // damage): nothing legitimate is lost, since tab names and tokens never
   // contain literal whitespace and the set name is trimmed anyway.
-  const parts = s.slice(EXPORT_PREFIX.length).split('|').map(f => f.trim())
-  if (parts.length !== 4) throw new Error('expected a name and exactly 3 tabs')
-  const name = unescText(parts[0]).trim()
-  if (!name || name.length > 48) throw new Error('bad set name')
-  const tabs = parts.slice(1).map(field => {
-    const m = /^(.*?)([34]):(.*)$/.exec(field)
-    if (!m) throw new Error(`bad tab header in "${field.slice(0, 20)}"`)
-    const tabName = unescText(m[1])
-    if (!isValidTabName(tabName)) {
-      throw new Error('tab name must be a single visible character')
+  const parseFields = (endPos: number): Omit<ControlSet, 'id'> => {
+    const fields = s.slice(start + 1, endPos).split('|').map(f => f.trim())
+    const ver = /^v(\d+)$/.exec(fields[0])
+    if (!ver) throw new Error(`missing format version (expected "${EXPORT_PREFIX}…}")`)
+    if (Number(ver[1]) !== EXPORT_VERSION) {
+      throw new Error(`format version ${ver[1]} is newer than this app understands (version ${EXPORT_VERSION})`)
     }
-    const cols = Number(m[2]) as 3 | 4
-    const toks = m[3].trim().split(' ')
-    if (toks.length !== GRID_ROWS * cols) {
-      throw new Error(`tab "${tabName}" needs ${GRID_ROWS * cols} keys, got ${toks.length}`)
+    const parts = fields.slice(1)
+    if (parts.length !== 4) throw new Error('expected a name and exactly 3 tabs')
+    const name = unescText(parts[0]).trim()
+    if (!name || name.length > 48) throw new Error('bad set name')
+    const tabs = parts.slice(1).map(field => {
+      const m = /^(.*?)([34]):(.*)$/.exec(field)
+      if (!m) throw new Error(`bad tab header in "${field.slice(0, 20)}"`)
+      const tabName = unescText(m[1])
+      if (!isValidTabName(tabName)) {
+        throw new Error('tab name must be a single visible character')
+      }
+      const cols = Number(m[2]) as 3 | 4
+      const toks = m[3].trim().split(' ')
+      if (toks.length !== GRID_ROWS * cols) {
+        throw new Error(`tab "${tabName}" needs ${GRID_ROWS * cols} keys, got ${toks.length}`)
+      }
+      return { name: tabName, cols, slots: toks.map(decodeToken) }
+    })
+    return { name, tabs: tabs as ControlSet['tabs'] }
+  }
+
+  try {
+    return parseFields(end)
+  } catch (err) {
+    // A raw unescaped "}" in a hand-edited field closes the envelope early,
+    // so the parse above fails with a structural error (usually the field
+    // count) that buries the real mistake. Retry once against the string's
+    // LAST "}": if the wider parse trips the escape layer's stray-brace
+    // diagnostics, that error names the actual problem — surface it. Any
+    // other retry outcome keeps the original error (prose after the blob
+    // could make the wider parse fail in misleading ways).
+    const wider = s.lastIndexOf('}')
+    if (wider > end) {
+      try {
+        return parseFields(wider)
+      } catch (err2) {
+        if (/^(stray "}"|unterminated escape)/.test(String((err2 as Error).message))) throw err2
+      }
     }
-    return { name: tabName, cols, slots: toks.map(decodeToken) }
-  })
-  return { name, tabs: tabs as ControlSet['tabs'] }
+    throw err
+  }
 }
 
 // Decode, store as a new custom set, and return it. Throws (with a

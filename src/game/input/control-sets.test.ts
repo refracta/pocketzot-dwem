@@ -99,7 +99,8 @@ describe('export / import string format', () => {
   it('round-trips the built-in', () => {
     for (const set of builtinSets()) {
       const str = encodeControlSet(set)
-      expect(str.startsWith('pocketzot-controls:1:')).toBe(true)
+      expect(str.startsWith('pocketzot-controls{v1|')).toBe(true)
+      expect(str.endsWith('}')).toBe(true)
       const back = decodeControlSet(str)
       expect(back.name).toBe(set.name)
       expect(back.tabs).toEqual(set.tabs)
@@ -139,8 +140,8 @@ describe('export / import string format', () => {
     expect(str).toContain('{^T}')
     expect(decodeControlSet(str).tabs[0].slots.slice(0, 2)).toEqual([{ key: 20 }, { key: 14 }])
     // ^I / ^M are wire-identical to Tab / Enter and normalise to those tokens
-    const alias = 'pocketzot-controls:1:n|@4:' + ['{^I}', '{^M}', ...Array(10).fill('a')].join(' ')
-      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ')
+    const alias = 'pocketzot-controls{v1|n|@4:' + ['{^I}', '{^M}', ...Array(10).fill('a')].join(' ')
+      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}'
     const decoded = decodeControlSet(alias)
     expect(decoded.tabs[0].slots.slice(0, 2)).toEqual([{ key: 9 }, { key: 13 }])
   })
@@ -148,34 +149,75 @@ describe('export / import string format', () => {
   it('is human-readable', () => {
     const str = encodeControlSet(builtinSets()[0])
     expect(str).toContain("@4:{Tab} 5 i o q r f v a ' x ,")
-    expect(str).toContain(':Standard|')
+    expect(str).toContain('{v1|Standard|')
     // set-name spaces stay literal (only key tokens need {sp})
-    expect(encodeControlSet(customSet({ name: 'My keys' }))).toContain(':My keys|')
+    expect(encodeControlSet(customSet({ name: 'My keys' }))).toContain('{v1|My keys|')
   })
 
   it('rejects malformed strings with useful errors', () => {
     const bad: Array<[string, RegExp]> = [
       ['hello', /not a control-set/],
-      ['pocketzot-controls:x|a|b|c', /missing format version/],
-      ['pocketzot-controls:2:name|@4:a|b4:a|c4:a', /version 2 is newer/],
-      ['pocketzot-controls:1:name|@4:a|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /needs 12 keys/],
-      ['pocketzot-controls:1:name|@4:' + 'a '.repeat(11) + 'a', /exactly 3 tabs/],
-      ['pocketzot-controls:1:n|@5:a|@4:a|@4:a', /bad tab header/],
-      ['pocketzot-controls:1:n|ab4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /single visible character/],
+      ['pocketzot-controls{x|a|b|c}', /missing format version/],
+      ['pocketzot-controls{v2|name|@4:a|b4:a|c4:a}', /version 2 is newer/],
+      ['pocketzot-controls{v1|name|@4:a|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}', /needs 12 keys/],
+      ['pocketzot-controls{v1|name|@4:' + 'a '.repeat(11) + 'a}', /exactly 3 tabs/],
+      ['pocketzot-controls{v1|n|@5:a|@4:a|@4:a}', /bad tab header/],
+      ['pocketzot-controls{v1|n|ab4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}', /single visible character/],
       // appears-empty tab labels ({sp} space) are rejected too
-      ['pocketzot-controls:1:n|{sp}4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' '), /single visible character/],
+      ['pocketzot-controls{v1|n|{sp}4:' + Array(12).fill('a').join(' ') + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}', /single visible character/],
     ]
     for (const [str, re] of bad) {
       expect(() => decodeControlSet(str), str).toThrowError(re)
     }
     // over-long text token
-    const longTok = 'pocketzot-controls:1:n|@4:' + ['abcd', ...Array(11).fill('a')].join(' ')
-      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ')
+    const longTok = 'pocketzot-controls{v1|n|@4:' + ['abcd', ...Array(11).fill('a')].join(' ')
+      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}'
     expect(() => decodeControlSet(longTok)).toThrowError(/bad key token/)
     // unknown escape
-    const badEsc = 'pocketzot-controls:1:n|@4:' + ['{zz}', ...Array(11).fill('a')].join(' ')
-      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ')
+    const badEsc = 'pocketzot-controls{v1|n|@4:' + ['{zz}', ...Array(11).fill('a')].join(' ')
+      + '|b4:' + Array(12).fill('a').join(' ') + '|c4:' + Array(12).fill('a').join(' ') + '}'
     expect(() => decodeControlSet(badEsc)).toThrowError(/unknown escape/)
+  })
+
+  it('is not URI-shaped, so pasteboards cannot percent-encode it in transit', () => {
+    // An earlier format ("pocketzot-controls:1:…") parsed as a custom-scheme
+    // URI, and the iOS pasteboard percent-encodes URIs on paste (space→%20,
+    // {→%7B, …), mangling imports. The braced envelope is the fix: a "{"
+    // before any colon makes the whole string unparseable as a URI.
+    // Guard the property itself so a format change can't reintroduce it.
+    for (const set of builtinSets()) {
+      const str = encodeControlSet(set)
+      expect(() => new URL(str)).toThrow()
+    }
+    // Even with a colon-y set name in scheme position after the marker.
+    expect(() => new URL(encodeControlSet(customSet({ name: 'web:keys' })))).toThrow()
+  })
+
+  it('points a hand-editor at a raw unescaped } instead of a structural error', () => {
+    // A raw "}" in a field closes the envelope early; the widened-retry in
+    // decodeControlSet must surface the escape layer's stray-"}" diagnosis
+    // rather than the misleading field-count error the early close causes.
+    const str = encodeControlSet(builtinSets()[0])
+    const edited = str.replace('{v1|Standard|', '{v1|Stan}dard|')
+    expect(() => decodeControlSet(edited)).toThrowError(/stray "\}"/)
+    // A genuine field-count mistake (a deleted tab) keeps its own error,
+    // even with a "}" later in the pasted text (prose after the blob).
+    const twoTabs = 'pocketzot-controls{v1|n|@4:' + Array(12).fill('a').join(' ')
+      + '|b4:' + Array(12).fill('a').join(' ') + '} was {fun}'
+    expect(() => decodeControlSet(twoTabs)).toThrowError(/exactly 3 tabs/)
+  })
+
+  it('extracts the envelope from surrounding prose, requiring the marker', () => {
+    const set = builtinSets()[0]
+    const str = encodeControlSet(set)
+    // paste of a whole chat message — prose both sides, braces in the prose
+    const pasted = 'check out my set: ' + str + ' — enjoy! {cheers}'
+    expect(decodeControlSet(pasted).tabs).toEqual(set.tabs)
+    // the marker is required: a bare {v1|…} envelope is not a control-set
+    expect(() => decodeControlSet(str.slice('pocketzot-controls'.length)))
+      .toThrowError(/not a control-set/)
+    // a copy that lost the tail fails with the truncation error
+    expect(() => decodeControlSet(str.slice(0, -1))).toThrowError(/closing "}"/)
   })
 
   it('repairs whitespace mangled in transit (chat wrapping, doubled spaces)', () => {
