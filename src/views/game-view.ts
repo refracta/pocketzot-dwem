@@ -484,7 +484,7 @@ export function buildGameView(
     const parsed = parsePromptText(text)
     const intro = /^[^,<]*?:\s*/.exec(parsed.body)?.[0] ?? ''
     const tokens = parsed.body.slice(intro.length).split(/,\s*/).map((tok) => {
-      const plain = tok.replace(/<[^>]*>/g, '').trim()
+      const plain = stripDcss(tok).trim()
       return { tok: tok.trim(), key: /^(\S)\s*-\s+\S/.exec(plain)?.[1] }
     })
     if (!tokens.some((t) => t.key)) return false
@@ -512,7 +512,7 @@ export function buildGameView(
     // of the wire text (same-turn messages can arrive glued onto one line),
     // with markup stripped in case a future trunk decorates the hotkeys.
     const isPrompt = channel === 2
-      && text.replace(/<[^>]*>/g, '').includes('v - describe')
+      && stripDcss(text).includes('v - describe')
     if (!isPrompt || !xdescPromptRow(text)) {
       const line = document.createElement('div')
       line.className = 'xdesc-line'
@@ -1491,8 +1491,12 @@ export function buildGameView(
           // Mirror into the X-mode describe strip; the line ALSO takes the
           // normal path below into the (hidden) real log, which is what
           // keeps the server's rollback counts consistent on X-mode exit.
+          // In X mode the strip owns the visible/tappable prompt; the real
+          // log is hidden and only needs a placeholder node per message to
+          // keep rollback counts consistent, so skip the (invisible) prompt
+          // row + its buttons/listeners and append a plain line instead.
           if (inXMode) xdescAdd(m.text, m.channel)
-          if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
+          if (!inXMode && m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
             activePromptEl = row
