@@ -7,6 +7,7 @@ export interface CncPublicChatHandlers {
   onChat: (content: string) => void
   onSpectators?: (count: number, names: string) => void
   onStatus?: (text: string) => void
+  onLoginCookie?: (cookie: string, expiresDays: number) => void
 }
 
 export function isCncPublicChatAvailable(wsUrl: string): boolean {
@@ -69,6 +70,7 @@ export class CncPublicChatClient {
     const cookie = this.getLoginCookie()
     if (!cookie) return false
     if (!this.send({ msg: 'token_login', cookie })) return false
+    this.send({ msg: 'set_login_cookie' })
     this.authInFlight = true
     return true
   }
@@ -98,6 +100,9 @@ export class CncPublicChatClient {
         this.authInFlight = false
         this.watchBot()
         this.flushPendingChat()
+        break
+      case 'login_cookie':
+        this.handlers.onLoginCookie?.(msg.cookie, msg.expires)
         break
       case 'login_fail':
         this.authenticated = false

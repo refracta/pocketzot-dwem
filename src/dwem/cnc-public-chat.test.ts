@@ -13,6 +13,7 @@ describe('CncPublicChatClient', () => {
     vi.stubGlobal('WebSocket', makeFakeWebSocket(sockets))
     const chats: string[] = []
     const statuses: string[] = []
+    const cookies: Array<{ cookie: string; days: number }> = []
 
     const client = new CncPublicChatClient(
       'wss://crawl.nemelex.cards/socket',
@@ -20,6 +21,7 @@ describe('CncPublicChatClient', () => {
       {
         onChat: (content) => chats.push(content),
         onStatus: (text) => statuses.push(text),
+        onLoginCookie: (cookie, days) => cookies.push({ cookie, days }),
       },
     )
     client.connect()
@@ -28,9 +30,11 @@ describe('CncPublicChatClient', () => {
     socket.onopen?.()
     expect(socket.sent.map(parseSent)).toEqual([
       { msg: 'token_login', cookie: 'cookie-1' },
+      { msg: 'set_login_cookie' },
     ])
 
     socket.emit(JSON.stringify({ msg: 'login_success', username: 'labter' }))
+    socket.emit(JSON.stringify({ msg: 'login_cookie', cookie: 'cookie-2', expires: 7 }))
     socket.emit(JSON.stringify({ msgs: [
       { msg: 'ping' },
       { msg: 'watching_started', username: CNC_PUBLIC_CHAT_BOT },
@@ -40,12 +44,14 @@ describe('CncPublicChatClient', () => {
     expect(client.sendChat(' public hello ')).toBe(true)
     expect(socket.sent.map(parseSent)).toEqual([
       { msg: 'token_login', cookie: 'cookie-1' },
+      { msg: 'set_login_cookie' },
       { msg: 'watch', username: CNC_PUBLIC_CHAT_BOT },
       { msg: 'pong' },
       { msg: 'chat_msg', text: 'public hello' },
     ])
     expect(chats).toEqual(['<span class="chat_msg">hello</span>'])
     expect(statuses).toContain('Connected to CNC public chat.')
+    expect(cookies).toEqual([{ cookie: 'cookie-2', days: 7 }])
   })
 
   it('reports availability only for CNC-compatible servers', () => {

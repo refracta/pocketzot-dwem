@@ -1,6 +1,6 @@
 import type { WsConnection } from '../ws/connection'
 import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
-import { clearSession, loadSession } from '../auth/session'
+import { clearSession, loadSession, saveSession } from '../auth/session'
 import { cncUserinfo } from '../dwem/cnc-userinfo'
 import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import type { SpectateTarget } from './game-view'
@@ -124,6 +124,9 @@ export function buildLobbyView(
         onChat: (content) => publicChatView.handleChat(content, false, { public: true, rich: true }),
         onSpectators: (count, names) => publicChatView.handleSpectators(count, names),
         onStatus: (text) => publicChatView.handleChat(`<span class='chat_msg'>${escHtml(text)}</span>`, true),
+        onLoginCookie: (cookie, days) => {
+          if (username) saveSession(conn.wsUrl, username, cookie, days)
+        },
       },
     )
     publicChatClient.connect()

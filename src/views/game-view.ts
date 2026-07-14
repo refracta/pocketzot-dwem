@@ -27,7 +27,7 @@ import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../ut
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
 import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
-import { loadSession } from '../auth/session'
+import { loadSession, saveSession } from '../auth/session'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
   renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
@@ -239,6 +239,9 @@ export function buildGameView(
       {
         onChat: (content) => chatView.handleChat(content, false, { public: true, rich: true }),
         onStatus: (text) => chatView.handleChat(`<span class='chat_msg'>${escHtml(text)}</span>`, true),
+        onLoginCookie: (cookie, days) => {
+          if (username) saveSession(conn.wsUrl, username, cookie, days)
+        },
       },
     )
     publicChatClient.connect()
