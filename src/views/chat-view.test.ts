@@ -159,7 +159,7 @@ describe('wire parsing and rendering', () => {
       ok: true,
       json: async () => ({
         type: 'item',
-        file: 'https://chat.nemelex.cards/files/item.png',
+        file: '/files/item.png',
         item: '+2 pair of gloves',
         color: 'rgb(255, 255, 0)',
       }),
@@ -178,6 +178,7 @@ describe('wire parsing and rendering', () => {
     expect(line.classList.contains('chat-line-public')).toBe(true)
     expect(line.textContent).toContain("<labter's Item>")
     expect(line.querySelector('img')?.getAttribute('src')).toBe('https://chat.nemelex.cards/files/item.png')
+    expect(line.querySelector('img')?.getAttribute('loading')).toBeNull()
   })
 
   it('renders Discord bridge JSON chat when rich mode is enabled', async () => {

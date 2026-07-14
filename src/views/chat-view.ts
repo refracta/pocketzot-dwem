@@ -220,27 +220,37 @@ function renderChatImage(url: string): HTMLElement {
     wrap.textContent = '[missing image]'
     return wrap
   }
+  const imageUrl = resolveCncChatAssetUrl(url)
   const loading = document.createElement('span')
   loading.className = 'chat-rich-loading'
   loading.textContent = 'Loading image...'
   const image = document.createElement('img')
   image.className = 'chat-rich-image'
   image.alt = ''
-  image.loading = 'lazy'
   image.hidden = true
-  image.src = url
-  image.addEventListener('load', () => {
+  const showImage = (): void => {
     loading.remove()
     image.hidden = false
-  })
+  }
+  image.addEventListener('load', showImage)
   image.addEventListener('error', () => {
     loading.textContent = 'Failed to load image.'
   })
   image.addEventListener('click', () => {
-    window.open(url, '_blank', 'noopener')
+    window.open(imageUrl, '_blank', 'noopener')
   })
+  image.src = imageUrl
+  if (image.complete && image.naturalWidth > 0) showImage()
   wrap.append(loading, image)
   return wrap
+}
+
+function resolveCncChatAssetUrl(url: string): string {
+  try {
+    return new URL(url, 'https://chat.nemelex.cards/').href
+  } catch {
+    return url
+  }
 }
 
 function capitalize(text: string): string {
