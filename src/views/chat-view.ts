@@ -20,7 +20,7 @@ export interface ChatViewOpts {
   onSend: (text: string) => void
   /** Sheet title. Defaults to the regular game chat channel. */
   title?: string
-  /** Render CNC usernames with banner styling and the public-chat § prefix. */
+  /** Render CNC public-chat usernames with banner styling and the § prefix. */
   cncStyle?: boolean
   /** Unit tests can disable profile polling; live views should leave it on. */
   trackCncProfiles?: boolean
@@ -126,9 +126,9 @@ interface SenderSpanOpts {
 }
 
 // Sender tag in accent color; shared by history lines and the transient pill
-// so the costume can't drift between them. CNC mode mirrors DWEM: `§` plus
-// the current banner-styled username. Plain mode deliberately has no IRC
-// angle brackets.
+// so the costume can't drift between them. CNC public chat mirrors DWEM: `§`
+// plus the current banner-styled username. Plain room chat deliberately has
+// no IRC angle brackets.
 function senderSpan(name: string, opts: SenderSpanOpts = {}): HTMLSpanElement {
   const s = document.createElement('span')
   s.className = 'chat-line-sender'
@@ -421,8 +421,8 @@ export class ChatView {
     if (!text) return
     const line: ChatLine = { sender, text, meta: meta || !sender, public: opts.public }
     const el = this.appendLine(line)
-    if (opts.rich && !line.meta) {
-      void this.renderRichLine(el, parsed).catch((err) => {
+    if (opts.rich && line.public && !line.meta) {
+      void this.renderRichLine(el, parsed, line.public).catch((err) => {
         console.warn('[PocketZot][Chat] failed to render rich chat message', err)
       })
     }
@@ -498,7 +498,7 @@ export class ChatView {
     } else {
       // No ':' glue: sender style and message spacing are enough, and DCSS
       // game messages do not begin with a styled sender marker.
-      el.append(this.senderSpan(line.sender), ' ')
+      el.append(this.senderSpan(line.sender, line.public), ' ')
       appendLinkified(el, line.text)
     }
     this.historyEl.appendChild(el)
@@ -509,10 +509,10 @@ export class ChatView {
     return el
   }
 
-  private async renderRichLine(el: HTMLElement, parsed: ParsedChat): Promise<void> {
+  private async renderRichLine(el: HTMLElement, parsed: ParsedChat, publicChat: boolean): Promise<void> {
     const rich = await buildCncRichChat(
       parsed,
-      !!this.opts.cncStyle,
+      !!this.opts.cncStyle && publicChat,
       this.opts.trackCncProfiles !== false,
     )
     if (!rich || !el.isConnected) return
@@ -528,7 +528,7 @@ export class ChatView {
     // carries the two-line clamp (see .chat-pill-text in style.css).
     const text = document.createElement('div')
     text.className = 'chat-pill-text'
-    text.append(this.senderSpan(line.sender), ` ${line.text}`)
+    text.append(this.senderSpan(line.sender, line.public), ` ${line.text}`)
     this.pill.replaceChildren(text)
     // A message landing mid-fade recovers: removing the class transitions
     // opacity back up, and the fresh timer restarts the full display window.
@@ -572,9 +572,9 @@ export class ChatView {
     this.chip.classList.toggle('chat-chip-open', this.open_)
   }
 
-  private senderSpan(name: string): HTMLSpanElement {
+  private senderSpan(name: string, publicChat = false): HTMLSpanElement {
     return senderSpan(name, {
-      cncStyle: !!this.opts.cncStyle,
+      cncStyle: !!this.opts.cncStyle && publicChat,
       trackCncProfiles: this.opts.trackCncProfiles,
     })
   }

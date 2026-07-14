@@ -1118,7 +1118,7 @@ export function buildGameView(
         break
 
       case 'chat':
-        chatView.handleChat(msg.content ?? '', !!msg.meta, { rich: useCncPublicChat })
+        chatView.handleChat(msg.content ?? '', !!msg.meta)
         break
 
       case 'update_spectators':

@@ -41,9 +41,17 @@ describe('wire parsing and rendering', () => {
     expect(line.querySelector('.chat-line-sender')!.textContent).toBe('gammafunk')
   })
 
-  it('renders CNC senders with the public-chat marker and banner span', () => {
+  it('does not put the public-chat marker on room chat even when CNC support is enabled', () => {
     const { view } = make({ cncStyle: true })
     view.handleChat(WIRE_CHAT, false)
+    const line = view.sheet.querySelector('.chat-line')!
+    expect(line.textContent).toBe('gammafunk oh nice, a MiFi with a broad axe already')
+    expect(line.querySelector('.cnc-profile-username')).toBeNull()
+  })
+
+  it('renders public CNC senders with the public-chat marker and banner span', () => {
+    const { view } = make({ cncStyle: true })
+    view.handleChat(WIRE_CHAT, false, { public: true })
     const line = view.sheet.querySelector('.chat-line')!
     expect(line.textContent).toBe('§gammafunk oh nice, a MiFi with a broad axe already')
     expect(line.querySelector('.cnc-profile-username')?.textContent).toBe('gammafunk')
@@ -190,12 +198,28 @@ describe('wire parsing and rendering', () => {
     expect(line.querySelector('img')?.getAttribute('loading')).toBeNull()
   })
 
+  it('does not render room chat as CNC rich public chat', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const { view } = make({ cncStyle: true })
+    view.handleChat(
+      "<span class='chat_sender'>labter</span>: <span class='chat_msg'>https://chat.nemelex.cards/entities/42</span>",
+      false,
+      { rich: true },
+    )
+
+    const line = view.sheet.querySelector('.chat-line')!
+    expect(line.textContent).toBe('labter https://chat.nemelex.cards/entities/42')
+    expect(line.querySelector('.cnc-profile-username')).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('renders Discord bridge JSON chat when rich mode is enabled', async () => {
     const { view } = make()
     view.handleChat(
       '<span class="chat_sender">CNCPublicChat</span>: <span class="chat_msg">{"msg":"discord","sender":"stone_soup","text":"hello\\nhttps://example.com/a.png"}</span>',
       false,
-      { rich: true },
+      { public: true, rich: true },
     )
 
     await vi.waitFor(() => {
