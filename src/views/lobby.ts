@@ -109,6 +109,7 @@ export function buildLobbyView(
   const publicChatView = useCncPublicChat
     ? new ChatView({
         title: '#public',
+        cncStyle: true,
         onSend: (text) => { publicChatClient?.sendChat(text) },
         alwaysShowChip: true,
         readOnly: guest,

@@ -223,6 +223,7 @@ export function buildGameView(
       }
       conn.send({ msg: 'chat_msg', text: text.trim() })
     },
+    cncStyle: useCncPublicChat,
     preserveSendWhitespace: useCncPublicChat,
     alwaysShowChip: !!spectating || useCncPublicChat,
     // The server refuses guest sends; lock the input honestly up front.

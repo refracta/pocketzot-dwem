@@ -16,7 +16,7 @@ const WIRE_NAMES_LINKIFIED =
 
 function make(opts: Omit<ChatViewOpts, 'onSend'> = {}) {
   const sent: string[] = []
-  const view = new ChatView({ onSend: (t) => sent.push(t), ...opts })
+  const view = new ChatView({ onSend: (t) => sent.push(t), trackCncProfiles: false, ...opts })
   // Connected DOM so events bubble like in the app.
   document.body.append(view.sheet, view.chip, view.pill)
   return { view, sent }
@@ -37,12 +37,20 @@ describe('wire parsing and rendering', () => {
     const { view } = make()
     view.handleChat(WIRE_CHAT, false)
     const line = view.sheet.querySelector('.chat-line')!
-    expect(line.textContent).toBe('<gammafunk> oh nice, a MiFi with a broad axe already')
-    expect(line.querySelector('.chat-line-sender')!.textContent).toBe('<gammafunk>')
+    expect(line.textContent).toBe('gammafunk oh nice, a MiFi with a broad axe already')
+    expect(line.querySelector('.chat-line-sender')!.textContent).toBe('gammafunk')
+  })
+
+  it('renders CNC senders with the public-chat marker and banner span', () => {
+    const { view } = make({ cncStyle: true })
+    view.handleChat(WIRE_CHAT, false)
+    const line = view.sheet.querySelector('.chat-line')!
+    expect(line.textContent).toBe('§gammafunk oh nice, a MiFi with a broad axe already')
+    expect(line.querySelector('.cnc-profile-username')?.textContent).toBe('gammafunk')
   })
 
   it('renders meta notices dim with a * prefix', () => {
-    const { view } = make()
+    const { view } = make({ cncStyle: true })
     view.handleChat(WIRE_META, true)
     const line = view.sheet.querySelector('.chat-line')!
     expect(line.classList.contains('chat-line-meta')).toBe(true)
@@ -52,7 +60,7 @@ describe('wire parsing and rendering', () => {
   it('treats a senderless message as meta even without the flag', () => {
     // Defensive: some notices arrive with meta omitted; no sender span is
     // the other reliable signal.
-    const { view } = make()
+    const { view } = make({ cncStyle: true })
     view.handleChat(WIRE_META, false)
     expect(view.sheet.querySelector('.chat-line-meta')).not.toBeNull()
   })
@@ -119,7 +127,7 @@ describe('wire parsing and rendering', () => {
     // The full line survives intact around the anchor — trailing ", rip"
     // stays text, and the comma is not part of the link.
     expect(view.sheet.querySelector('.chat-line')!.textContent)
-      .toBe('<gammafunk> morgue at http://crawl.akrasiac.org/rawdata/rr/morgue-rr.txt, rip')
+      .toBe('gammafunk morgue at http://crawl.akrasiac.org/rawdata/rr/morgue-rr.txt, rip')
   })
 
   it('keeps a balanced trailing paren inside the URL, sheds an unbalanced one', () => {
@@ -164,7 +172,7 @@ describe('wire parsing and rendering', () => {
         color: 'rgb(255, 255, 0)',
       }),
     })))
-    const { view } = make()
+    const { view } = make({ cncStyle: true })
     view.handleChat(
       "<span class='chat_sender'>labter</span>: <span class='chat_msg'>https://chat.nemelex.cards/entities/42</span>",
       false,
@@ -176,7 +184,8 @@ describe('wire parsing and rendering', () => {
     })
     const line = view.sheet.querySelector('.chat-line')!
     expect(line.classList.contains('chat-line-public')).toBe(true)
-    expect(line.textContent).toContain("<labter's Item>")
+    expect(line.textContent).toContain("§labter's Item")
+    expect(line.querySelector('.cnc-profile-username')?.textContent).toBe('labter')
     expect(line.querySelector('img')?.getAttribute('src')).toBe('https://chat.nemelex.cards/files/item.png')
     expect(line.querySelector('img')?.getAttribute('loading')).toBeNull()
   })
@@ -190,9 +199,9 @@ describe('wire parsing and rendering', () => {
     )
 
     await vi.waitFor(() => {
-      expect(view.sheet.querySelector('.chat-line-discord')?.textContent).toBe('D')
+      expect(view.sheet.querySelector('.chat-line-discord')?.textContent).toBe('ⓓ')
     })
-    expect(view.sheet.querySelector('.chat-line')?.textContent).toContain('<stone_soup>')
+    expect(view.sheet.querySelector('.chat-line')?.textContent).toContain('ⓓstone_soup')
     expect(view.sheet.querySelector('.chat-line a')?.getAttribute('href')).toBe('https://example.com/a.png')
   })
 
@@ -277,7 +286,7 @@ describe('pill', () => {
     const { view } = make()
     view.handleChat(WIRE_CHAT, false)
     expect(view.pill.style.display).not.toBe('none')
-    expect(view.pill.textContent).toBe('<gammafunk> oh nice, a MiFi with a broad axe already')
+    expect(view.pill.textContent).toBe('gammafunk oh nice, a MiFi with a broad axe already')
     vi.advanceTimersByTime(4100)
     // Expiry starts the opacity fade; the element hides after it lands.
     expect(view.pill.classList.contains('chat-pill-fade')).toBe(true)

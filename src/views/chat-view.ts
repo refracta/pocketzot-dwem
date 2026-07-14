@@ -1,3 +1,5 @@
+import { cncUserinfo } from '../dwem/cnc-userinfo'
+
 // WebTiles chat: bottom-sheet history + input, an entry chip (spectator count
 // + unread badge), and a transient pill previewing messages while the sheet
 // is closed. One instance per game view; game-view.ts feeds it `chat` and
@@ -18,6 +20,10 @@ export interface ChatViewOpts {
   onSend: (text: string) => void
   /** Sheet title. Defaults to the regular game chat channel. */
   title?: string
+  /** Render CNC usernames with banner styling and the public-chat § prefix. */
+  cncStyle?: boolean
+  /** Unit tests can disable profile polling; live views should leave it on. */
+  trackCncProfiles?: boolean
   /** Preserve leading whitespace for hosts that route " public" specially. */
   preserveSendWhitespace?: boolean
   /** Spectator role: chat is a primary feature of watching, so the chip is
@@ -113,12 +119,38 @@ function trimUrlTail(url: string): string {
   return url.slice(0, end)
 }
 
-// IRC-style `<name>` sender tag in accent color; shared by history lines and
-// the transient pill so the costume can't drift between them.
-function senderSpan(name: string): HTMLSpanElement {
+interface SenderSpanOpts {
+  cncStyle?: boolean
+  profileUsername?: string
+  trackCncProfiles?: boolean
+}
+
+// Sender tag in accent color; shared by history lines and the transient pill
+// so the costume can't drift between them. CNC mode mirrors DWEM: `§` plus
+// the current banner-styled username. Plain mode deliberately has no IRC
+// angle brackets.
+function senderSpan(name: string, opts: SenderSpanOpts = {}): HTMLSpanElement {
   const s = document.createElement('span')
   s.className = 'chat-line-sender'
-  s.textContent = `<${name}>`
+  if (!opts.cncStyle) {
+    s.textContent = name
+    return s
+  }
+
+  const profileUsername = opts.profileUsername ?? name
+  const clean = cncUserinfo.normalizeUsername(profileUsername)
+  if (!clean) {
+    s.textContent = name
+    return s
+  }
+
+  s.append('§')
+  const styled = document.createElement('span')
+  styled.innerHTML = cncUserinfo.applyStyledUsername(clean, { track: opts.trackCncProfiles !== false })
+  s.append(...Array.from(styled.childNodes))
+  if (opts.profileUsername && name !== opts.profileUsername) {
+    s.append(name.slice(opts.profileUsername.length))
+  }
   return s
 }
 
@@ -138,7 +170,11 @@ function appendLinkified(el: HTMLElement, text: string): void {
   el.append(text.slice(last))
 }
 
-async function buildCncRichChat(parsed: ParsedChat): Promise<Array<Node | string> | null> {
+async function buildCncRichChat(
+  parsed: ParsedChat,
+  useCncStyle: boolean,
+  trackCncProfiles: boolean,
+): Promise<Array<Node | string> | null> {
   const discord = buildDiscordChat(parsed)
   if (discord) return discord
 
@@ -148,7 +184,7 @@ async function buildCncRichChat(parsed: ParsedChat): Promise<Array<Node | string
   const response = await fetch(entityUrl)
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const entity = await response.json() as CncChatEntity
-  return buildEntityChat(parsed.sender, entity)
+  return buildEntityChat(parsed.sender, entity, useCncStyle, trackCncProfiles)
 }
 
 function buildDiscordChat(parsed: ParsedChat): Array<Node | string> | null {
@@ -159,7 +195,7 @@ function buildDiscordChat(parsed: ParsedChat): Array<Node | string> | null {
   const nodes: Array<Node | string> = []
   const discord = document.createElement('span')
   discord.className = 'chat-line-discord'
-  discord.textContent = 'D'
+  discord.textContent = 'ⓓ'
   nodes.push(discord, senderSpan(sender), ' ')
 
   if (json['msg'] === 'discord-attachment') {
@@ -186,7 +222,12 @@ function buildDiscordChat(parsed: ParsedChat): Array<Node | string> | null {
   return nodes
 }
 
-function buildEntityChat(sender: string, entity: CncChatEntity): Array<Node | string> | null {
+function buildEntityChat(
+  sender: string,
+  entity: CncChatEntity,
+  useCncStyle: boolean,
+  trackCncProfiles: boolean,
+): Array<Node | string> | null {
   const file = entity.file ?? ''
   const type = entity.type ?? 'image'
   const owner = sender || 'Someone'
@@ -194,7 +235,10 @@ function buildEntityChat(sender: string, entity: CncChatEntity): Array<Node | st
     ? `${owner}'s Item`
     : `${owner}'s ${capitalize(type)}`
 
-  const nodes: Array<Node | string> = [senderSpan(label), ' ']
+  const nodes: Array<Node | string> = [
+    senderSpan(label, { cncStyle: useCncStyle, profileUsername: owner, trackCncProfiles }),
+    ' ',
+  ]
   if (type === 'item') {
     const item = document.createElement('span')
     item.className = 'chat-rich-item'
@@ -452,11 +496,9 @@ export class ChatView {
       el.append('* ')
       appendLinkified(el, line.text)
     } else {
-      // IRC-style <name> in accent: the bracket close and the color change
-      // land on the same character, so no ':' glue is needed — and no game
-      // message ever starts with '<', which keeps speech unmistakable.
-      // (Meta lines keep the matching IRC convention: '* notice'.)
-      el.append(senderSpan(line.sender), ' ')
+      // No ':' glue: sender style and message spacing are enough, and DCSS
+      // game messages do not begin with a styled sender marker.
+      el.append(this.senderSpan(line.sender), ' ')
       appendLinkified(el, line.text)
     }
     this.historyEl.appendChild(el)
@@ -468,7 +510,11 @@ export class ChatView {
   }
 
   private async renderRichLine(el: HTMLElement, parsed: ParsedChat): Promise<void> {
-    const rich = await buildCncRichChat(parsed)
+    const rich = await buildCncRichChat(
+      parsed,
+      !!this.opts.cncStyle,
+      this.opts.trackCncProfiles !== false,
+    )
     if (!rich || !el.isConnected) return
     const atBottom = this.historyEl.scrollHeight - this.historyEl.scrollTop
       - this.historyEl.clientHeight < 4
@@ -482,7 +528,7 @@ export class ChatView {
     // carries the two-line clamp (see .chat-pill-text in style.css).
     const text = document.createElement('div')
     text.className = 'chat-pill-text'
-    text.append(senderSpan(line.sender), ` ${line.text}`)
+    text.append(this.senderSpan(line.sender), ` ${line.text}`)
     this.pill.replaceChildren(text)
     // A message landing mid-fade recovers: removing the class transitions
     // opacity back up, and the fresh timer restarts the full display window.
@@ -524,5 +570,12 @@ export class ChatView {
     this.chipBadgeEl.textContent = n > 0 ? (n > 9 ? '9+' : String(n)) : ''
     this.chipBadgeEl.style.display = n > 0 ? '' : 'none'
     this.chip.classList.toggle('chat-chip-open', this.open_)
+  }
+
+  private senderSpan(name: string): HTMLSpanElement {
+    return senderSpan(name, {
+      cncStyle: !!this.opts.cncStyle,
+      trackCncProfiles: this.opts.trackCncProfiles,
+    })
   }
 }
