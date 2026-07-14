@@ -22,6 +22,8 @@ import { WsConnection } from './ws/connection'
 import type { ClientMsg, GameExit, ServerMsg } from './ws/types'
 import { classifyTransition } from './ws/transition'
 import { loadSession } from './auth/session'
+import { clearCredentials, loadCredentials, saveCredentials, type StoredCredentials } from './auth/credentials'
+import { passwordLogin } from './auth/password-login'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from './auth/token-login'
 import { getTileLoader, type TileLoader } from './game/tiles/tile-loader'
 import type { SpectateTarget } from './views/game-view'
@@ -360,22 +362,41 @@ export function resumeOnConn(
       conn.onMessage = mainHandler
       startGame()
     } else {
+      const startAfterLogin = (flushLogin: () => void, flushBefore?: () => void): void => {
+        if (settled) return
+        conn.onMessage = mainHandler
+        startGame()
+        flushBefore?.()
+        // Replay messages the handshake buffered (pre-login lobby snapshot)
+        // into the state machine, which holds them for the destination view.
+        flushLogin()
+      }
+      const retryWithCredentials = (credentials: StoredCredentials | null, flushBefore?: () => void): void => {
+        if (!credentials) {
+          fail(new ResumeFatal(SESSION_EXPIRED_NOTICE))
+          return
+        }
+        ui.setStatus('Signing in…')
+        passwordLogin(conn, credentials, {
+          onSuccess: (username, flushLogin) => {
+            saveCredentials(conn.wsUrl, username, credentials.password)
+            startAfterLogin(flushLogin, flushBefore)
+          },
+          onFail: () => {
+            clearCredentials(conn.wsUrl, credentials.username)
+            fail(new ResumeFatal(SESSION_EXPIRED_NOTICE))
+          },
+        })
+      }
       const sess = loadSession(conn.wsUrl, auth.username)
       if (!sess) {
-        fail(new ResumeFatal(SESSION_EXPIRED_NOTICE))
+        retryWithCredentials(loadCredentials(conn.wsUrl, auth.username))
         return
       }
       ui.setStatus('Signing in…')
       tokenLogin(conn, sess, {
-        onSuccess: (_username, flushLogin) => {
-          if (settled) return
-          conn.onMessage = mainHandler
-          startGame()
-          // Replay messages the handshake buffered (pre-login lobby snapshot)
-          // into the state machine, which holds them for the destination view.
-          flushLogin()
-        },
-        onFail: () => fail(new ResumeFatal(SESSION_EXPIRED_NOTICE)),
+        onSuccess: (_username, flushLogin) => startAfterLogin(flushLogin),
+        onFail: (flushTokenBuffer) => retryWithCredentials(loadCredentials(conn.wsUrl, auth.username), flushTokenBuffer),
       })
     }
   })

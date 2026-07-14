@@ -32,8 +32,10 @@ export interface TokenLoginCallbacks {
   // call flush() to replay messages that arrived during the handshake — the
   // server pushes the lobby snapshot before login_success — into it.
   onSuccess: (username: string, flush: () => void) => void
-  // Called on login_fail, after the stored session has been cleared.
-  onFail: () => void
+  // Called on login_fail, after the stored session has been cleared. Consumers
+  // that retry with password credentials can replay the pre-login snapshot into
+  // the eventual destination handler with flush().
+  onFail: (flush: () => void) => void
 }
 
 export function tokenLogin(conn: TokenLoginConn, session: StoredSession, cb: TokenLoginCallbacks): void {
@@ -41,19 +43,20 @@ export function tokenLogin(conn: TokenLoginConn, session: StoredSession, cb: Tok
   conn.onLoginCookie = (cookie, days) => saveSession(session.wsUrl, session.username, cookie, days)
 
   const buffered: ServerMsg[] = []
+  const flush = (): void => {
+    // If no destination took over onMessage, replaying would feed the buffer
+    // straight back into itself.
+    if (conn.onMessage === pump) return
+    for (let i = 0; i < buffered.length; i++) conn.onMessage(buffered[i]!)
+    buffered.length = 0
+  }
   const pump = (msg: ServerMsg): void => {
     if (msg.msg === 'login_success') {
       conn.send({ msg: 'set_login_cookie' })
-      cb.onSuccess(msg.username, () => {
-        // If no destination took over onMessage, replaying would feed the
-        // buffer straight back into itself.
-        if (conn.onMessage === pump) return
-        for (let i = 0; i < buffered.length; i++) conn.onMessage(buffered[i]!)
-        buffered.length = 0
-      })
+      cb.onSuccess(msg.username, flush)
     } else if (msg.msg === 'login_fail') {
       clearSession(session.wsUrl, session.username)
-      cb.onFail()
+      cb.onFail(flush)
     } else {
       buffered.push(msg)
     }

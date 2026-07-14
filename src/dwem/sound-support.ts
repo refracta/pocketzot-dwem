@@ -66,6 +66,13 @@ export class SoundSupport {
   private playerOrbHeld = false
   private bgmContextKey: string | null = null
   private bgmRequestId = 0
+  private readonly onVisibilityChange = (): void => {
+    const visible = !this.isPageHidden()
+    this.soundManager.setPageVisible(visible)
+    if (visible && this.soundConfig?.soundOn && this.currentBgmPath && !this.soundManager.currentlyLoopingBgm) {
+      void this.setBgm(this.currentBgmPath)
+    }
+  }
 
   constructor() {}
 
@@ -73,6 +80,10 @@ export class SoundSupport {
     if (this.installed) return
     this.installed = true
     this.installCommands()
+    if (typeof document !== 'undefined') {
+      this.soundManager.setPageVisible(!this.isPageHidden())
+      document.addEventListener('visibilitychange', this.onVisibilityChange)
+    }
 
     rcManager.addHandlers('sound-support-rc-handler', {
       onGameInitialize: (rcfile) => this.initializeForGame(rcfile),
@@ -301,6 +312,7 @@ export class SoundSupport {
 
   private async handleSoundMessage(data: IncomingMessage): Promise<void> {
     if (!this.soundConfig?.soundOn || !Array.isArray(data.messages)) return
+    if (this.isPageHidden()) return
     const rawTexts = getSoundMessageTexts(data.messages)
     for (const rawText of rawTexts) {
       if (!rawText) continue
@@ -314,8 +326,10 @@ export class SoundSupport {
         }
         if (this.soundConfig.soundDebug) console.log(`${rawText}\n\tregex: ${match.regex}\n\tpath: ${match.path} (${file.size} bytes)`)
         try {
+          if (this.isPageHidden()) return
           const audioBuffer = file.audioBuffer ?? await this.soundManager.blobToAudioBuffer(file)
           file.audioBuffer = audioBuffer
+          if (this.isPageHidden()) return
           if (this.soundConfig.oneSDLSoundChannel) this.soundManager.stop()
           await this.soundManager.play(audioBuffer)
         } catch (err) {
@@ -418,11 +432,24 @@ export class SoundSupport {
     const requestId = ++this.bgmRequestId
     const selected = this.resolveBgmBlob(soundPath)
     if (!selected) return
+    this.currentBgmPath = soundPath
+    if (this.isPageHidden()) {
+      this.soundManager.stopBgm()
+      return
+    }
     const audioBuffer = selected.audioBuffer ?? await this.soundManager.blobToAudioBuffer(selected)
     selected.audioBuffer = audioBuffer
     if (requestId !== this.bgmRequestId) return
+    if (this.isPageHidden()) {
+      this.soundManager.stopBgm()
+      return
+    }
     this.currentBgmPath = soundPath
     await this.soundManager.playLoop(audioBuffer)
+  }
+
+  private isPageHidden(): boolean {
+    return typeof document !== 'undefined' && document.hidden
   }
 
   private resolveBgmBlob(soundPath: string): AudioBlob | null {
@@ -656,7 +683,7 @@ export class SoundSupport {
   }
 }
 
-class SoundManager {
+export class SoundManager {
   fadeTime = 0.5
   volume = 1
   bgmVolume = 1
@@ -665,6 +692,8 @@ class SoundManager {
   private context: AudioContext | null = null
   private previousData: { source: AudioBufferSourceNode; gainNode: GainNode } | null = null
   private loopData: { source: AudioBufferSourceNode; gainNode: GainNode } | null = null
+  private pageVisible = typeof document === 'undefined' || !document.hidden
+  private suspendedForVisibility = false
 
   constructor() {
     this.installUnlockHandlers()
@@ -676,7 +705,9 @@ class SoundManager {
   }
 
   async play(buffer: AudioBuffer): Promise<void> {
+    if (!this.pageVisible) return
     const context = await this.getContext()
+    if (!this.pageVisible) return
     const gainNode = context.createGain()
     gainNode.gain.value = this.volume
     const source = context.createBufferSource()
@@ -695,7 +726,9 @@ class SoundManager {
   }
 
   async playLoop(buffer: AudioBuffer): Promise<void> {
+    if (!this.pageVisible) return
     const context = await this.getContext()
+    if (!this.pageVisible) return
     this.stopBgm()
     const gainNode = context.createGain()
     gainNode.gain.value = this.bgmVolume
@@ -720,6 +753,29 @@ class SoundManager {
     if (this.loopData) this.loopData.gainNode.gain.value = volume
   }
 
+  setPageVisible(visible: boolean): void {
+    this.pageVisible = visible
+    if (!this.context) return
+    if (!visible) {
+      if (this.context.state === 'running') {
+        this.suspendedForVisibility = true
+        void this.context.suspend()
+          .then(() => {
+            if (this.pageVisible && this.context?.state === 'suspended') {
+              void this.context.resume().catch(() => undefined)
+              this.suspendedForVisibility = false
+            }
+          })
+          .catch(() => undefined)
+      }
+      return
+    }
+    if (this.suspendedForVisibility && this.context.state === 'suspended') {
+      void this.context.resume().catch(() => undefined)
+    }
+    this.suspendedForVisibility = false
+  }
+
   private async getContext(): Promise<AudioContext> {
     if (!this.context) {
       const ctor = globalThis.AudioContext
@@ -727,7 +783,7 @@ class SoundManager {
       if (!ctor) throw new Error('AudioContext unavailable')
       this.context = new ctor()
     }
-    if (this.context.state === 'suspended') {
+    if (this.pageVisible && this.context.state === 'suspended') {
       await this.context.resume().catch(() => undefined)
     }
     return this.context

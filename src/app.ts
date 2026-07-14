@@ -7,6 +7,7 @@ import { siteInformation } from './dwem/site-information'
 import type { TileLoader } from './game/tiles/tile-loader'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
 import { loadSession } from './auth/session'
+import { loadCredentials } from './auth/credentials'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -156,7 +157,10 @@ function startResume(wsUrl: string): void {
 // healthy socket we can't resume would kick the user to the login screen on
 // every app swap.
 function canResumeAfterClose(): boolean {
-  return currentIsGuest || (conn != null && !!loadSession(conn.wsUrl, currentUsername))
+  return currentIsGuest || (conn != null && (
+    !!loadSession(conn.wsUrl, currentUsername) ||
+    !!loadCredentials(conn.wsUrl, currentUsername)
+  ))
 }
 
 // Whether backgrounding is likely to kill our socket without a close frame.

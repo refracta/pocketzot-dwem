@@ -13,6 +13,7 @@ import {
   type ResumeUi,
 } from './reconnect'
 import { loadSession, saveSession } from './auth/session'
+import { loadCredentials, saveCredentials } from './auth/credentials'
 import { getTileLoader } from './game/tiles/tile-loader'
 import { fakeStorage } from './test/fake-storage'
 import type { ClientMsg, ServerMsg } from './ws/types'
@@ -209,10 +210,43 @@ describe('resumeOnConn — played game', () => {
     expect(loadSession(WS_URL, USER)).toBeNull()
   })
 
+  it('falls back to stored credentials when token login fails', async () => {
+    withSession()
+    saveCredentials(WS_URL, USER, 'pw')
+    const { conn, sent, feed } = fakeConn()
+    const p = resumeOnConn(conn, { kind: 'play', gameId: 'dcss-0.34' }, { username: USER, guest: false }, fakeUi())
+
+    feed({ msg: 'login_fail', message: 'expired' })
+    expect(sent).toEqual([
+      { msg: 'token_login', cookie: 'cookie-1' },
+      { msg: 'login', username: USER, password: 'pw' },
+    ])
+    feed({ msg: 'login_success', username: 'Tester' })
+    expect(sent.slice(2)).toEqual([
+      { msg: 'set_login_cookie' },
+      { msg: 'play', game_id: 'dcss-0.34' },
+    ])
+    feed({ msg: 'game_started' })
+    await expect(p).resolves.toMatchObject({ outcome: 'game' })
+    expect(loadSession(WS_URL, USER)).toBeNull()
+    expect(loadCredentials(WS_URL, 'Tester')?.password).toBe('pw')
+  })
+
   it('rejects ResumeFatal immediately when no session cookie is stored', async () => {
     const { conn } = fakeConn()
     const p = resumeOnConn(conn, { kind: 'play', gameId: 'dcss-0.34' }, { username: USER, guest: false }, fakeUi())
     await expect(p).rejects.toBeInstanceOf(ResumeFatal)
+  })
+
+  it('uses stored credentials when the session cookie is already missing', async () => {
+    saveCredentials(WS_URL, USER, 'pw')
+    const { conn, sent, feed } = fakeConn()
+    const p = resumeOnConn(conn, { kind: 'play', gameId: 'dcss-0.34' }, { username: USER, guest: false }, fakeUi())
+
+    expect(sent).toEqual([{ msg: 'login', username: USER, password: 'pw' }])
+    feed({ msg: 'login_success', username: USER })
+    feed({ msg: 'game_started' })
+    await expect(p).resolves.toMatchObject({ outcome: 'game' })
   })
 
   it('rejects retryably (not ResumeFatal) when the socket drops mid-resume', async () => {

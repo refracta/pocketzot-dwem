@@ -86,4 +86,21 @@ describe('tokenLogin', () => {
     expect(loadSession(WS_URL, USER)).toBeNull()
     expect(SESSION_EXPIRED_NOTICE).toMatch(/sign in/)
   })
+
+  it('exposes the buffered pre-login messages when token login fails', () => {
+    const { conn, feed } = fakeConn()
+    let failFlush: (() => void) | null = null
+    tokenLogin(conn, storedSession(), {
+      onSuccess: () => { throw new Error('unexpected') },
+      onFail: (flush) => { failFlush = flush },
+    })
+
+    feed({ msg: 'lobby_complete' })
+    feed({ msg: 'login_fail', message: 'nope' })
+    const seen: ServerMsg[] = []
+    conn.onMessage = (m) => seen.push(m)
+    failFlush!()
+
+    expect(seen.map(m => m.msg)).toEqual(['lobby_complete'])
+  })
 })

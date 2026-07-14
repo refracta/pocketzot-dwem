@@ -1,6 +1,7 @@
 import { WsConnection } from '../ws/connection'
-import type { ServerMsg } from '../ws/types'
-import { listSessions, saveSession, type StoredSession } from '../auth/session'
+import { listSessions, type StoredSession } from '../auth/session'
+import { clearCredentials, loadCredentials, saveCredentials } from '../auth/credentials'
+import { passwordLogin } from '../auth/password-login'
 import { cncUserinfo } from '../dwem/cnc-userinfo'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
@@ -46,6 +47,10 @@ export function buildLoginView(
     <label class="login-label">
       Password
       <input id="login-pass" type="password" autocomplete="current-password" required />
+    </label>
+    <label class="login-remember">
+      <input id="login-save-credentials" type="checkbox" autocomplete="off" />
+      <span>Store credentials locally for token fallback</span>
     </label>
     <button id="login-btn" type="submit" class="login-btn">Connect</button>
   `
@@ -114,6 +119,7 @@ export function buildLoginView(
   const spectateSelect = view.querySelector<HTMLSelectElement>('#spectate-select')!
   const userInput = view.querySelector<HTMLInputElement>('#login-user')!
   const passInput = view.querySelector<HTMLInputElement>('#login-pass')!
+  const saveCredentialsInput = view.querySelector<HTMLInputElement>('#login-save-credentials')!
   const errorEl = view.querySelector<HTMLElement>('#login-error')!
   const spectateErrorEl = view.querySelector<HTMLElement>('#spectate-error')!
   const btn = view.querySelector<HTMLButtonElement>('#login-btn')!
@@ -282,10 +288,28 @@ export function buildLoginView(
         onLogin({ conn, username })
         flush()
       },
-      onFail: () => {
-        conn.close()
-        showError(SESSION_EXPIRED_NOTICE)
-        renderResumeButtons()
+      onFail: (flushTokenBuffer) => {
+        const storedCredentials = loadCredentials(s.wsUrl, s.username)
+        if (!storedCredentials) {
+          conn.close()
+          showError(SESSION_EXPIRED_NOTICE)
+          renderResumeButtons()
+          return
+        }
+        passwordLogin(conn, storedCredentials, {
+          onSuccess: (username, flushPasswordBuffer) => {
+            saveCredentials(storedCredentials.wsUrl, username, storedCredentials.password)
+            onLogin({ conn, username })
+            flushTokenBuffer()
+            flushPasswordBuffer()
+          },
+          onFail: () => {
+            clearCredentials(storedCredentials.wsUrl, storedCredentials.username)
+            conn.close()
+            showError('Saved session and stored credentials failed — please sign in again.')
+            renderResumeButtons()
+          },
+        })
       },
     })
   }
@@ -298,6 +322,7 @@ export function buildLoginView(
     const wsUrl = formSelect.value
     const username = userInput.value.trim()
     const password = passInput.value
+    const shouldSaveCredentials = saveCredentialsInput.checked
 
     if (!username) { showError('Please enter a username.'); return }
     if (!password) { showError('Please enter a password.'); return }
@@ -315,21 +340,23 @@ export function buildLoginView(
       return
     }
 
-    conn.send({ msg: 'login', username, password })
-
-    listenOnce(conn, (msg: ServerMsg) => {
-      if (msg.msg === 'login_success') {
-        conn.onLoginCookie = (cookie, expiresDays) => {
-          saveSession(wsUrl, msg.username, cookie, expiresDays)
+    passwordLogin(conn, { wsUrl, username, password }, {
+      onSuccess: (canonicalUsername, flush) => {
+        if (shouldSaveCredentials) {
+          saveCredentials(wsUrl, canonicalUsername, password)
+        } else {
+          clearCredentials(wsUrl, username)
+          clearCredentials(wsUrl, canonicalUsername)
         }
-        conn.send({ msg: 'set_login_cookie' })
-        onLogin({ conn, username: msg.username })
-      } else if (msg.msg === 'login_fail') {
-        showError(msg.message || 'Login failed.')
+        onLogin({ conn, username: canonicalUsername })
+        flush()
+      },
+      onFail: (message) => {
+        showError(message)
         conn.close()
         btn.disabled = false
         btn.textContent = 'Connect'
-      }
+      },
     })
   })
 
@@ -376,30 +403,4 @@ export function buildLoginView(
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// Install a one-shot handler that fires on the first login_success / login_fail.
-// The handler typically swaps the view, which reassigns conn.onMessage to the
-// next view's handler — in that case we leave the new handler in place. If the
-// handler doesn't reassign (e.g. login_fail), restore the prior onMessage.
-//
-// The WebTiles server pushes the lobby snapshot (lobby_clear / lobby_entry /
-// lobby_complete) immediately on socket open, before login_success arrives.
-// Buffer those pre-login messages and replay them to whichever handler owns
-// onMessage after the login handler runs, so the lobby view sees them.
-function listenOnce(conn: WsConnection, handler: (msg: ServerMsg) => void): void {
-  const prev = conn.onMessage
-  const buffered: ServerMsg[] = []
-  const wrapper = (msg: ServerMsg) => {
-    if (msg.msg === 'login_success' || msg.msg === 'login_fail') {
-      handler(msg)
-      if (conn.onMessage === wrapper) conn.onMessage = prev
-      const next = conn.onMessage
-      for (const m of buffered) next(m)
-      buffered.length = 0
-    } else {
-      buffered.push(msg)
-    }
-  }
-  conn.onMessage = wrapper
 }
