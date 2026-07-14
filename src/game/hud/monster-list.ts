@@ -5,7 +5,7 @@
 // part of this AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
 import type { Cell, MapStore, MonsterCell } from '../map/map-store'
-import { escHtml } from '../dcss-colors'
+import { DCSS_COLOR_MAP, escHtml } from '../dcss-colors'
 import { decodeColor } from '../map/colors'
 import {
   ATTITUDE_CLASSES, MDAM_COLORS, UNUSUAL_COLOR, decodeFgThreatTier, decodeMdam,
@@ -16,9 +16,9 @@ import {
   appendIconOverlays, appendTiles, monsterTileSpec,
   prependDngnIndex, prependDngnLayer,
 } from '../tiles/tile-view'
-import type { TileLoader } from '../tiles/tile-loader'
+import { TEX, type TileLoader } from '../tiles/tile-loader'
 import { bgFlags } from '../map/flag-decode'
-import { getPref, setPref } from '../../prefs'
+import { getPref, setPref, type MonsterListMode } from '../../prefs'
 
 // Up to MAX_ROWS top-sorted groups are listed. When more groups exist, the
 // last visible row carries an inline right-aligned "+N" suffix (same
@@ -31,6 +31,9 @@ const MAX_GLYPHS = 6  // matches reference monster_list.js displayed_monsters
 // space on a phone. Six slots wide = 120px, comfortably inside the panel's
 // max-width on a 360px screen.
 const TILE_SCALE = 0.625
+// Sensed-but-unlocated invisible monsters row (store.invisMonDesc): magenta,
+// like the reference's <magenta>-wrapped desc and #monster_list .invisible.
+const INVIS_COLOR = DCSS_COLOR_MAP.magenta
 
 function groupMonsters(sorted: MonsterCell[]): MonsterCell[][] {
   const groups: MonsterCell[][] = []
@@ -79,14 +82,15 @@ export class MonsterListView {
   private lastHtml: string | null = null
   private lastMonsters: ReadonlyMap<string, MonsterCell> | null = null
   // Sticky across map updates, encounter cycles, empty-view intervals,
-  // and page reloads (persisted via prefs.ts → localStorage). Only the
-  // user's toggle tap flips it. Chevron follows spatial-motion
-  // convention to match the virtual-keyboard button: ▴ when expanded
-  // (tap collapses upward), ▾ when collapsed (tap expands downward).
-  private collapsed = getPref('monsterListCollapsed')
+  // and page reloads (persisted via prefs.ts → localStorage). The in-game
+  // chevron only walks collapsed⇄full; 'hidden' comes from the settings
+  // page (setListMode). Chevron follows spatial-motion convention to match
+  // the virtual-keyboard button: ▴ when expanded (tap collapses upward),
+  // ▾ when collapsed (tap expands downward).
+  private listMode: MonsterListMode = getPref('monsterListMode')
   // Short landscape (phone) forces the single-line collapsed rendition (see
   // setCompact): there the sidebar has no vertical room for the multi-row
-  // expanded list. Independent of `collapsed` so flipping orientation
+  // expanded list. Independent of `listMode` so flipping orientation
   // doesn't disturb the user's expand/collapse pref.
   private compact = false
   private readonly toggleEl: HTMLElement
@@ -106,10 +110,25 @@ export class MonsterListView {
       // Panel-level click (game-view.ts) opens the full monster panel on
       // tap-anywhere; stop here so the chevron only toggles.
       e.stopPropagation()
-      this.collapsed = !this.collapsed
-      setPref('monsterListCollapsed', this.collapsed)
+      this.listMode = this.listMode === 'collapsed' ? 'full' : 'collapsed'
+      // Fires MONSTER_LIST_MODE_CHANGED_EVENT; game-view's listener calls
+      // setListMode back with the value just set, which no-ops.
+      setPref('monsterListMode', this.listMode)
       if (this.lastMonsters) this.update(this.lastMonsters)
     })
+  }
+
+  // Called by game-view when the settings page changes the monsterListMode
+  // pref while a game is up. Same wipe-and-replay as setCompact: the cached
+  // rows/HTML describe the previous mode's DOM.
+  setListMode(mode: MonsterListMode): void {
+    if (this.listMode === mode) return
+    this.listMode = mode
+    this.rows.length = 0
+    this.lastHtml = null
+    this.element.innerHTML = ''
+    this.element.classList.remove('has-hostile')
+    if (this.lastMonsters) this.update(this.lastMonsters)
   }
 
   // Called by game-view when the map render mode flips. Resets the DOM and
@@ -159,13 +178,31 @@ export class MonsterListView {
 
   update(monsterCells: ReadonlyMap<string, MonsterCell>): void {
     this.lastMonsters = monsterCells
+
+    // Hidden: no list, no chevron, no has-hostile outline — and with the
+    // element :empty, game-view's tap-through to the monster panel is dead
+    // too (accepted; re-enable lives on the settings page). Wins over the
+    // landscape compact force-collapse. lastMonsters keeps tracking above
+    // so flipping back mid-encounter replays the current state.
+    if (this.listMode === 'hidden') {
+      this.rows.length = 0
+      this.lastHtml = null
+      this.element.innerHTML = ''
+      this.element.classList.remove('has-hostile')
+      return
+    }
+
     const groups = groupMonsters(filterAndSortMonsters(monsterCells))
+    // Sensed invisible monsters with unknown position render as a synthetic
+    // first row (reference monster_list.js `update(show_inv)`), so the view
+    // isn't empty just because nothing is visible.
+    const invisDesc = this.store.invisMonDesc
 
     // Empty view: tear down DOM so #monster-list:empty hides the panel.
     // The collapsed flag is NOT reset here — the user's chosen mode
     // persists across encounter cycles, so re-encountering monsters
     // returns to whichever mode the user last selected.
-    if (groups.length === 0) {
+    if (groups.length === 0 && !invisDesc) {
       this.rows.length = 0
       this.lastHtml = null
       this.element.innerHTML = ''
@@ -175,18 +212,19 @@ export class MonsterListView {
 
     // Scan all groups, not just the visible ones — a hostile pushed off the
     // bottom of the panel by truncation still constitutes ambient danger
-    // and should trigger the red outline.
-    let hasHostile = false
+    // and should trigger the red outline. Unlocated invisible monsters are
+    // ambient danger by definition.
+    let hasHostile = !!invisDesc
     for (const g of groups) {
       if (ATTITUDE_CLASSES[g[0].mon.att ?? 0] === 'hostile') { hasHostile = true; break }
     }
     this.element.classList.toggle('has-hostile', hasHostile)
 
-    if (this.collapsed || this.compact) {
+    if (this.listMode === 'collapsed' || this.compact) {
       // Wipe the expanded-mode caches: a re-expand needs to rebuild from
       // scratch since the DOM no longer holds the cached tile rows.
       this.rows.length = 0
-      this.renderCollapsed(groups)
+      this.renderCollapsed(groups, invisDesc)
     } else {
       const rowCount = Math.min(groups.length, MAX_ROWS)
       // Count hidden *monsters*, not hidden groups, so the suffix is a
@@ -202,22 +240,22 @@ export class MonsterListView {
       // loader is ready, swapping the rows to sprites.
       const useTiles = this.mode === 'tiles' && !!this.loader
       if (useTiles) {
-        this.renderTiles(groups, rowCount, suffix)
+        this.renderTiles(groups, rowCount, suffix, invisDesc)
       } else {
         this.rows.length = 0
-        this.renderAscii(groups, rowCount, suffix)
+        this.renderAscii(groups, rowCount, suffix, invisDesc)
       }
     }
 
     // The chevron floats right inside the FIRST row, so re-insert it every
     // render — innerHTML rebuilds (ASCII/collapsed paths) and cached-row
     // replaceWith (tile path) both discard the previous parent. Skip the
-    // toggle when there's only one group: collapsed and expanded would
+    // toggle when there's only one row: collapsed and expanded would
     // render the same single row (extras=0 suppresses the "+N" suffix),
     // so the chevron would be a no-op tap target.
     const firstRow = this.element.firstElementChild
-    if (groups.length > 1 && !this.compact && firstRow) {
-      this.toggleEl.textContent = this.collapsed ? '▾' : '▴'
+    if (groups.length + (invisDesc ? 1 : 0) > 1 && !this.compact && firstRow) {
+      this.toggleEl.textContent = this.listMode === 'collapsed' ? '▾' : '▴'
       // First-in-source right floats sit rightmost, so on the collapsed
       // single line the chevron lands at the far right edge, with the
       // "+N" suffix to its left.
@@ -311,8 +349,56 @@ export class MonsterListView {
       + `</div>`
   }
 
-  private renderAscii(groups: MonsterCell[][], rows: number, suffix?: string): void {
-    let html = ''
+  // Synthetic row for sensed-but-unlocated invisible monsters. ASCII form:
+  // magenta '{' (the classic console sensed-invis glyph) + magenta desc; no
+  // HP bar or threat gutter — nothing is known beyond the names.
+  private buildInvisAsciiRow(desc: string, extraClass?: string, suffix?: string): string {
+    const cls = extraClass ? `ml-row ml-invis ${extraClass}` : 'ml-row ml-invis'
+    const suffixHtml = suffix ? `<span class="ml-collapsed-more">${suffix}</span>` : ''
+    return `<div class="${cls}">`
+      + `<span class="ml-glyphs"><span class="ml-glyph" style="color:${INVIS_COLOR}">{</span></span>`
+      + `<span class="ml-name" style="color:${INVIS_COLOR}">${escHtml(desc)}</span>`
+      + suffixHtml
+      + `</div>`
+  }
+
+  // Tile form of the invis row: the main-atlas UNSEEN_INVISIBLE sprite in the
+  // glyph slot (reference draws exactly this via renderer.draw_main), magenta
+  // desc text. The main tileinfo module resolves async like every sprite
+  // paint; the row mounts immediately and the sprite fills in.
+  private buildInvisTileRow(desc: string, extraClass?: string, suffix?: string): HTMLElement {
+    const row = document.createElement('div')
+    row.className = extraClass ? `ml-row ml-tile-row ml-invis ${extraClass}` : 'ml-row ml-tile-row ml-invis'
+
+    const glyphs = document.createElement('span')
+    glyphs.className = 'ml-glyphs ml-glyphs-tiles'
+    const stack = document.createElement('span')
+    stack.className = 'ml-tile tile-stack'
+    this.loader?.getModule('main').then((mod) => {
+      const id = (mod as Record<string, unknown>).UNSEEN_INVISIBLE
+      if (typeof id === 'number') appendTiles(this.loader, stack, [{ t: id, tex: TEX.MAIN }], TILE_SCALE)
+    }).catch((err) => console.warn('main module load failed:', err))
+    glyphs.appendChild(stack)
+    row.appendChild(glyphs)
+
+    const name = document.createElement('span')
+    name.className = 'ml-name'
+    name.style.color = INVIS_COLOR
+    name.textContent = desc
+    row.appendChild(name)
+
+    if (suffix) {
+      const more = document.createElement('span')
+      more.className = 'ml-collapsed-more'
+      more.textContent = suffix
+      row.appendChild(more)
+    }
+
+    return row
+  }
+
+  private renderAscii(groups: MonsterCell[][], rows: number, suffix?: string, invisDesc?: string): void {
+    let html = invisDesc ? this.buildInvisAsciiRow(invisDesc, undefined, rows === 0 ? suffix : undefined) : ''
     for (let i = 0; i < rows; i++) {
       html += this.buildAsciiRow(groups[i], undefined, i === rows - 1 ? suffix : undefined)
     }
@@ -335,24 +421,43 @@ export class MonsterListView {
   // is omitted. Both modes share rowData with the expanded renderers,
   // so visual presentation stays identical between collapsed and
   // expanded first rows.
-  private renderCollapsed(groups: MonsterCell[][]): void {
+  private renderCollapsed(groups: MonsterCell[][], invisDesc?: string): void {
+    const useTiles = this.mode === 'tiles' && !!this.loader
+
+    // The invis row is the list's top entry (reference priority), so the
+    // collapsed single line shows it, with "+N" counting every visible
+    // monster it displaced.
+    if (invisDesc) {
+      let visTotal = 0
+      for (const g of groups) visTotal += g.length
+      const invisSuffix = visTotal > 0 ? `+${visTotal}` : undefined
+      if (useTiles) this.mountTile(this.buildInvisTileRow(invisDesc, 'ml-collapsed', invisSuffix))
+      else this.setHtml(this.buildInvisAsciiRow(invisDesc, 'ml-collapsed', invisSuffix))
+      return
+    }
+
     const top = groups[0]
     let total = 0
     for (const g of groups) total += g.length
     const suffix = total > top.length ? `+${total - top.length}` : undefined
-    const useTiles = this.mode === 'tiles' && !!this.loader
 
     if (useTiles) {
-      const row = this.buildTileRow({ ...this.rowData(top), extraClass: 'ml-collapsed', suffix })
-      this.lastHtml = null
-      this.element.innerHTML = ''
-      this.element.appendChild(row)
+      this.mountTile(this.buildTileRow({ ...this.rowData(top), extraClass: 'ml-collapsed', suffix }))
     } else {
       this.setHtml(this.buildAsciiRow(top, 'ml-collapsed', suffix))
     }
   }
 
-  private renderTiles(groups: MonsterCell[][], rows: number, suffix?: string): void {
+  // Replace the panel with a single freshly-built tile row: null the ASCII
+  // memo (the incremental this.rows path no longer describes the DOM), wipe,
+  // and mount. Shared by the collapsed group and invis single-row renders.
+  private mountTile(row: HTMLElement): void {
+    this.lastHtml = null
+    this.element.innerHTML = ''
+    this.element.appendChild(row)
+  }
+
+  private renderTiles(groups: MonsterCell[][], rows: number, suffix?: string, invisDesc?: string): void {
     // The tile path manages children incrementally via this.rows, so the
     // ASCII HTML memo no longer describes the DOM.
     this.lastHtml = null
@@ -363,20 +468,40 @@ export class MonsterListView {
     if (this.rows.length === 0) {
       this.element.innerHTML = ''
     }
-    for (let i = 0; i < rows; i++) {
-      const d = this.rowData(groups[i])
-      const rowSuffix = i === rows - 1 ? suffix : undefined
-      // Signature covers every visual input. JSON.stringify is overkill
-      // for small numeric tuples but trivially cheap for ~6 entries × 8
-      // fields, and avoids hand-rolled hashing bugs. The suffix is a
-      // visual input too: the last row carries the "+N" overflow, so a
-      // changed hidden-monster count must rebuild that row.
-      const memberSig = d.memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null, c?.highlighted_summoner ?? false])
-      const sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, rowSuffix ?? null, memberSig])
+    // Flat display order: the sensed-invis row (when present) first, then the
+    // visible groups. Building the list here keeps the "invis sorts first"
+    // fact in one place, so the diff loop below indexes uniformly — no i-1
+    // shifting or i===0 special case. Its appearance/disappearance shifts
+    // every sig, so the whole cache rebuilds — correct, and rare enough not
+    // to matter.
+    const items: Array<'invis' | MonsterCell[]> = []
+    if (invisDesc) items.push('invis')
+    for (let i = 0; i < rows; i++) items.push(groups[i])
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const rowSuffix = i === items.length - 1 ? suffix : undefined
+      let sig: string
+      let build: () => HTMLElement
+      if (item === 'invis') {
+        const desc = invisDesc as string
+        sig = JSON.stringify(['invis', desc, rowSuffix ?? null])
+        build = () => this.buildInvisTileRow(desc, undefined, rowSuffix)
+      } else {
+        const d = this.rowData(item)
+        // Signature covers every visual input. JSON.stringify is overkill
+        // for small numeric tuples but trivially cheap for ~6 entries × 8
+        // fields, and avoids hand-rolled hashing bugs. The suffix is a
+        // visual input too: the last row carries the "+N" overflow, so a
+        // changed hidden-monster count must rebuild that row.
+        const memberSig = d.memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null, c?.highlighted_summoner ?? false])
+        sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, rowSuffix ?? null, memberSig])
+        build = () => this.buildTileRow({ ...d, suffix: rowSuffix })
+      }
 
       const cached = this.rows[i]
       if (cached && cached.sig === sig) continue
-      const el = this.buildTileRow({ ...d, suffix: rowSuffix })
+      const el = build()
       if (cached) {
         cached.el.replaceWith(el)
       } else {
@@ -386,7 +511,7 @@ export class MonsterListView {
     }
 
     // Trim rows past the new count — the visible group list shrank.
-    while (this.rows.length > rows) {
+    while (this.rows.length > items.length) {
       const dropped = this.rows.pop()
       dropped?.el.remove()
     }
@@ -413,7 +538,10 @@ export class MonsterListView {
         doll: cell?.doll,
         mcache: cell?.mcache,
       })
-      if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE)
+      // centre + fit: reference-map placement, with oversized 32×48 sprites
+      // (pan lords, bosses) shrunk to the cell instead of the reference
+      // monster list's head-clipping canvas (see monster-panel.ts).
+      if (baseSpec.length > 0) appendTiles(this.loader, stack, baseSpec, TILE_SCALE, { centre: true, fit: true })
       if (cell?.highlighted_summoner) prependDngnLayer(this.loader, stack, 'HALO_SUMMONER', TILE_SCALE)
       const threat = fgThreatDngnName(cell?.fg)
       if (threat) prependDngnLayer(this.loader, stack, threat, TILE_SCALE)
@@ -422,7 +550,7 @@ export class MonsterListView {
       if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgFlags(cell.t_bg).value, TILE_SCALE)
 
       // Damage shows as the ml-hp bar (rowData), so no MDAM overlay here.
-      appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE)
+      appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE, { bg: cell?.t_bg })
 
       glyphs.appendChild(stack)
     }

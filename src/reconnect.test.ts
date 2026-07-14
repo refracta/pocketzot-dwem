@@ -161,6 +161,28 @@ describe('resumeOnConn — played game', () => {
     expect(seen.map(m => m.msg)).toEqual(['lobby_complete', 'map', 'input_mode'])
   })
 
+  it('holds pre-transition chat/spectator state for the destination view', async () => {
+    // A spectate rejoin delivers update_spectators (and often chat notices)
+    // BEFORE watching_started — CDI ordering, captured live. mainHandler's
+    // default case must hold them so flush() hands the game view its
+    // initial spectator count; losing them blanks the chat chip until the
+    // next spectator change.
+    withSession()
+    const { conn, feed } = fakeConn()
+    const p = resumeOnConn(conn, { kind: 'watch', username: 'bob' }, { username: USER, guest: false }, fakeUi())
+    feed({ msg: 'login_success', username: USER })
+    feed({ msg: 'game_client', version: 'v', content: '' })
+    feed({ msg: 'update_spectators', count: 1, names: 'RoinerR' })
+    feed({ msg: 'chat', content: 'hi' })
+    feed({ msg: 'watching_started', username: 'bob' })
+
+    const r = await p
+    const seen: ServerMsg[] = []
+    conn.onMessage = (m) => seen.push(m)
+    r.flush()
+    expect(seen.map(m => m.msg)).toEqual(['update_spectators', 'chat'])
+  })
+
   it('flush is a no-op while the buffering handler still owns onMessage', async () => {
     withSession()
     const { conn, feed } = fakeConn()

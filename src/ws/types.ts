@@ -144,14 +144,26 @@ export type ServerMsg =
   | { msg: 'lobby_remove'; id: string; reason?: string }
   | { msg: 'lobby_complete' }
   | { msg: 'lobby_clear' }
-  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number } }
+  // invis_mon_desc: names of sensed invisible monsters whose position is
+  // unknown (trunk invisibility rework) — sticky until the next value arrives;
+  // '' clears. Shown as the monster list's first row.
+  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string }
   | { msg: 'player' } & PlayerMsg
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }
   | { msg: 'game_client'; version: string; content: string }
   | { msg: 'rcfile_contents'; contents: string }
   | { msg: 'version'; text: string }
-  | { msg: 'chat'; content: string }
+  // content is pre-formatted HTML: <span class='chat_sender'>name</span>:
+  // <span class='chat_msg'>text</span>. meta=true marks server notices
+  // (join/leave lines, /help output) with no sender span.
+  | { msg: 'chat'; content: string; meta?: boolean }
+  // Sent to everyone (player included) on spectator join/leave. count excludes
+  // the player and chat-hidden spectators; names is a pre-joined display string
+  // ("gammafunk, Sequell and 2 Anon") with the player's name first.
+  | { msg: 'update_spectators'; count: number; names: string }
+  // Server-initiated removal of the chat UI (restricted accounts).
+  | { msg: 'super_hide_chat' }
   | { msg: 'spectators'; count: number; names: string }
   | { msg: 'txt'; lines: number; text: string }
   | { msg: 'menu'; id?: string; tag?: string; flags?: number; items?: MenuItem[] }
@@ -223,8 +235,12 @@ export interface PlayerMsg {
   contam?: number
   unarmed_attack?: string
   unarmed_attack_colour?: number
-  weapon_index?: number
-  offhand_index?: number
+  weapon_index?: number   // 0.33+
+  offhand_index?: number  // 0.33+
+  // Pre-0.33: equipment as a slot→inventory-index map (keys are
+  // equipment_type enum values as strings; "0" = weapon, "5" =
+  // shield/offhand). -1 = empty or melded. Deltas carry only changed slots.
+  equip?: Record<string, number>
   offhand_weapon?: number
   quiver_desc?: string
   inv?: Record<string, { name?: string; col?: number }>

@@ -47,7 +47,8 @@ const GLYPHS: Record<string, Glyph> = {
               { ch: 'φ', colors: [14, 10, 11, 13, 12, 15] },          // rune (bright)
               { ch: '¤', colors: [13, 9, 5, 1] },                     // trunk battlesphere (etc_magic)
               { ch: 'ö', colors: PALETTE },                           // trunk orc-apostle (colour_undef → any)
-              { ch: '●', colors: [6, 4, 12, 15, 13] },                // trunk orb/boulder (filled circle)
+              { ch: '●', colors: [6, 4, 12, 15, 13] },                // trunk orb/boulder
+              { ch: 'Θ', colors: [4, 9, 14, 5] },                     // trunk orbs (fire red / winter lightblue / entropy yellow / wretched-star magenta)
               { ch: '◊', colors: PALETTE }] },                        // trunk plant glyph (plants migrated P→◊) — round, so it reads as o; colour follows the glyph (plant palette: demonic-plant etc_random / toadstool colour_undef → any)
   c: { colors: [2, 4, 5, 6, 10, 12, 14],
        subs: [{ ch: '©', colors: [5, 9] },                            // teleporter — contains a 'c'
@@ -55,10 +56,11 @@ const GLYPHS: Record<string, Glyph> = {
   k: { colors: [1, 6, 7, 10, 12, 13, 15], subs: [] },
   e: { colors: [1, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15],
        subs: [{ ch: 'Σ', colors: [11, 6, 9, 7, 4, 5, 1] },            // trunk elemental (angular E)
-              { ch: 'ξ', cloud: true }] },                            // trunk weak-cloud glyph — Greek squiggle rhyming with Σ (curvier, has a descender)
+              { ch: 'ξ', cloud: true }] },                            // trunk weak-cloud glyph — Greek, rhyming with Σ (curvier, has a descender)
   t: { colors: [2, 7, 10, 12, 14, 15],
        subs: [{ ch: '†', colors: [6, 4] },                            // corpse
-              { ch: '‡', colors: [15, 12, 9, 5, 11] }] },             // trunk turret/cannon (double dagger)
+              { ch: '‡', colors: [15, 12, 9, 5, 11] },                // trunk turret/cannon (double dagger)
+              { ch: '╬', colors: [5, 13] }] },                        // trunk boundless-tesseract (etc_orb_glow → magenta/lightmagenta)
   Z: { colors: [2, 6, 7, 9, 10, 11, 12, 14, 15],
        subs: [{ ch: 'ζ', cloud: true },                              // trunk fading-cloud glyph (zeta ↔ Z); § dropped — ζ reads as Z far better
               { ch: 'ž', colors: [13, 12, 5, 9] }] },                // trunk floating skulls (curse/laughing/weeping, murray) — undead, like Z's derived undead

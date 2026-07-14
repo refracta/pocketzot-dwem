@@ -9,6 +9,42 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-11
+
+- Chat added: tap the ⊙ spectator count to read and send messages
+  while playing or spectating. When playing, the count appears once a
+  spectator is present. New messages show a brief preview. Tap the message
+  preview or the unread count to view.
+- Customizable control sets added: edit the control tabs' button grids,
+  including keys, short macros, Ctrl- and F-keys, tab names, and grid size.
+- Added support for exporting/importing control-set strings, to back up or
+  share.
+- The level map (X) supports trunk's new X-mode descriptions, showing
+  what's under the cursor as you move it, with tappable describe / travel /
+  help buttons.
+- While spectating, the minimap now remembers its open state, instead of
+  switching closed after the watched player views certain menus.
+- The map now extends up to the top edge of the screen, under camera
+  cutouts. Player centering is still based on the map clear area.
+- Tiles mode supports trunk's reworked monster invisibility.
+- The monster list warns about invisible monsters sensed nearby but not yet
+  located.
+- Improved tiles mode support for oversized monster sprites.
+- The on-screen keyboard buttons now claim the small gaps and edge margins
+  between them, so a tap that lands just off a button still registers.
+- Various other improvements.
+
+## 2026-07-06
+
+- Long menus now keep scroll position after opening and closing an entry's
+  description.
+- Added orbs and tesseracts to the procedural PocketZot logo. Now over 2.8
+  trillion unique rolls. See them all!
+
+## 2026-07-04
+
+- The HUD now shows the wielded weapon in pre-0.33 versions.
+
 ## 2026-07-03
 
 - Minimap added: toggle by tapping the place name in the HUD (e.g. "@D:1").
@@ -16,7 +52,7 @@ Notable changes to PocketZot, newest first.
   while it's up. Tap the map, or the place name again, to dismiss.
 - The HUD now uses the standard short branch names (D:5, Elf:3, Zot:5) in
   portrait.
-- Draconians now show their colour in the HUD, and the piety row now shows
+- Draconians now show their color in the HUD, and the piety row now shows
   penance (in red) and Xom's mood.
 - Fixed the skill menu sometimes showing a mastered skill's line twice.
 

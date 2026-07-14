@@ -119,8 +119,13 @@ export class MapView {
     const padTop = parseFloat(cs.paddingTop)
     const padBottom = parseFloat(cs.paddingBottom)
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+    // Occluded top band (Dynamic Island / notch pill, portrait only — see the
+    // --map-top-occlusion rules in style.css). Rows still render under it
+    // (ambience), but it's excluded from the clear area we center the player
+    // in and size the font to, symmetric with the log reserve below.
+    const occl = parseFloat(cs.getPropertyValue('--map-top-occlusion')) || 0
     const availW = rect.width - padX
-    const availH = rect.height - padTop - padBottom
+    const availH = rect.height - padTop - padBottom - occl
     if (availW <= 0 || availH <= 0) return
 
     // Asymmetric vertical padding reserves the strip the floating message log
@@ -167,19 +172,23 @@ export class MapView {
     // rendering bug in ASCII. (The tile view full-bleeds with partial cells
     // instead; sprites cut by the viewport edge look natural there. See
     // TileMapView.fitToContainer.) With a reserve, availHFit lets whole rows
-    // fill on down behind the translucent log, top-anchored by the CSS.
-    const availHFit = availH + reserve
+    // fill on down behind the translucent log, top-anchored by the CSS; the
+    // occluded top band is filled the same way (rows under the pill).
+    const availHFit = availH + reserve + occl
     const fitH = Math.floor(availHFit / lineH)
     const keepH = this.viewportH > fitH && this.viewportH * lineH - availHFit < lineH / 2
     const h = Math.max(minH, keepH ? this.viewportH : fitH)
 
-    // With a reserve the grid is top-anchored and overruns the content box
-    // downward, so "visually centered in the clear area" is the row whose
-    // middle lands nearest availH/2 from the grid top — NOT the grid's middle
-    // row. Without one the grid is flex-centered and the middle-row rule holds.
+    // With a reserve (or top occlusion) the grid is top-anchored and overruns
+    // the content box downward, so "visually centered in the clear area" is
+    // the row whose middle lands nearest occl + availH/2 from the grid top —
+    // NOT the grid's middle row. (Occlusion only ever coexists with the
+    // reserve/flex-start CSS — the token is scoped to portrait play mode —
+    // but it's in the branch condition so the pairing isn't load-bearing.)
+    // Without either, the grid is flex-centered and the middle-row rule holds.
     const prevCenterRow = this.centerRow
-    this.centerRow = reserve > 0
-      ? Math.min(Math.floor(availH / (2 * lineH)), h - 1)
+    this.centerRow = reserve > 0 || occl > 0
+      ? Math.min(Math.floor((occl + availH / 2) / lineH), h - 1)
       : Math.floor(h / 2)
 
     // A centerRow shift remaps every cell (offY changes); if setViewportSize

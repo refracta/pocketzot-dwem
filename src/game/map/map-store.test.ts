@@ -148,6 +148,16 @@ describe('MapStore.clear', () => {
     expect(store.size).toBe(0)
     expect(store.getMonsters().size).toBe(0)
   })
+
+  it('resets the sticky invisMonDesc', () => {
+    // invis_mon_desc is sticky across map messages (only a present key
+    // updates it), so a level change's clear must not leak the old level's
+    // "unseen invisible monster" row into the new one.
+    const store = new MapStore()
+    store.invisMonDesc = 'an unseen horror'
+    store.clear()
+    expect(store.invisMonDesc).toBe('')
+  })
 })
 
 describe('MapStore.merge — mf (minimap feature)', () => {

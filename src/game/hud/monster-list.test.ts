@@ -1,9 +1,14 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { fakeStorage } from '../../test/fake-storage'
+
+vi.stubGlobal('localStorage', fakeStorage())
+
 import { MonsterListView } from './monster-list'
 import { MapStore } from '../map/map-store'
 import { getTileLoader, type TileLoader } from '../tiles/tile-loader'
+import { getPref } from '../../prefs'
 
 // Regression coverage for the cache-key collision in renderTiles. Setup:
 // MapStore populated with three monsters that monsterSort splits into three
@@ -248,5 +253,146 @@ describe('MonsterListView.renderTiles', () => {
     view.update(store.getMonsters())
     expect(view.element.querySelectorAll('.ml-row').length).toBe(1)
     expect(view.element.querySelector('.ml-name')?.textContent).toBe('Lodul')
+  })
+})
+
+// ─── invis_mon_desc row (trunk invisibility rework) ─────────────────────────
+// store.invisMonDesc renders as a synthetic magenta first row — including
+// when NO monsters are visible (the most important case: something unseen is
+// attacking). Mirrors reference monster_list.js update(show_inv).
+describe('MonsterListView — invis row', () => {
+  it('renders the desc alone when no monsters are visible (ASCII)', () => {
+    const store = new MapStore()
+    store.invisMonDesc = 'an unseen horror'
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const rows = view.element.querySelectorAll('.ml-row')
+    expect(rows.length).toBe(1)
+    expect(rows[0].classList.contains('ml-invis')).toBe(true)
+    expect(rows[0].querySelector('.ml-name')?.textContent).toBe('an unseen horror')
+    // Unlocated invisible monsters are ambient danger — red outline on.
+    expect(view.element.classList.contains('has-hostile')).toBe(true)
+
+    // Cleared desc with still no monsters → empty view teardown.
+    store.invisMonDesc = ''
+    view.update(store.getMonsters())
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(0)
+    expect(view.element.classList.contains('has-hostile')).toBe(false)
+  })
+
+  it('prepends the desc above visible monster groups (ASCII)', () => {
+    const store = new MapStore()
+    store.merge([
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+    ])
+    store.invisMonDesc = 'a ghost moth'
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const labels = Array.from(view.element.querySelectorAll('.ml-name'))
+      .map((el) => el.textContent)
+    expect(labels).toEqual(['a ghost moth', 'ogre'])
+    expect(view.element.querySelectorAll('.ml-row')[0].classList.contains('ml-invis')).toBe(true)
+  })
+
+  it('prepends the desc as a tile row and drops it when cleared (tiles)', () => {
+    const store = new MapStore()
+    store.merge([
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+    ])
+    store.invisMonDesc = 'an unseen horror'
+    const view = new MonsterListView(store)
+    view.setLoader(getTileLoader('http://test', '0.35.0'))
+    view.setRenderMode('tiles')
+    view.update(store.getMonsters())
+
+    let rows = view.element.querySelectorAll('.ml-row')
+    expect(rows.length).toBe(2)
+    expect(rows[0].classList.contains('ml-invis')).toBe(true)
+    expect(rows[0].querySelector('.ml-name')?.textContent).toBe('an unseen horror')
+
+    // Desc gone → the positional row cache must shift the group row back up.
+    store.invisMonDesc = ''
+    view.update(store.getMonsters())
+    rows = view.element.querySelectorAll('.ml-row')
+    expect(rows.length).toBe(1)
+    expect(rows[0].classList.contains('ml-invis')).toBe(false)
+    expect(rows[0].querySelector('.ml-name')?.textContent).toBe('ogre')
+  })
+})
+
+describe('MonsterListView list modes', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  // Two groups incl. a hostile — enough for a chevron and the outline.
+  function seededStore(): MapStore {
+    const store = new MapStore()
+    store.merge([
+      { x: 1, y: 1, g: 'C', mon: {
+        id: 1, name: 'Lodul', att: 0, type: 5,
+        typedata: { avghp: 100 }, clientid: 42,
+      } },
+      { x: 2, y: 2, g: 'O', mon: {
+        id: 2, name: 'ogre', att: 0, type: 7,
+        typedata: { avghp: 80 },
+      } },
+    ])
+    return store
+  }
+
+  it('hidden renders nothing — no rows, chevron, or hostile outline', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.setListMode('hidden')
+    view.update(store.getMonsters())
+
+    expect(view.element.childElementCount).toBe(0)
+    expect(view.element.classList.contains('has-hostile')).toBe(false)
+
+    // Flipping back mid-encounter replays the tracked snapshot immediately.
+    view.setListMode('full')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(2)
+    expect(view.element.classList.contains('has-hostile')).toBe(true)
+  })
+
+  it('hidden wins over the landscape compact force-collapse', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.setCompact(true)
+    view.setListMode('hidden')
+    view.update(store.getMonsters())
+    expect(view.element.childElementCount).toBe(0)
+  })
+
+  it('the chevron walks collapsed⇄full and persists, never entering hidden', () => {
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+
+    const toggle = view.element.querySelector<HTMLElement>('.ml-toggle')
+    toggle!.click()
+    expect(getPref('monsterListMode')).toBe('collapsed')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(1)
+
+    view.element.querySelector<HTMLElement>('.ml-toggle')!.click()
+    expect(getPref('monsterListMode')).toBe('full')
+    expect(view.element.querySelectorAll('.ml-row').length).toBe(2)
+  })
+
+  it('a fresh view starts in the persisted mode', () => {
+    localStorage.setItem('pocketzot:prefs', JSON.stringify({ monsterListMode: 'hidden' }))
+    const store = seededStore()
+    const view = new MonsterListView(store)
+    view.update(store.getMonsters())
+    expect(view.element.childElementCount).toBe(0)
   })
 })

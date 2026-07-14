@@ -4,8 +4,9 @@ import { listSessions, saveSession, type StoredSession } from '../auth/session'
 import { cncUserinfo } from '../dwem/cnc-userinfo'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
-import { getLastSpectateServer, setLastSpectateServer } from '../prefs'
+import { getLastSpectateServer, getPref, setLastSpectateServer, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
 import { openAboutDoc, openChangelogDoc } from './docs'
+import { openSettings } from './settings-view'
 import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
@@ -56,6 +57,11 @@ export function buildLoginView(
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
       <a href="#" id="login-changelog">What's new</a>
+      <!-- U+2699 GEAR + U+FE0E (text-presentation selector): without FE0E iOS
+           Safari renders the gear as a colour emoji, ignoring the CSS colour.
+           Same glyph as the in-game HUD chip (stats-view.ts settingsChip). -->
+      <button id="login-settings" class="login-settings-chip" type="button"
+              aria-label="Settings" title="Settings">&#x2699;&#xFE0E;</button>
     </div>
   `
 
@@ -171,6 +177,7 @@ export function buildLoginView(
     e.preventDefault()
     openChangelogDoc()
   })
+  view.querySelector('#login-settings')!.addEventListener('click', () => openSettings())
 
   renderResumeButtons()
   renderAvatars()
@@ -182,10 +189,17 @@ export function buildLoginView(
   // row opens the crypt (the full history). The strip stays collapsed (`:empty`)
   // until at least one doll's atlas resolves, so the tap target only exists when
   // there's something to show.
+  //
+  // The whole shelf is gated on the loginSprites pref: painting is what pulls
+  // the tile atlases, so when disabled we must not call paintAvatars at all —
+  // the login screen then fetches no gamedata. With the strip :empty the crypt
+  // (whose only entry point this is) is unreachable too, by construction.
+  // Recipes keep being captured during play regardless, so re-enabling
+  // restores a fully populated shelf. Live-apply handles the settings page
+  // changing the pref over this still-mounted view.
   function renderAvatars(): void {
     const strip = view.querySelector<HTMLElement>('#login-avatars')
     if (!strip) return
-    void paintAvatars(strip, listAvatars(), 2, 'login-avatar')
     strip.setAttribute('role', 'button')
     strip.setAttribute('tabindex', '0')
     strip.setAttribute('aria-label', 'View all characters')
@@ -194,6 +208,33 @@ export function buildLoginView(
     strip.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() }
     })
+
+    // Abort the previous paint before each repaint: paintAvatars resolves
+    // atlases over several seconds and appends as they land, so a disable (or a
+    // re-enable) mid-load could otherwise drop a superseded call's dolls into
+    // the strip after we've cleared it, or duplicate them.
+    let painting: AbortController | null = null
+    const paint = (): void => {
+      painting?.abort()
+      if (getPref('loginSprites')) {
+        painting = new AbortController()
+        void paintAvatars(strip, listAvatars(), 2, 'login-avatar', painting.signal)
+      } else {
+        painting = null
+        strip.innerHTML = ''
+      }
+    }
+    paint()
+    // Self-unhooks once this view is gone (same pattern as game-view's pref
+    // listeners) — each buildLoginView mounts a fresh view.
+    const onSpritesPref = (): void => {
+      if (!view.isConnected) {
+        window.removeEventListener(LOGIN_SPRITES_CHANGED_EVENT, onSpritesPref)
+        return
+      }
+      paint()
+    }
+    window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, onSpritesPref)
   }
 
   function renderResumeButtons(): void {

@@ -40,3 +40,13 @@ export function openAboutDoc(): void {
 export function openChangelogDoc(): void {
   openDocView("What's new", prep(changelogMd))
 }
+
+// The Gestures section of ABOUT.md, as its own small doc (Settings → Help).
+// Extracted rather than duplicated so the list has one source of truth; if
+// the section heading ever changes, fall back to the full About doc rather
+// than showing nothing.
+export function openGesturesDoc(): void {
+  const section = /\n## Gestures\r?\n([\s\S]*?)(?=\n## |$)/.exec(aboutMd)
+  if (section) openDocView('Gestures', section[1].trim())
+  else openAboutDoc()
+}

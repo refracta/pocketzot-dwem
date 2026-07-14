@@ -13,6 +13,8 @@ import { fgHaloDngnName } from '../game/hud/monster-style'
 import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
+import { openSettings } from './settings-view'
+import { isOverlayOpen } from './overlay'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
@@ -24,12 +26,15 @@ import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
-import { getPref, setPref } from '../prefs'
+import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
+import { loadSession } from '../auth/session'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
   renderSpellbook, stripDcss, formatMore, formatMoreHtml, computeScrollPos,
 } from './overlay-body'
 import { SpellHarvester, type SpellEntry } from '../game/spell-harvest'
+import { ChatView } from './chat-view'
+import { CncPublicChatClient, isCncPublicChatAvailable } from '../dwem/cnc-public-chat'
 import {
   showInputDialog, showNewgameChoice, showRandomCombo, showSeedSelection,
   type OverlayScreenCtx, type UiPushMsg,
@@ -63,6 +68,11 @@ interface MenuMsg {
   // When the server pushes a new menu replacing the topmost (without an
   // intervening close_menu) it sets replace:true.
   replace?: boolean
+  // First-visible item index from the server-side menu (menu.cc
+  // webtiles_write_menu). Restores position when a menu is re-sent whole:
+  // reconnect, spectator join, and pre-popup-stack servers that close and
+  // reopen the inventory around an item describe.
+  jump_to?: number
 }
 
 // Menu flag bits (subset; values from the reference client enums.js).
@@ -92,6 +102,7 @@ export function buildGameView(
   initialLoader?: TileLoader,
   username = '',
   gameId = '',
+  guest = false,
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
@@ -116,6 +127,11 @@ export function buildGameView(
   // black-tile-after-version-switch class is gone by construction. Tile views
   // only paint once they're handed this loader.
   let loader: TileLoader | null = initialLoader ?? null
+  // Dev hook: the live per-version TileLoader, for console tile-id lookups
+  // (e.g. loader.getModule('player') → demon part ids when fabricating pan
+  // lord cells via __dcssSimulateIn). Also re-set on game_client, which is
+  // where the loader lands when it wasn't forwarded from the lobby.
+  if (import.meta.env.DEV && loader) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
   let mapView: MapView | TileMapView = new MapView(store)
   // Coalesced map rendering. A turn's `player` and `map` (plus any animation
   // frames) usually arrive in one WS batch and dispatch within one task;
@@ -181,6 +197,11 @@ export function buildGameView(
   let monsterPanelOpen = false
   const minimap = new MinimapView(store)
   let minimapOpen = false
+  // While spectating, an overlay evicting the lens is the watched player's
+  // doing, not the spectator's — remember the eviction here so hideOverlay
+  // brings the lens back when the screen returns to the map. The spectator's
+  // own closes (lens tap, chip re-tap, Esc) end the session instead.
+  let minimapSuspended = false
   // Tap anywhere on the lens dismisses it (Esc and the place-chip toggle
   // are the other exits — no × needed). A future pan gesture will claim
   // drags on the canvas and leave taps as the dismissal.
@@ -188,6 +209,52 @@ export function buildGameView(
   // The place chip toggles the minimap. StatsView owns the chip's DOM and
   // tap detection (see its constructor); we only supply the behavior.
   statsView.setOnPlaceTap(() => minimapOpen ? closeMinimap() : openMinimap())
+  statsView.setOnSettingsTap(() => openSettings())
+  // WebTiles chat. The view handles history/pill/chip; we supply transport.
+  // Spectators always get the chip — chat is half the point of watching;
+  // players only once someone shows up.
+  const useCncPublicChat = isCncPublicChatAvailable(conn.wsUrl)
+  let publicChatClient: CncPublicChatClient | null = null
+  const chatView = new ChatView({
+    onSend: (text) => {
+      if (useCncPublicChat && publicChatClient && text.startsWith(' ')) {
+        publicChatClient.sendChat(text)
+        return
+      }
+      conn.send({ msg: 'chat_msg', text: text.trim() })
+    },
+    preserveSendWhitespace: useCncPublicChat,
+    alwaysShowChip: !!spectating || useCncPublicChat,
+    // The server refuses guest sends; lock the input honestly up front.
+    readOnly: guest,
+    // No pill over a server prompt/overlay — the unread badge carries the
+    // signal. (serverPromptActive also counts a silent spell harvest;
+    // losing a pill to that sub-second window is fine.)
+    pillAllowed: () => !serverPromptActive(),
+  })
+  if (useCncPublicChat) {
+    publicChatClient = new CncPublicChatClient(
+      conn.wsUrl,
+      () => username ? loadSession(conn.wsUrl, username)?.cookie : undefined,
+      {
+        onChat: (content) => chatView.handleChat(content, false, { public: true, rich: true }),
+        onStatus: (text) => chatView.handleChat(`<span class='chat_msg'>${escHtml(text)}</span>`, true),
+      },
+    )
+    publicChatClient.connect()
+  }
+  // Programmatic focus pulls (hardware keys onto the view, or a server text
+  // prompt) must never fire while the user is typing in chat: when
+  // spectating, the watched player's every menu/overlay transition lands
+  // here, and each stolen focus blurs the chat input and drops the phone
+  // keyboard mid-word. User-initiated focus changes are unaffected.
+  function guardedFocus(el: HTMLElement, opts?: FocusOptions): void {
+    if (chatView.inputFocused) return
+    el.focus(opts)
+  }
+  function focusView(): void {
+    guardedFocus(view, { preventScroll: true })
+  }
   // Fetch this version's enums.js flag tables and install them as the flag-
   // decode backend (see flag-decode.ts). Unconditional — not tiles-only —
   // because the monster list/panel style attitude+threat from fg flags in
@@ -268,9 +335,12 @@ export function buildGameView(
   // Spell rail: a persistent row of quick-cast buttons floated over the map's
   // bottom edge in portrait (landscape slots it into the sidebar `spells`
   // row). The message log floats over the map too — always, casters or not —
-  // so the rail is out of flow and its appearance never resizes the map; the
-  // `spell-row` class on #game-view only lifts the log (and --more--) by the
-  // rail's height. Always visible during play once spells are harvested.
+  // so the rail is out of flow; the `spell-row` class on #game-view lifts the
+  // log (and --more--) by the rail's height AND grows the map's bottom
+  // centering reserve to match (see the #map-grid padding rules), so the @
+  // re-centers ~1 row upward when the rail fades in — a deliberate trade,
+  // accepted on-device over the @ sitting persistently low for casters.
+  // Always visible during play once spells are harvested.
   const spellRail = document.createElement('div')
   spellRail.id = 'spell-rail'
   spellRail.style.display = 'none'
@@ -365,7 +435,7 @@ export function buildGameView(
           btn.textContent = 'Back to lobby'
           btn.addEventListener('click', () => {
             conn.send({ msg: 'go_lobby' })
-            onLobby()
+            exitToLobby()
           })
           btnRow.appendChild(btn)
           body.append(p, btnRow)
@@ -398,9 +468,82 @@ export function buildGameView(
     if (isHarvesting()) return
     if (uiOverlay.style.display === 'none' && !(e.target as HTMLElement).closest('button, input, .game-text-input-row')) {
       conn.send({ msg: 'key', keycode: 16 })
-      view.focus({ preventScroll: true })
+      focusView()
     }
   })
+
+  // X-mode describe strip. Trunk (post-0.34) describes the cell under the
+  // level-map cursor via temporary messages (viewmap.cc _describe_cell):
+  // each cursor move sends one msgs batch — rollback of the previous cell's
+  // lines, a channel-2 keyboard prompt ("Press: ? - help, v - describe,
+  // . - travel"), then the Here:/items/feature/cloud lines on the examine
+  // channels. enterXMode hides the real log (the map goes full-bleed), so
+  // this strip mirrors each batch in the log's usual floating position,
+  // swapping the keyboard prompt for tappable buttons. Populated purely from
+  // wire traffic — servers that don't describe (≤0.34) never show it.
+  const xdescStrip = document.createElement('div')
+  xdescStrip.id = 'xdesc-strip'
+  xdescStrip.style.display = 'none'
+  const xdescLines = document.createElement('div')
+  const xdescActions = document.createElement('div')
+  xdescActions.className = 'xdesc-actions'
+  xdescActions.style.display = 'none'
+  xdescStrip.append(xdescLines, xdescActions)
+
+  function xdescReset(): void {
+    xdescLines.textContent = ''
+    xdescActions.style.display = 'none'
+    xdescStrip.style.display = 'none'
+  }
+
+  // Rebuild the actions row from the wire prompt ("Press: ? - help,
+  // v - describe, . - travel"): the intro stays plain text and each
+  // "key - label" token becomes a button whose face IS that token, so the
+  // row reads like the reference line. Parsing the text (instead of a
+  // hardcoded row) keeps it honest against trunk rewording — an unparsable
+  // token stays text, and no buttons at all → false, so the caller renders
+  // the whole line as a plain one.
+  function xdescPromptRow(text: string): boolean {
+    const parsed = parsePromptText(text)
+    const intro = /^[^,<]*?:\s*/.exec(parsed.body)?.[0] ?? ''
+    const tokens = parsed.body.slice(intro.length).split(/,\s*/).map((tok) => {
+      const plain = stripDcss(tok).trim()
+      return { tok: tok.trim(), key: /^(\S)\s*-\s+\S/.exec(plain)?.[1] }
+    })
+    if (!tokens.some((t) => t.key)) return false
+    xdescActions.textContent = ''
+    xdescActions.style.color = parsed.color ?? ''
+    if (intro) {
+      const span = document.createElement('span')
+      span.textContent = intro
+      xdescActions.appendChild(span)
+    }
+    for (const t of tokens) {
+      if (t.key) appendActionBtn(xdescActions, t.tok, t.key)
+      else {
+        const span = document.createElement('span')
+        span.innerHTML = dcssToHtml(t.tok)
+        xdescActions.appendChild(span)
+      }
+    }
+    xdescActions.style.display = ''
+    return true
+  }
+
+  function xdescAdd(text: string, channel?: number): void {
+    // The keyboard-hint prompt becomes the tappable row; match a substring
+    // of the wire text (same-turn messages can arrive glued onto one line),
+    // with markup stripped in case a future trunk decorates the hotkeys.
+    const isPrompt = channel === 2
+      && stripDcss(text).includes('v - describe')
+    if (!isPrompt || !xdescPromptRow(text)) {
+      const line = document.createElement('div')
+      line.className = 'xdesc-line'
+      line.innerHTML = dcssToHtml(text)
+      xdescLines.appendChild(line)
+    }
+    xdescStrip.style.display = ''
+  }
 
   const mapWrap = document.createElement('div')
   mapWrap.id = 'map-wrap'
@@ -511,7 +654,7 @@ export function buildGameView(
   moreBtn.addEventListener('click', () => {
     if (isHarvesting()) return
     conn.send({ msg: 'key', keycode: 32 })
-    view.focus({ preventScroll: true })
+    focusView()
   })
 
   // The d-pad calls this send directly (it doesn't dispatch a keydown), so
@@ -567,7 +710,9 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  }, spectating ? {} : { spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 } })
+  }, spectating ? {} : {
+    spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
+  })
 
   const menuControls = document.createElement('div')
   menuControls.id = 'menu-controls'
@@ -585,10 +730,13 @@ export function buildGameView(
   // sidebar between HUD and spell rail.
   view.appendChild(monsterListView.element)
   view.appendChild(msgLog)
+  view.appendChild(xdescStrip)
   view.appendChild(spellRail)
   view.appendChild(moreBtn)
   view.appendChild(hud)
   view.appendChild(numpadInput)
+  view.appendChild(chatView.sheet)
+  view.appendChild(chatView.pill)
   if (spectating) {
     const bar = document.createElement('div')
     bar.id = 'spectator-bar'
@@ -598,7 +746,7 @@ export function buildGameView(
     exitBtn.textContent = '← Lobby'
     exitBtn.addEventListener('click', () => {
       conn.send({ msg: 'go_lobby' })
-      onLobby()
+      exitToLobby()
     })
     const chip = document.createElement('div')
     chip.className = 'lobby-account-chip is-guest'
@@ -608,15 +756,21 @@ export function buildGameView(
       <span class="lobby-chip-tag">${escHtml(spectating.username)}</span>
     `
     bar.appendChild(exitBtn)
+    bar.appendChild(chatView.chip)
     bar.appendChild(chip)
     view.appendChild(bar)
   } else {
+    // Playing: the chip floats over the map's top-right corner and only
+    // exists while someone is actually watching (see ChatView.syncChip) —
+    // the zero-spectators common case spends no pixels.
+    chatView.chip.classList.add('chat-chip-float')
+    view.appendChild(chatView.chip)
     view.appendChild(touchControls.element)
     view.appendChild(menuControls)
   }
 
   view.setAttribute('tabindex', '0')
-  requestAnimationFrame(() => view.focus({ preventScroll: true }))
+  requestAnimationFrame(() => focusView())
 
   // Observe the map-grid element so any container size change (initial
   // layout settlement, message panel growth, HUD changes, window resize)
@@ -650,7 +804,8 @@ export function buildGameView(
   // Swaps the active map view in place. Forces zoom on when switching INTO
   // tile mode (tiles at full 33×21 are ~10 px on a phone), and reuses the
   // current view-center so the swap doesn't flicker through an unset position.
-  // Persisted via prefs; the default for new sessions is tiles.
+  // Persists to prefs, so the choice sticks across sessions. DWEM defaults
+  // new sessions to tiles.
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
@@ -682,6 +837,41 @@ export function buildGameView(
     if (mode === 'tiles' && loader) void (mapView as TileMapView).preloadAtlases(loader)
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
+  }
+
+  // Live-apply when the settings page changes the render-mode pref while a
+  // game is up (the HUD ⚙ chip opens settings over the game). exitToLobby releases
+  // the listener on the normal way out; the isConnected self-unhook (same
+  // pattern as the touch panel's CONTROLS_CHANGED_EVENT listener) is the
+  // backstop for exits that skip it, e.g. socket loss — these events fire
+  // rarely, so a dead view must not wait on the next one to unhook.
+  function onRenderModePref(): void {
+    if (!view.isConnected) {
+      window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+      return
+    }
+    setRenderMode(getPref('mapRenderMode'))
+  }
+  window.addEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+
+  // Same live-apply for the monster-list mode (the in-game chevron writes the
+  // pref too, but setListMode no-ops when the value matches).
+  function onMonsterListModePref(): void {
+    if (!view.isConnected) {
+      window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+      return
+    }
+    monsterListView.setListMode(getPref('monsterListMode'))
+  }
+  window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+
+  // Every deliberate return to the lobby funnels through here so this view's
+  // window listeners don't outlive it (each game builds a fresh view).
+  function exitToLobby(exit?: GameExit): void {
+    window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
+    window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+    touchControls.destroy()
+    onLobby(exit)
   }
 
   // Save the player's current doll as a login-screen avatar recipe when their
@@ -761,6 +951,45 @@ export function buildGameView(
     // HUD place chip), for driving with __dcssSimulateIn'd map frames.
     ;(window as unknown as { __dcssMinimap: () => void }).__dcssMinimap =
       () => openMinimap()
+    // __dcssChat() — toggle the chat sheet; drive content with
+    // __dcssSimulateIn({msg:'chat',...} / {msg:'update_spectators',...}).
+    ;(window as unknown as { __dcssChat: () => void }).__dcssChat =
+      () => chatView.toggle()
+    // __dcssChatDemo() — replay a scripted burst of synthetic incoming chat
+    // through the real message path (pill, unread badge, sheet history), for
+    // eyeballing pill behavior in either role without a second chatter.
+    // Nothing touches the wire. First it fakes the demo chatters joining as
+    // spectators (so the ⊙N count chip appears, in the playing role too),
+    // then the default script covers the interesting cases: a short line, a
+    // quick follow-up that replaces the pill mid-display, a long line that
+    // ellipsizes, and a fresh pill after the previous one expired. Pass your
+    // own lines (sent 2s apart) to override:
+    // __dcssChatDemo(['hi', 'a much longer message …'])
+    ;(window as unknown as { __dcssChatDemo: (lines?: string[]) => void })
+      .__dcssChatDemo = (lines?) => {
+        // Fake the audience joining. names arrives as the reference's wrapped
+        // HTML — each watcher a .watcher span, with an unwrapped Anon tail —
+        // so handleSpectators recovers the countable names exactly as on wire.
+        const watchers = lines ? ['gammafunk'] : ['gammafunk', 'rakuen']
+        const namesHtml = watchers
+          .map((n) => `<span class="watcher">${n}</span>`)
+          .join(', ') + ', and 1 Anon'
+        chatView.handleSpectators(watchers.length + 1, namesHtml)
+        const script: Array<[number, string, string]> = lines
+          ? lines.map((l, i) => [i * 2000, 'gammafunk', l])
+          : [
+              [0, 'gammafunk', 'oh nice, a MiFi with a broad axe already'],
+              [1500, 'rakuen', 'grab the whip for the hydra later too'],
+              [6500, 'gammafunk', 'you should swap to the broad axe before D:4, reach will not help once the orcs surround you'],
+              [11500, 'Sequell', 'gammafunk: 300 games, best XL:27 MiBe'],
+            ]
+        for (const [t, sender, text] of script) {
+          setTimeout(() => chatView.handleChat(
+            `<span class='chat_sender'>${sender}</span>: <span class='chat_msg'>${text}</span>`,
+            false,
+          ), t)
+        }
+      }
   }
 
   // Apply the persisted render-mode preference now that the map element,
@@ -773,12 +1002,25 @@ export function buildGameView(
 
   const docKeyHandler = (e: KeyboardEvent) => {
     if (!view.isConnected) { document.removeEventListener('keydown', docKeyHandler); return }
+    // A body-mounted overlay (Settings, docs, crypt) is open over the game and
+    // owns the keyboard: don't forward anything to the game underneath. Its own
+    // Escape listener (overlay.ts) handles dismissal, so no preventDefault here.
+    if (isOverlayOpen()) return
     if (isHarvesting()) { e.preventDefault(); return }  // suppress during silent harvest
+    // Chat sheet: Escape closes it, in both roles — checked before the
+    // spectator branch so it doesn't double as exit-to-lobby. (Keys typed
+    // while the chat input is focused never reach here — the input's own
+    // handler stops propagation.)
+    if (chatView.isOpen && e.key === 'Escape') {
+      e.preventDefault()
+      chatView.closeSheet()
+      return
+    }
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
         conn.send({ msg: 'go_lobby' })
-        onLobby()
+        exitToLobby()
       }
       return
     }
@@ -818,6 +1060,12 @@ export function buildGameView(
   }
   compactMql.addEventListener('change', syncMonsterCompact)
   monsterListView.setCompact(compactMql.matches)
+  const publicChatCleanupTimer = window.setInterval(() => {
+    if (view.isConnected) return
+    window.clearInterval(publicChatCleanupTimer)
+    publicChatClient?.close()
+    publicChatClient = null
+  }, 1000)
 
   conn.onMessage = handleMsg
 
@@ -865,6 +1113,18 @@ export function buildGameView(
         if (dialogActive) { dialogActive = false; hideOverlay() }
         break
 
+      case 'chat':
+        chatView.handleChat(msg.content ?? '', !!msg.meta, { rich: useCncPublicChat })
+        break
+
+      case 'update_spectators':
+        chatView.handleSpectators(msg.count ?? 0, msg.names ?? '')
+        break
+
+      case 'super_hide_chat':
+        chatView.superHide()
+        break
+
       case 'game_client': {
         // Server tells us the gamedata version on game start. Use it to
         // build URLs for tile atlases (gui.png, main.png, ...) served at
@@ -877,6 +1137,8 @@ export function buildGameView(
           // tile-mode view (built before game_client) or a pre-game_client
           // gesture toggle gets its loader and starts painting.
           loader = getTileLoader(conn.httpBase, msg.version)
+          // Dev hook — see the initialLoader assignment near the top.
+          if (import.meta.env.DEV) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
           monsterListView.setLoader(loader)
           monsterPanel.setLoader(loader)
           adoptEnums(loader)
@@ -899,6 +1161,9 @@ export function buildGameView(
         // current view center; setViewCenter returns true only on a real
         // pan, so we can keep the dirty-render path live in steady state.
         const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
+        // Sticky like the reference's inv_mons_msg: only a present key
+        // changes it ('' clears); store.clear() above also resets it.
+        if (msg.invis_mon_desc !== undefined) store.invisMonDesc = msg.invis_mon_desc
         const dirty = store.merge(msg.cells ?? [])
         if (msg.clear || panned) scheduleRender()
         else scheduleRender(dirty)
@@ -1077,12 +1342,12 @@ export function buildGameView(
         if (m.widget_id === 'input') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.input-dialog-field')
           if (!input) break
-          if (m.has_focus) input.focus()
+          if (m.has_focus) guardedFocus(input)
           else if (typeof m.text === 'string' && input.value !== m.text) input.value = m.text
         } else if (m.widget_id === 'seed') {
           const input = uiOverlay.querySelector<HTMLInputElement>('.seed-input-field')
           if (!input) break
-          if (m.has_focus) input.focus()
+          if (m.has_focus) guardedFocus(input)
           else if (typeof m.text === 'string' && input.value !== m.text) {
             input.value = m.text
             // Keep the revert-anchor aligned with the server so a non-digit
@@ -1127,11 +1392,11 @@ export function buildGameView(
         if (!activeMenu) break
         if (m.more !== undefined) {
           activeMenu.more = m.more
-          const footerEl = uiOverlay.querySelector('.overlay-footer')
+          const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
           if (footerEl) {
             const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
             const pos = listEl ? computeScrollPos(listEl) : 'top'
-            footerEl.innerHTML = formatMoreHtml(m.more, pos)
+            setMenuFooter(footerEl, m.more, pos)
             syncAcceptBtn(formatMore(m.more, pos))
           }
         }
@@ -1251,6 +1516,9 @@ export function buildGameView(
           // rollback (remove the last N appended) walks the DOM head.
           let n = msg.rollback
           while (n-- > 0 && msgLog.firstChild) msgLog.firstChild.remove()
+          // A rollback while examining is the cursor leaving a cell — the
+          // strip rebuilds from this batch's lines alone.
+          if (inXMode) xdescReset()
         }
         for (const m of msg.messages ?? []) {
           if (!m.text) continue
@@ -1262,7 +1530,15 @@ export function buildGameView(
           // assigned to…" / "Your memory of … unravels") and flags the rail
           // stale; reharvestIfDirty after this loop resolves it.
           if (harvester.onMsgLine(m.text)) continue
-          if (m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
+          // Mirror into the X-mode describe strip; the line ALSO takes the
+          // normal path below into the (hidden) real log, which is what
+          // keeps the server's rollback counts consistent on X-mode exit.
+          // In X mode the strip owns the visible/tappable prompt; the real
+          // log is hidden and only needs a placeholder node per message to
+          // keep rollback counts consistent, so skip the (invisible) prompt
+          // row + its buttons/listeners and append a plain line instead.
+          if (inXMode) xdescAdd(m.text, m.channel)
+          if (!inXMode && m.channel === 2 && PROMPT_TRIGGER_RE.test(m.text)) {
             disableActivePrompt()
             const row = makePromptRow(m.text)
             activePromptEl = row
@@ -1284,6 +1560,11 @@ export function buildGameView(
         const cursorId = (msg as unknown as { id: number }).id
         cursorLoc = msg.loc ?? null
         mapView.setCursor(msg.loc)
+        // Track the d-pad's steering-a-cursor state for the non-X cursors
+        // too (x examine, targeting). X mode (id 2) is excluded: its own
+        // x-mode class carries that state, and paths that leave X without a
+        // cursor-clear (e.g. exit-for-text-input) must not strand this one.
+        touchControls.setCursorMode(cursorId !== 2 && !!msg.loc)
         if (cursorId === 2) {
           if (msg.loc && !inXMode) enterXMode()
           else if (!msg.loc && inXMode) exitXMode()
@@ -1337,7 +1618,7 @@ export function buildGameView(
         // re-harvest so neither carries into the next game.
         harvester.resetForNewGame()
         disarmCreationGuard()
-        onLobby()
+        exitToLobby()
         break
 
       case 'game_ended': {
@@ -1360,7 +1641,7 @@ export function buildGameView(
         // Forward exit details so the lobby renders the exit dialog after the
         // layer switch. The trailing go_lobby + lobby list (often batched with
         // this) land on the lobby's message handler, not ours.
-        onLobby({
+        exitToLobby({
           reason: msg.reason,
           message: msg.message,
           dump: msg.dump,
@@ -1375,6 +1656,12 @@ export function buildGameView(
   // --- X mode (eXamine level map) ---
 
   function enterXMode(): void {
+    // The examine map is itself an overview — a player entering it has
+    // switched tools, and the lens would hide the cursor they're steering
+    // (keys pass through the lens, so X/x reach the server under it). A
+    // *spectator's* lens stays put: the watched player's examine pans vgrdc,
+    // which just glides the you-are-here rect across the minimap.
+    if (!spectating) closeMinimap()
     inXMode = true
     view.classList.add('x-mode')  // drops the map's log-strip padding (style.css)
     msgLog.style.display = 'none'
@@ -1402,6 +1689,7 @@ export function buildGameView(
   function exitXMode(): void {
     inXMode = false
     view.classList.remove('x-mode')
+    xdescReset()
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
     requestAnimationFrame(() => mapView.fitToContainer())
@@ -1447,6 +1735,7 @@ export function buildGameView(
   }
 
   function showUiPush(msg: UiPushMsg): void {
+    captureMenuScroll()
     // Standalone screens (game-overlays.ts) own their ui-push type wholesale;
     // everything after this block shares the title/body/actions frame below.
     if (msg.type === 'newgame-choice') {
@@ -1654,7 +1943,7 @@ export function buildGameView(
     titleEl.appendChild(input)
     titlePromptInput = input
     autoOpenKbd()
-    requestAnimationFrame(() => input.focus())
+    requestAnimationFrame(() => guardedFocus(input))
   }
 
   function closeTitlePrompt(): void {
@@ -1672,6 +1961,7 @@ export function buildGameView(
   // --- CRT handler ---
 
   function showCrt(tag?: string): void {
+    captureMenuScroll()
     crtActive = true
     crtTag = tag
     crtLines.clear()
@@ -1701,7 +1991,7 @@ export function buildGameView(
     // it wrap instead (the help text below the grid is full-width).
     if (crtTag === 'skills') el.classList.add('crt-skills')
     uiOverlay.appendChild(el)
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
   function renderCrtEl(): void {
@@ -1749,7 +2039,7 @@ export function buildGameView(
       }
       btn.addEventListener('click', () => {
         fire()
-        view.focus({ preventScroll: true })
+        focusView()
       })
       btn.addEventListener('touchstart', (e) => {
         e.preventDefault()
@@ -1862,7 +2152,7 @@ export function buildGameView(
         applyShiftBtnState(btn)
         btn.addEventListener('click', () => {
           menuShift.tap()
-          view.focus({ preventScroll: true })
+          focusView()
         })
         btn.addEventListener('touchstart', (e) => {
           e.preventDefault()
@@ -1872,7 +2162,7 @@ export function buildGameView(
         btn.addEventListener('click', () => {
           if (def.key) conn.send({ msg: 'input', text: def.key })
           else if (def.keycode) conn.send({ msg: 'key', keycode: def.keycode })
-          view.focus({ preventScroll: true })
+          focusView()
         })
         btn.addEventListener('touchstart', (e) => {
           e.preventDefault()
@@ -2001,10 +2291,13 @@ export function buildGameView(
   // (= server-index order; continuations/headers carry no data-menu-idx).
   function visibleMenuRows(el: HTMLElement): HTMLElement[] {
     const lr = el.getBoundingClientRect()
-    return [...el.querySelectorAll<HTMLElement>('[data-menu-idx]')].filter(r => {
+    const rows: HTMLElement[] = []
+    for (const r of el.querySelectorAll<HTMLElement>('[data-menu-idx]')) {
       const rr = r.getBoundingClientRect()
-      return rr.bottom > lr.top + 1 && rr.top < lr.bottom - 1
-    })
+      if (rr.top >= lr.bottom - 1) break  // DOM order: the rest are below the fold
+      if (rr.bottom > lr.top + 1) rows.push(r)
+    }
+    return rows
   }
 
   function firstSelectableVisibleIdx(el: HTMLElement): number {
@@ -2029,6 +2322,47 @@ export function buildGameView(
     })
   }
 
+  // Scroll offsets of menus covered by another overlay (describe ui-push,
+  // stacked menu, CRT), keyed by the covered MenuMsg so re-showing the same
+  // menu restores where the user was. The reference client gets this for
+  // free — its popup stack keeps the covered menu's DOM alive — but our
+  // single overlay frame rebuilds the list, so save/restore explicitly.
+  const menuScrollTops = new WeakMap<MenuMsg, number>()
+
+  // Callers must only capture while the DOM list belongs to activeMenu. The
+  // one path where they diverge is close_menu — activeMenu is reassigned to
+  // the outer menu while the popped inner one is still in the DOM — which
+  // showMenu sidesteps by skipping capture when re-showing activeMenu itself
+  // (the covering overlay there is never a menu list anyway).
+  function captureMenuScroll(): void {
+    const el = menuListEl()
+    if (el && activeMenu) menuScrollTops.set(activeMenu, el.scrollTop)
+  }
+
+  // Align the first indexed row at-or-after `index` with the top of the
+  // list (reference scroll_to_item; headers/continuations carry no index).
+  function scrollMenuToItem(el: HTMLElement, index: number): void {
+    const listTop = el.getBoundingClientRect().top
+    for (const row of el.querySelectorAll<HTMLElement>('[data-menu-idx]')) {
+      if (Number(row.dataset.menuIdx) < index) continue
+      el.scrollTop += row.getBoundingClientRect().top - listTop
+      return
+    }
+  }
+
+  // Debounced scroll reporter (reference schedule_server_scroll): keeps the
+  // engine's first-visible current so a re-sent menu's jump_to points where
+  // the user actually was, and lets spectators follow our menu scrolling.
+  let menuScrollSendTimer: number | null = null
+  function scheduleMenuScrollSend(): void {
+    if (menuScrollSendTimer !== null) return
+    menuScrollSendTimer = window.setTimeout(() => {
+      menuScrollSendTimer = null
+      const el = menuListEl()
+      if (el && activeMenu) sendMenuScroll(el)
+    }, SCROLLER_SYNC_DEBOUNCE_MS)
+  }
+
   function pageMenu(up: boolean): void {
     const el = menuListEl()
     if (!el) return
@@ -2039,7 +2373,7 @@ export function buildGameView(
       : !up && el.scrollTop >= max - 1 ? lastSelectableIdx()
       : firstSelectableVisibleIdx(el)
     if (target >= 0) setMenuHover(target, false)
-    sendMenuScroll(el)
+    scheduleMenuScrollSend()
   }
 
   function jumpMenu(toEnd: boolean): void {
@@ -2047,7 +2381,7 @@ export function buildGameView(
     if (!el) return
     el.scrollTop = toEnd ? el.scrollHeight : 0
     setMenuHover(toEnd ? lastSelectableIdx() : firstSelectableIdx(), false)
-    sendMenuScroll(el)
+    scheduleMenuScrollSend()
   }
 
   // A rendered, arrow-selectable menu overlay is up: arrow input should drive
@@ -2176,8 +2510,10 @@ export function buildGameView(
   // own guard keeps a tap during a menu/overlay/X-mode inert). The
   // `spell-row` class on the view tracks rail visibility: while set, CSS
   // lifts the floating message log (and --more--) by the rail's height so
-  // the rail fits beneath them — the rail itself floats over the map, so
-  // showing it never resizes the map.
+  // the rail fits beneath them, and grows the map's bottom centering
+  // reserve to match (the padding change refits the map via its
+  // ResizeObserver — a deliberate ~1-row re-center; see the #map-grid
+  // padding comment in style.css).
   // The cache array the rail's buttons were last built from. Every harvest
   // (and the dev fake-spells hook) assigns a NEW array inside the harvester,
   // so reference identity distinguishes "content changed, rebuild" from
@@ -2214,8 +2550,20 @@ export function buildGameView(
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
   }
 
+  // Fill the menu's `--more--` footer, hiding it entirely when the text is
+  // empty: the bare element would still paint its hairline border, which
+  // reads as a stray mini-bar at the overlay's bottom edge (starkest while
+  // spectating, where only black separates it from the spectator bar). The
+  // element stays in the DOM — update_menu and the XXX scroll handler
+  // re-fill it and visibility must come back with the text.
+  function setMenuFooter(footerEl: HTMLElement, more: string, pos: string): void {
+    footerEl.innerHTML = formatMoreHtml(more, pos)
+    footerEl.style.display = formatMore(more, pos) ? '' : 'none'
+  }
+
   function showMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
+      captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
       menuServerHover = -1
       menuHoverFromUser = false
@@ -2227,7 +2575,7 @@ export function buildGameView(
       renderMenuItems(msg.items ?? [])
       const footerEl = document.createElement('div')
       footerEl.className = 'overlay-footer'
-      footerEl.innerHTML = formatMoreHtml(msg.more ?? '', 'top')
+      setMenuFooter(footerEl, msg.more ?? '', 'top')
       uiOverlay.appendChild(footerEl)
     })
     if (msg.tag === 'shop' || msg.tag === 'stash' || msg.tag === 'acquirement') {
@@ -2243,35 +2591,33 @@ export function buildGameView(
         listEl.addEventListener('scroll', () => {
           if (activeMenu?.more) {
             const pos = computeScrollPos(listEl)
-            footerEl.innerHTML = formatMoreHtml(activeMenu.more, pos)
+            setMenuFooter(footerEl, activeMenu.more, pos)
           }
         }, { passive: true })
       }
+    }
+    const listEl = menuListEl()
+    if (listEl) {
+      const saved = menuScrollTops.get(msg)
+      if (saved !== undefined) listEl.scrollTop = saved
+      else if (msg.jump_to) scrollMenuToItem(listEl, msg.jump_to)
     }
   }
 
   function updateMenuItems(msg: MenuMsg): void {
     if (!msg.items) return
-    const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
-    if (listEl) {
-      const savedScrollTop = listEl.scrollTop
-      listEl.remove()
-      const footer = uiOverlay.querySelector('.overlay-footer')
-      const newList = document.createElement('div')
-      newList.className = 'overlay-list'
-      fillMenuItems(newList, msg.items)
-      uiOverlay.insertBefore(newList, footer)
-      newList.scrollTop = savedScrollTop
-    } else {
-      renderMenuItems(msg.items)
-    }
-    syncMenuShiftLabels()
+    const old = menuListEl()
+    const saved = old?.scrollTop
+    old?.remove()
+    renderMenuItems(msg.items)
+    if (saved !== undefined) menuListEl()!.scrollTop = saved
   }
 
   function renderMenuItems(items: MenuItem[]): void {
     const listEl = document.createElement('div')
     listEl.className = 'overlay-list'
     fillMenuItems(listEl, items)
+    listEl.addEventListener('scroll', () => scheduleMenuScrollSend(), { passive: true })
     const footer = uiOverlay.querySelector('.overlay-footer')
     uiOverlay.insertBefore(listEl, footer)
     syncMenuShiftLabels()
@@ -2447,7 +2793,9 @@ export function buildGameView(
   // the touch handler and docKeyHandler), and the map/player repaints below
   // keep the lens current — so the user can walk by the level overview.
   // Tap, ×, Esc, or re-tapping the place chip dismisses; any server overlay
-  // closes it via enterOverlayLayout.
+  // closes it via enterOverlayLayout. While spectating, an overlay eviction
+  // only *suspends* the lens (the watched player caused it, not the
+  // spectator) and hideOverlay reopens it when the map layout returns.
 
   function repaintMinimap(): void {
     const el = minimap.element
@@ -2479,12 +2827,13 @@ export function buildGameView(
     minimapOpen = true
     mapWrap.appendChild(minimap.element)
     repaintMinimap()
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
-  function closeMinimap(): void {
+  function closeMinimap(opts?: { suspend?: boolean }): void {
     if (!minimapOpen) return
     minimapOpen = false
+    minimapSuspended = !!(opts?.suspend && spectating)
     minimap.element.remove()
   }
 
@@ -2500,7 +2849,7 @@ export function buildGameView(
   // the redundant call under enterOverlayLayout's own closeMinimap is a no-op.
   function closeClientOverlays(): void {
     monsterPanelOpen = false
-    closeMinimap()
+    closeMinimap({ suspend: true })
   }
 
   // --- shared overlay helpers ---
@@ -2513,8 +2862,11 @@ export function buildGameView(
   // the d-pad (newgame-choice, CRT) pass touch:false.
   function enterOverlayLayout(opts?: { touch?: boolean }): void {
     // Every server-driven overlay passes through here; the map-area minimap
-    // lens must not linger over (or under) it.
-    closeMinimap()
+    // lens must not linger over (or under) it, and neither may a chat pill
+    // already mid-display (new pills are vetoed via pillAllowed, but that
+    // can't retract one in flight).
+    closeMinimap({ suspend: true })
+    chatView.hidePill()
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
     mapView.element.style.display = 'none'
@@ -2534,7 +2886,7 @@ export function buildGameView(
     enterLayout: enterOverlayLayout,
     renderOverlay,
     autoOpenKbd,
-    focusView: () => view.focus({ preventScroll: true }),
+    focusView,
   }
 
   function renderOverlay(title: string, buildBody: () => void): void {
@@ -2556,7 +2908,7 @@ export function buildGameView(
     // ends up with nothing (no title, no tile inserted by buildBody) so help
     // popups don't render a blank bar.
     if (!title && headerEl.children.length === 1) headerEl.remove()
-    view.focus({ preventScroll: true })
+    focusView()
   }
 
   // --- formatted-scroller: client-owned scroll widget ---
@@ -2706,9 +3058,23 @@ export function buildGameView(
       showHud()
     }
     touchControls.element.style.display = ''
+    // Spectator lens restore. Cleared only on a successful reopen: overlay
+    // teardown can interleave (hide_dialog fires under a still-stacked
+    // ui-push; close_menu doesn't clear dialogActive), so a refused attempt
+    // must keep the flag for the hideOverlay that actually returns the
+    // screen to the map. A set flag can't fire anywhere else — only this
+    // restore reads it — and every success means the map is back, which is
+    // exactly when the lens should return.
+    if (minimapSuspended) {
+      openMinimap()
+      if (minimapOpen) minimapSuspended = false
+    }
     requestAnimationFrame(() => {
       mapView.fitToContainer()
-      view.focus({ preventScroll: true })
+      // The restore above painted against the pre-fit viewport; refresh the
+      // you-are-here rect now that fitToContainer has settled the real size.
+      if (minimapOpen) repaintMinimap()
+      focusView()
     })
   }
 
@@ -2719,7 +3085,7 @@ export function buildGameView(
     el.innerHTML = `<span class="overlay-label"${labelStyle}>${labelHtml}</span>`
     el.addEventListener('click', () => {
       onClick()
-      view.focus({ preventScroll: true })
+      focusView()
     })
     return el
   }
@@ -2822,7 +3188,7 @@ export function buildGameView(
       btn.textContent = b.label
       btn.addEventListener('click', () => {
         b.onTap()
-        view.focus({ preventScroll: true })
+        focusView()
       })
       btn.addEventListener('touchstart', (e) => {
         e.preventDefault()
@@ -2861,17 +3227,17 @@ export function buildGameView(
         const text = (tag !== 'repeat' ? '\x15\x0b' : '') + input.value + '\r'
         removeTextInput()
         conn.send({ msg: 'input', text })
-        view.focus({ preventScroll: true })
+        focusView()
       } else if (e.key === 'Escape') {
         e.preventDefault()
         removeTextInput()
         conn.send({ msg: 'key', keycode: 27 })
-        view.focus({ preventScroll: true })
+        focusView()
       }
     })
     row.appendChild(input)
     pushMsgRow(row, false)  // input row isn't pruned by the 50-row cap
-    requestAnimationFrame(() => input.focus())
+    requestAnimationFrame(() => guardedFocus(input))
     autoOpenKbd()
   }
 
@@ -2916,7 +3282,7 @@ export function buildGameView(
     btn.innerHTML = dcssToHtml(label)
     btn.addEventListener('click', () => {
       conn.send({ msg: 'input', text: key })
-      view.focus({ preventScroll: true })
+      focusView()
     })
     row.appendChild(btn)
   }
@@ -2938,7 +3304,7 @@ export function buildGameView(
         btn.innerHTML = dcssToHtml(t)
         btn.addEventListener('click', () => {
           conn.send({ msg: 'input', text: key })
-          view.focus({ preventScroll: true })
+          focusView()
         })
         bar.appendChild(btn)
       } else {

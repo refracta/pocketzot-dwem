@@ -81,7 +81,11 @@ export class MonsterPanelView {
       doll: cell?.doll,
       mcache: cell?.mcache,
     })
-    if (baseSpec.length > 0) appendTiles(this.loader, tileEl, baseSpec, TILE_SCALE)
+    // centre: reference-map placement (bottom-aligned authored box); fit:
+    // shrink 32×48 pan lord/boss sprites into the row's cell instead of
+    // letting the head poke out of the box (the reference monster list just
+    // clips the head off at its one-cell canvas edge).
+    if (baseSpec.length > 0) appendTiles(this.loader, tileEl, baseSpec, TILE_SCALE, { centre: true, fit: true })
     if (cell?.highlighted_summoner) prependDngnLayer(this.loader, tileEl, 'HALO_SUMMONER', TILE_SCALE)
     const threatWash = fgThreatDngnName(cell?.fg)
     if (threatWash) prependDngnLayer(this.loader, tileEl, threatWash, TILE_SCALE)
@@ -126,6 +130,6 @@ export class MonsterPanelView {
     // Damage shows as the mp-hp bar above, so no MDAM overlay (includeMdam off).
     // appendIconOverlays self-defers on the icons tileinfo module, so layering
     // it here per row is equivalent to a separate second pass.
-    appendIconOverlays(this.loader, tileEl, cell?.fg, cell?.icons ?? [], TILE_SCALE)
+    appendIconOverlays(this.loader, tileEl, cell?.fg, cell?.icons ?? [], TILE_SCALE, { bg: cell?.t_bg })
   }
 }

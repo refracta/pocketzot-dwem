@@ -8,7 +8,7 @@
 import type { MonsterInfo } from '../../ws/types'
 import type { MonsterCell } from '../map/map-store'
 import { DCSS_COLOR_MAP } from '../dcss-colors'
-import { fgFlags } from '../map/flag-decode'
+import { bgFlags, fgFlags } from '../map/flag-decode'
 
 // attitude index → class label (mirrors reference monster_list.js)
 export const ATTITUDE_CLASSES = ['hostile', 'neutral', 'good_neutral', 'good_neutral', 'friendly'] as const
@@ -93,6 +93,12 @@ export interface StatusOverlays { overlays: IconOverlay[]; statusShift: number }
 
 const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
 
+// Options shared by mayHaveStatusOverlays / buildStatusOverlays (and forwarded
+// by appendIconOverlays). `bg` is the cell's raw t.bg — only its
+// REMEMBERED_INVIS flag feeds an overlay; surfaces without a map cell (the
+// describe popup's msg.flag) simply omit it.
+export interface StatusOverlayOpts { includeMdam?: boolean; bg?: number | number[] }
+
 // Cheap predicate: could this (fg, icons) pair produce any status overlay at
 // all? The single source of truth for the empty case — buildStatusOverlays'
 // fast path uses it to skip allocating, and appendIconOverlays uses it to
@@ -103,10 +109,11 @@ const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
 export function mayHaveStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
-  opts: { includeMdam?: boolean } = {},
+  opts: StatusOverlayOpts = {},
 ): boolean {
   if (opts.includeMdam) return true
   if (icons.length > 0) return true
+  if (opts.bg !== undefined && bgFlags(opts.bg).REMEMBERED_INVIS) return true
   const f = fgFlags(fg)
   return !!(f.NET || f.WEB || f.S_UNDER
     || f.PET || f.GD_NEUTRAL || f.NEUTRAL
@@ -145,7 +152,7 @@ export function buildStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
   sizeMap: ReadonlyMap<number, number>,
-  opts: { includeMdam?: boolean } = {},
+  opts: StatusOverlayOpts = {},
 ): StatusOverlays {
   // Fast path: most map cells carry no status bits and no server icons. The
   // canvas map calls this once per rendered cell, so bail before allocating an
@@ -164,6 +171,12 @@ export function buildStatusOverlays(
   if (f.PET) overlays.push({ name: 'FRIENDLY', xofs: 0, yofs: 0 })
   else if (f.GD_NEUTRAL) overlays.push({ name: 'GOOD_NEUTRAL', xofs: 0, yofs: 0 })
   else if (f.NEUTRAL) overlays.push({ name: 'NEUTRAL', xofs: 0, yofs: 0 })
+
+  // 'Was here, has moved' marker on cells a known-invisible monster vacated
+  // (trunk invisibility rework; a bg flag, unlike every other icon here).
+  if (opts.bg !== undefined && bgFlags(opts.bg).REMEMBERED_INVIS) {
+    overlays.push({ name: 'UNSEEN_INVIS_REMEMBERED', xofs: 0, yofs: 0 })
+  }
 
   // Behaviour icon at the corner; bumps status_shift so poison / cell.icons
   // fan to its left. The +12/+7/+3 constants are literals in draw_foreground.

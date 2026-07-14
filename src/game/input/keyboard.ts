@@ -88,6 +88,18 @@ export {
 // Export for keyboard overlay
 export { CAPTURED_CTRL }
 
+// F-key wire codes are sequential from F1 = -265 (cio.h; see CODE_CONV
+// below). Shared with the control-set special-key table.
+export function fnKeycode(n: number): number {
+  return -264 - n
+}
+
+// Ctrl+letter sends the letter's control character (^A=1 … ^Z=26). Shared
+// with the touch panel and the control-set special-key table.
+export function ctrlKeycode(letter: string): number {
+  return letter.toUpperCase().charCodeAt(0) - 64
+}
+
 // keyCode-based mappings (legacy but still used for arrow keys, backspace, etc.)
 const KEY_CONV: Record<number, number> = {
   27:  27,          // Escape
@@ -241,8 +253,7 @@ export function handleKeydown(
     const upper = e.key.toUpperCase()
     if (CAPTURED_CTRL.has(upper)) {
       e.preventDefault()
-      const charCode = upper.charCodeAt(0) - 'A'.charCodeAt(0) + 1
-      send({ msg: 'key', keycode: charCode })
+      send({ msg: 'key', keycode: ctrlKeycode(upper) })
       return
     }
   }

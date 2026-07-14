@@ -38,8 +38,15 @@ export interface TileSprite {
   sy: number
   w: number
   h: number
-  ox: number  // sprite's authored offset from its 32x32 logical cell origin
+  ox: number  // cropped region's offset within the authored image box
   oy: number
+  // Authored image dimensions (tileinfo w/h) — the sprite's logical box, as
+  // opposed to w/h above which are the cropped nonzero region in the atlas.
+  // 32×32 for most tiles; 32×48 for pan lord parts and boss monsters. The
+  // reference's draw_tile centring (`size_oy = 32 - info.h`) bottom-aligns
+  // this box on the cell, which is what makes tall sprites spill upward.
+  aw: number
+  ah: number
 }
 
 interface TileinfoEntry {
@@ -56,6 +63,22 @@ export interface TileinfoModule {
   // POISON for tileinfo-icons). We type those loosely so callers can read
   // them by name without a per-module schema.
   [k: string]: unknown
+}
+
+// Single seam mapping a tileinfo entry to the TileSprite shape both lookup
+// paths (getAsync/getSync) return, so the field semantics can't drift apart.
+function spriteFrom(img: HTMLImageElement, info: TileinfoEntry): TileSprite {
+  return {
+    img,
+    sx: info.sx,
+    sy: info.sy,
+    w: info.ex - info.sx,
+    h: info.ey - info.sy,
+    ox: info.ox,
+    oy: info.oy,
+    aw: info.w,
+    ah: info.h,
+  }
 }
 
 // Registry of loaders by gamedata base URL (`${httpBase}/gamedata/${version}`).
@@ -147,15 +170,7 @@ export class TileLoader {
     const [img, mod] = await Promise.all([this.loadAtlas(name), this.loadTileinfo(name)])
     const info = mod.get_tile_info(tileId)
     if (!info) throw new Error(`no tile_info for id ${tileId} in texture ${name}`)
-    return {
-      img,
-      sx: info.sx,
-      sy: info.sy,
-      w: info.ex - info.sx,
-      h: info.ey - info.sy,
-      ox: info.ox,
-      oy: info.oy,
-    }
+    return spriteFrom(img, info)
   }
 
   // Preload an atlas + its tileinfo so subsequent getSync() calls succeed.
@@ -179,15 +194,7 @@ export class TileLoader {
     if (!img || !mod) return null
     const info = mod.get_tile_info(tileId)
     if (!info) return null
-    return {
-      img,
-      sx: info.sx,
-      sy: info.sy,
-      w: info.ex - info.sx,
-      h: info.ey - info.sy,
-      ox: info.ox,
-      oy: info.oy,
-    }
+    return spriteFrom(img, info)
   }
 
   // Sync variant of getDngnTex. Requires tileinfo-dngn to be preloaded.
@@ -243,11 +250,18 @@ export class TileLoader {
     if (cached) return cached
     const p = new Promise<TileinfoModule>((resolve, reject) => {
       this.moduleResolvers.set(name, resolve)
-      pendingModules.set(`${this.base}/${name}`, this)
       const s = document.createElement('script')
       s.src = `${this.base}/${file}`
+      // Key the pending entry by the RESOLVED base: the define shim routes
+      // via document.currentScript.src, which the browser always reports
+      // absolute. Keying by this.base therefore misses whenever the base is
+      // relative — the module promise (and every ensureLoaded awaiting it)
+      // hangs forever, silently pinning tile mode to its ASCII fallback.
+      // Reading s.src back gives the resolved form.
+      const pendingKey = `${s.src.slice(0, s.src.lastIndexOf('/'))}/${name}`
+      pendingModules.set(pendingKey, this)
       s.onerror = () => {
-        pendingModules.delete(`${this.base}/${name}`)
+        pendingModules.delete(pendingKey)
         this.moduleResolvers.delete(name)
         reject(new Error(`failed to load ${file}`))
       }

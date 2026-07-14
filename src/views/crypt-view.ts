@@ -2,6 +2,7 @@ import { listAllAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { pickCryptLine } from './crypt-flavor'
 import { mountOverlay } from './overlay'
+import { attachScrollCue } from '../util/scroll-cue'
 
 // Full-screen "crypt": the complete retained character history (../avatars),
 // painted as a vertical-scrolling 4-wide grid of doll sprites. An opaque full
@@ -19,15 +20,22 @@ export function openCrypt(): void {
   view.className = 'crypt-view'
   view.innerHTML = `
     <header class="crypt-header">
-      <div class="crypt-topbar">
-        <button type="button" class="crypt-back lobby-btn-ghost" aria-label="Back">← Back</button>
-      </div>
-      <p class="crypt-flavor"></p>
+      <button type="button" class="crypt-back lobby-btn-ghost" aria-label="Back">← Back</button>
     </header>
-    <div class="crypt-grid"></div>
+    <div class="crypt-scroll">
+      <p class="crypt-flavor"></p>
+      <div class="crypt-grid"></div>
+    </div>
   `
   // Set via textContent (the flavor lines are author-written plain text).
   view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine()
+
+  // Same scroll-edge cue as the lobby: hairline under the pinned bar while
+  // the grid is scrolled beneath it.
+  attachScrollCue(
+    view.querySelector<HTMLElement>('.crypt-header')!,
+    view.querySelector<HTMLElement>('.crypt-scroll')!,
+  )
 
   const close = mountOverlay(view) // body-mount + Escape-to-close
   // Scale 2.5 (80px): bigger than the login strip's 64px teaser, but small enough

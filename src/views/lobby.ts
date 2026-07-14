@@ -10,6 +10,9 @@ import { openAboutDoc, openChangelogDoc } from './docs'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
 import { classifyTransition } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
+import { attachScrollCue } from '../util/scroll-cue'
+import { ChatView } from './chat-view'
+import { CncPublicChatClient, CNC_PUBLIC_CHAT_BOT, isCncPublicChatAvailable } from '../dwem/cnc-public-chat'
 
 export function buildLobbyView(
   conn: WsConnection,
@@ -41,6 +44,9 @@ export function buildLobbyView(
   // game_client only arrives after the transition (e.g. CDI), where the game
   // view's own game_client handler resolves the loader instead.
   let activeLoader: TileLoader | null = null
+  // Messages the lobby doesn't handle, held for the game view (see handleMsg's
+  // default case) and replayed right after onGameStart mounts it.
+  const preGameMsgs: ServerMsg[] = []
 
   const view = document.createElement('div')
   view.id = 'lobby-view'
@@ -75,20 +81,53 @@ export function buildLobbyView(
 
   view.innerHTML = `
     <div class="lobby-header">
-      <button id="lobby-back" class="lobby-btn-ghost" aria-label="Back to login">← Back</button>
+      <button id="lobby-back" class="lobby-btn-ghost" aria-label="Back to login">← Login</button>
       ${headerRight}
     </div>
-    <div id="lobby-notice" class="lobby-notice" hidden></div>
-    ${gamesContainer}
-    <h2 class="lobby-section-title">Active Games</h2>
-    <div id="lobby-list" class="lobby-list">
-      <div class="lobby-loading">Loading…</div>
+    <div class="lobby-scroll">
+      <div id="lobby-notice" class="lobby-notice" hidden></div>
+      ${gamesContainer}
+      <h2 class="lobby-section-title">Active Games</h2>
+      <div id="lobby-list" class="lobby-list">
+        <div class="lobby-loading">Loading…</div>
+      </div>
     </div>
   `
+
+  // iOS-style scroll-edge cue: hairline under the pinned bar only while
+  // content is actually scrolled beneath it.
+  attachScrollCue(
+    view.querySelector<HTMLElement>('.lobby-header')!,
+    view.querySelector<HTMLElement>('.lobby-scroll')!,
+  )
 
   const listEl = view.querySelector<HTMLElement>('#lobby-list')!
   const gamesEl = view.querySelector<HTMLElement>('#lobby-games')
   const noticeEl = view.querySelector<HTMLElement>('#lobby-notice')!
+  const useCncPublicChat = isCncPublicChatAvailable(conn.wsUrl)
+  let publicChatClient: CncPublicChatClient | null = null
+  const publicChatView = useCncPublicChat
+    ? new ChatView({
+        title: '#public',
+        onSend: (text) => { publicChatClient?.sendChat(text) },
+        alwaysShowChip: true,
+        readOnly: guest,
+        pillAllowed: () => true,
+      })
+    : null
+  if (publicChatView) {
+    view.append(publicChatView.sheet, publicChatView.pill, publicChatView.chip)
+    publicChatClient = new CncPublicChatClient(
+      conn.wsUrl,
+      () => username ? loadSession(conn.wsUrl, username)?.cookie : undefined,
+      {
+        onChat: (content) => publicChatView.handleChat(content, false, { public: true, rich: true }),
+        onSpectators: (count, names) => publicChatView.handleSpectators(count, names),
+        onStatus: (text) => publicChatView.handleChat(`<span class='chat_msg'>${escHtml(text)}</span>`, true),
+      },
+    )
+    publicChatClient.connect()
+  }
 
   let closeAccountMenu: (() => void) | null = null
 
@@ -168,6 +207,13 @@ export function buildLobbyView(
         // ignores gameId when spectating (it saves avatars only for your own
         // played chars), so forwarding it unconditionally is safe.
         onGameStart(transition.spectating, activeLoader ?? undefined, playedGameId)
+        // onGameStart mounted the game view synchronously (app.ts:showGame),
+        // so conn.onMessage is now its handler — replay the pre-transition
+        // game state into it. splice-then-iterate so a replay that somehow
+        // lands back here (handler unchanged) re-buffers instead of looping.
+        if (conn.onMessage !== handleMsg) {
+          for (const m of preGameMsgs.splice(0)) conn.onMessage?.(m)
+        }
       }
       return
     }
@@ -177,6 +223,7 @@ export function buildLobbyView(
         break
       case 'lobby_entry': {
         const e = msg as ServerMsg & LobbyEntry
+        if (e.username === CNC_PUBLIC_CHAT_BOT) break
         const id = String(e.id)
         games.set(id, e)
         if (e.idle_time && e.idle_time > 0) {
@@ -203,17 +250,11 @@ export function buildLobbyView(
       case 'close':
         onDisconnect()
         break
-      // A play/watch attempt was aborted while the lobby stayed mounted
-      // (force_terminate? answered "Leave it" → server sends go_lobby; watching
-      // a game that just ended). The resume context armed at click time must
-      // die with the attempt — otherwise a later reload/eviction auto-replays
-      // the abandoned `play`, and the server's stale-purge SIGHUPs the very
-      // session the user chose to keep alive.
       case 'go_lobby':
-        clearGameStart()
+        abortGameStart()
         break
       case 'auth_error':
-        clearGameStart()
+        abortGameStart()
         noticeEl.textContent = msg.reason
         noticeEl.hidden = false
         break
@@ -234,7 +275,29 @@ export function buildLobbyView(
         noticeEl.textContent = ''
         noticeEl.hidden = true
         break
+      default:
+        // Not the lobby's message: game state can arrive before the transition
+        // trigger — on a spectate join, update_spectators (and any join-time
+        // chat) land between game_client and watching_started, while this
+        // lobby still owns conn.onMessage. Hold everything unhandled for the
+        // game view and replay it at handover (the transition branch above),
+        // the same contract as the auto-resume handler (reconnect.ts); without
+        // this the initial spectator count and join-time chat are silently lost.
+        // Capped as a guard against a nonconforming server flooding the lobby.
+        if (preGameMsgs.length < 100) preGameMsgs.push(msg)
     }
+  }
+
+  // A play/watch attempt was aborted while the lobby stayed mounted
+  // (force_terminate? answered "Leave it" → server sends go_lobby; watching
+  // a game that just ended). The resume context armed at click time must
+  // die with the attempt — otherwise a later reload/eviction auto-replays
+  // the abandoned `play`, and the server's stale-purge SIGHUPs the very
+  // session the user chose to keep alive. Messages held for the game view
+  // die with it too — they belong to the game that never started.
+  function abortGameStart(): void {
+    clearGameStart()
+    preGameMsgs.length = 0
   }
 
   // The stale process didn't exit when asked; the server wants a yes/no.
@@ -388,7 +451,7 @@ export function buildLobbyView(
     const ver = versionLabel(g.game_id)
     if (ver) parts.push(`<span class="lobby-game-version">${escHtml(ver)}</span>`)
     if (g.spectator_count && g.spectator_count > 0) {
-      parts.push(`<span class="lobby-game-watchers">${g.spectator_count} spectator${g.spectator_count === 1 ? '' : 's'}</span>`)
+      parts.push(`<span class="lobby-game-spectators">${g.spectator_count} spectator${g.spectator_count === 1 ? '' : 's'}</span>`)
     }
     const id = String(g.id)
     const isIdle = idleSinceMs.has(id)
@@ -444,6 +507,12 @@ export function buildLobbyView(
   const ticker = window.setInterval(() => {
     if (!view.isConnected) { window.clearInterval(ticker); return }
     updateIdleLabels()
+  }, 1000)
+  const publicChatCleanupTimer = window.setInterval(() => {
+    if (view.isConnected) return
+    window.clearInterval(publicChatCleanupTimer)
+    publicChatClient?.close()
+    publicChatClient = null
   }, 1000)
 
   if (exit) maybeShowExitDialog(view, exit)
