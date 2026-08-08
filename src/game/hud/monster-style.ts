@@ -9,6 +9,7 @@ import type { MonsterInfo } from '../../ws/types'
 import type { MonsterCell } from '../map/map-store'
 import { DCSS_COLOR_MAP } from '../dcss-colors'
 import { bgFlags, fgFlags } from '../map/flag-decode'
+import type { StatusIconSizer } from '../map/icon-sizes'
 
 // attitude index → class label (mirrors reference monster_list.js)
 export const ATTITUDE_CLASSES = ['hostile', 'neutral', 'good_neutral', 'good_neutral', 'friendly'] as const
@@ -88,7 +89,10 @@ export function decodeFgStatuses(fg: number | number[] | undefined): string[] {
 // A status icon to overlay on a monster sprite: either a named tile-constant
 // (resolved against tileinfo-icons by the caller) or a raw numeric id from
 // cell.icons, plus the cell-space pixel offset draw_foreground would place it at.
-export interface IconOverlay { name?: string; id?: number; xofs: number; yofs: number }
+// altName is an era fallback tried when name is absent from the version's
+// icons module (upstream renames icons across releases — e.g. the trunk
+// item-stack rework replaced SOMETHING_UNDER with ITEM_STACK_1/2/3).
+export interface IconOverlay { name?: string; altName?: string; id?: number; xofs: number; yofs: number }
 export interface StatusOverlays { overlays: IconOverlay[]; statusShift: number }
 
 const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
@@ -103,19 +107,20 @@ export interface StatusOverlayOpts { includeMdam?: boolean; bg?: number | number
 // all? The single source of truth for the empty case — buildStatusOverlays'
 // fast path uses it to skip allocating, and appendIconOverlays uses it to
 // skip the async icons-module load for the (common) status-free monster
-// before paying a Promise. includeMdam surfaces always pass, since MDAM is
-// decoded on the slow path. fgFlags is value-cached in both backends, so
-// this stays allocation-free in steady state.
+// before paying a Promise. includeMdam surfaces pass whenever the monster
+// carries any damage; uninjured falls through to the other checks. fgFlags
+// is value-cached in both backends, so this stays allocation-free in
+// steady state.
 export function mayHaveStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
   opts: StatusOverlayOpts = {},
 ): boolean {
-  if (opts.includeMdam) return true
+  if (opts.includeMdam && decodeMdam(fg) !== 'uninjured') return true
   if (icons.length > 0) return true
   if (opts.bg !== undefined && bgFlags(opts.bg).REMEMBERED_INVIS) return true
   const f = fgFlags(fg)
-  return !!(f.NET || f.WEB || f.S_UNDER
+  return !!(f.NET || f.WEB || f.S_UNDER || f.S_UNDER_GOOD || f.S_UNDER_ARTEFACT
     || f.PET || f.GD_NEUTRAL || f.NEUTRAL
     || f.STAB || f.MAY_STAB || f.FLEEING || f.PARALYSED
     || f.POISON || f.MORE_POISON || f.MAX_POISON)
@@ -143,21 +148,23 @@ export function mdamIconName(fg: number | number[] | undefined): string | undefi
 //
 // `fg` may be a single word (msg.flag — hi == 0, so no poison and no
 // severe-or-worse MDAM, exactly as the reference's single-word desc.flag) or
-// the [lo, hi] cell form. `sizeMap` is the id→width table from
-// buildStatusIconSizeMap (icon-sizes.ts): cell.icons with width < 0 (absent)
-// are skipped, width 0 pins the icon at its authored spot, width > 0 fans the
-// stack left by that much. Returns the trailing statusShift so the map can gate
+// the [lo, hi] cell form. `iconSize` is the id→width lookup from
+// getStatusIconSizer (icon-sizes.ts — the server's own status_icon_size when
+// available, else the bundled table): cell.icons with width < 0 are skipped,
+// width 0 pins the icon at its authored spot, width > 0 fans the stack left
+// by that much. Returns the trailing statusShift so the map can gate
 // NEW_STAIR / NEW_TRANSPORTER (drawn only when no status icon occupies the corner).
 export function buildStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
-  sizeMap: ReadonlyMap<number, number>,
+  iconSize: StatusIconSizer,
   opts: StatusOverlayOpts = {},
 ): StatusOverlays {
   // Fast path: most map cells carry no status bits and no server icons. The
   // canvas map calls this once per rendered cell, so bail before allocating an
   // overlays array + result object in the empty case. (includeMdam surfaces —
-  // the describe popup — are rare and skip the fast path so MDAM still decodes.)
+  // the describe popup, tile-mode monster-list rows — skip it whenever the
+  // monster is damaged, so MDAM still decodes below.)
   if (!mayHaveStatusOverlays(fg, icons, opts)) return EMPTY_STATUS_OVERLAYS
 
   const f = fgFlags(fg)
@@ -166,7 +173,12 @@ export function buildStatusOverlays(
   // Trap / item-underneath markers and attitude gem: fixed authored positions.
   if (f.NET) overlays.push({ name: 'TRAP_NET', xofs: 0, yofs: 0 })
   if (f.WEB) overlays.push({ name: 'TRAP_WEB', xofs: 0, yofs: 0 })
-  if (f.S_UNDER) overlays.push({ name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 })
+  // Item-stack marker, three styles by pile contents (tiledgnbuf.cc priority:
+  // artefact > good > plain; the engine sets exactly one flag). Pre-rework
+  // servers only have plain S_UNDER, whose icon there is named SOMETHING_UNDER.
+  if (f.S_UNDER_ARTEFACT) overlays.push({ name: 'ITEM_STACK_3', xofs: 0, yofs: 0 })
+  else if (f.S_UNDER_GOOD) overlays.push({ name: 'ITEM_STACK_2', xofs: 0, yofs: 0 })
+  else if (f.S_UNDER) overlays.push({ name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 })
 
   if (f.PET) overlays.push({ name: 'FRIENDLY', xofs: 0, yofs: 0 })
   else if (f.GD_NEUTRAL) overlays.push({ name: 'GOOD_NEUTRAL', xofs: 0, yofs: 0 })
@@ -196,7 +208,7 @@ export function buildStatusOverlays(
   // (draw_icon_type): width < 0 → skip, 0 → fixed position, > 0 → fan then advance.
   for (const id of icons) {
     if (id <= 0) continue
-    const w = sizeMap.get(id) ?? -1
+    const w = iconSize(id)
     if (w < 0) continue
     if (w === 0) { overlays.push({ id, xofs: 0, yofs: 0 }); continue }
     overlays.push({ id, xofs: -shift || 0, yofs: 0 })
@@ -212,11 +224,13 @@ export function buildStatusOverlays(
 }
 
 // Resolve an IconOverlay to its numeric icons-atlas tile id: a named overlay
-// looks the tile-constant up in the icons module; a raw-id overlay passes
-// through. Returns undefined for an unknown name or a non-positive id. The one
-// place the canvas map and the DOM tile path agree on overlay→id dispatch.
+// looks the tile-constant up in the icons module (altName as the era
+// fallback); a raw-id overlay passes through. Returns undefined for an
+// unknown name or a non-positive id. The one place the canvas map and the
+// DOM tile path agree on overlay→id dispatch.
 export function resolveOverlayId(o: IconOverlay, icons: { [k: string]: unknown }): number | undefined {
-  const id = o.name !== undefined ? icons[o.name] : o.id
+  let id = o.name !== undefined ? icons[o.name] : o.id
+  if (!(typeof id === 'number' && id > 0) && o.altName !== undefined) id = icons[o.altName]
   return typeof id === 'number' && id > 0 ? id : undefined
 }
 

@@ -1,13 +1,13 @@
 {
   "name": "PocketZot (DWEM)",
   "short_name": "PocketZot",
-  "description": "Unofficial mobile client for Dungeon Crawl Stone Soup (DCSS) WebTiles",
+  "description": "Mobile app for Dungeon Crawl Stone Soup (DCSS) with DWEM extensions — play online on WebTiles servers or fully offline on your device",
   "theme_color": "#1c1917",
   "background_color": "#0a0908",
   "display": "standalone",
   "start_url": ".",
   "scope": ".",
-  "orientation": "portrait",
+  "orientation": "any",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

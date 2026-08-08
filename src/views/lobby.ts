@@ -1,12 +1,15 @@
-import type { WsConnection } from '../ws/connection'
+import type { GameConnection } from '../ws/connection'
 import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession, saveSession } from '../auth/session'
 import { cncUserinfo } from '../dwem/cnc-userinfo'
+import { escHtml } from '../game/dcss-colors'
 import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import type { SpectateTarget } from './game-view'
-import { tagFor } from '../servers'
+import { labelFor, SPECTATE_SERVERS, tagFor } from '../servers'
+import { setLastSpectateServer } from '../prefs'
 import { fitToWidth } from './fit-terminal'
-import { openAboutDoc, openChangelogDoc } from './docs'
+import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
+import { openSettings } from './settings-view'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
 import { classifyTransition } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
@@ -15,12 +18,16 @@ import { ChatView } from './chat-view'
 import { CncPublicChatClient, CNC_PUBLIC_CHAT_BOT, isCncPublicChatAvailable } from '../dwem/cnc-public-chat'
 
 export function buildLobbyView(
-  conn: WsConnection,
+  conn: GameConnection,
   username: string,
   guest: boolean,
   onGameStart: (spectating?: SpectateTarget, loader?: TileLoader, gameId?: string) => void,
   onDisconnect: () => void,
   exit?: GameExit,
+  // Guest only: hop to another server's spectate lobby without going back to
+  // the login home. Resolves once the new connection is up (the caller swaps
+  // the view); rejects with the current lobby left intact and connected.
+  onSwitchServer?: (wsUrl: string) => Promise<void>,
 ): HTMLElement {
   // game_id of the version line the user clicked Play on, captured at click time
   // and forwarded to the game view (for the login-screen doll shelf's identity
@@ -53,12 +60,36 @@ export function buildLobbyView(
 
   const serverTag = tagFor(conn.wsUrl)
   const useCncUserinfo = cncUserinfo.isEnabledForServer(conn.wsUrl)
-  const headerRight = guest
-    ? `<div class="lobby-account-chip is-guest">
-         <span class="lobby-chip-role">Guest</span>
-         <span class="lobby-chip-sep">·</span>
-         <span class="lobby-chip-tag">${escHtml(serverTag)}</span>
-       </div>`
+  // A guest is here to watch, and which server has anyone worth watching is
+  // not knowable until you're looking at one — so the chip that says where you
+  // are doubles as the way to go elsewhere, rather than sending you back to
+  // the home screen to guess again. Static (the plain chip) when there is
+  // nowhere to switch to: no handler, or this is the only spectatable server.
+  const canSwitch = guest && onSwitchServer !== undefined && SPECTATE_SERVERS.length > 1
+  // Same contents whether or not it opens a menu, so the two chips can't drift.
+  const guestChipInner = `
+    <span class="lobby-chip-role">Guest</span>
+    <span class="lobby-chip-sep">·</span>
+    <span class="lobby-chip-tag">${escHtml(serverTag)}</span>`
+  const headerRight = canSwitch
+    ? `
+      <div class="lobby-account-chip-wrap">
+        <button id="lobby-server-chip" class="lobby-account-chip is-guest" type="button"
+                aria-haspopup="menu" aria-expanded="false" aria-label="Guest on ${escHtml(serverTag)}">
+          ${guestChipInner}
+          <span class="lobby-chip-caret">▾</span>
+        </button>
+        <div id="lobby-server-menu" class="lobby-account-menu" hidden>
+          ${SPECTATE_SERVERS.map(s => `
+            <button type="button" class="lobby-account-menu-item lobby-server-item${
+              s.wsUrl === conn.wsUrl ? ' is-current' : ''}" data-ws="${escHtml(s.wsUrl)}">
+              ${escHtml(s.label)}
+            </button>`).join('')}
+        </div>
+      </div>
+    `
+    : guest
+    ? `<div class="lobby-account-chip is-guest">${guestChipInner}</div>`
     : `
       <div class="lobby-account-chip-wrap">
         <button id="lobby-account-chip" class="lobby-account-chip" type="button"
@@ -67,10 +98,12 @@ export function buildLobbyView(
           <span class="lobby-chip-sep">·</span>
           <span class="lobby-chip-tag">${escHtml(serverTag)}</span>
           <span class="lobby-chip-caret">▾</span>
+          ${unreadDotHtml('unread-dot-corner')}
         </button>
         <div id="lobby-account-menu" class="lobby-account-menu" hidden>
+          <button id="lobby-settings" type="button" class="lobby-account-menu-item">Settings</button>
           <button id="lobby-about" type="button" class="lobby-account-menu-item">About</button>
-          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new</button>
+          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new${unreadDotHtml()}</button>
           <button id="lobby-logout" type="button" class="lobby-account-menu-item">Logout</button>
         </div>
       </div>
@@ -133,19 +166,18 @@ export function buildLobbyView(
     publicChatClient.connect()
   }
 
-  let closeAccountMenu: (() => void) | null = null
+  let closeChipMenu: (() => void) | null = null
 
   view.querySelector('#lobby-back')!.addEventListener('click', () => {
-    closeAccountMenu?.()
+    closeChipMenu?.()
     conn.close()
     onDisconnect()
   })
 
-  if (!guest) {
-    const chip = view.querySelector<HTMLButtonElement>('#lobby-account-chip')!
-    const menuEl = view.querySelector<HTMLElement>('#lobby-account-menu')!
-    const logoutBtn = view.querySelector<HTMLButtonElement>('#lobby-logout')!
-
+  // Dropdown mechanics for a header chip: toggle on the chip, close on any
+  // pointer outside it and its menu. Shared by the account menu and the guest
+  // server switcher, which are the same control with different contents.
+  function wireChipMenu(chip: HTMLButtonElement, menuEl: HTMLElement): () => void {
     function closeMenu(): void {
       if (menuEl.hidden) return
       menuEl.hidden = true
@@ -158,6 +190,15 @@ export function buildLobbyView(
       document.addEventListener('pointerdown', onOutside, true)
     }
     function onOutside(e: Event): void {
+      // Self-unhooks once the view is gone (same pattern as login.ts's pref
+      // listener): a lobby can be torn down with the menu still open — an
+      // inbound `close`, or a dropped socket — and nothing calls closeMenu on
+      // those paths, so without this the listener keeps the whole detached
+      // view (games map, tile loader, connection) alive on `document`.
+      if (!chip.isConnected) {
+        document.removeEventListener('pointerdown', onOutside, true)
+        return
+      }
       const t = e.target as Node | null
       if (!t) return
       if (chip.contains(t) || menuEl.contains(t)) return
@@ -166,8 +207,50 @@ export function buildLobbyView(
     chip.addEventListener('click', () => {
       if (menuEl.hidden) openMenu(); else closeMenu()
     })
-    closeAccountMenu = closeMenu
+    return closeMenu
+  }
 
+  if (canSwitch) {
+    const chip = view.querySelector<HTMLButtonElement>('#lobby-server-chip')!
+    const menuEl = view.querySelector<HTMLElement>('#lobby-server-menu')!
+    const closeMenu = wireChipMenu(chip, menuEl)
+    closeChipMenu = closeMenu
+
+    for (const item of menuEl.querySelectorAll<HTMLButtonElement>('.lobby-server-item')) {
+      item.addEventListener('click', () => {
+        closeMenu()
+        const wsUrl = item.dataset['ws']!
+        if (wsUrl === conn.wsUrl) return
+        // Remembered on the ask, not on success — same order as the home
+        // screen's own spectate button (login.ts), so a pick made here and a
+        // pick made there leave the same trace.
+        setLastSpectateServer(wsUrl)
+        chip.disabled = true
+        noticeEl.textContent = `Connecting to ${labelFor(wsUrl)}…`
+        noticeEl.hidden = false
+        // By the time it resolves this view is gone — swapped for the new
+        // server's lobby, or for whatever the user navigated to meanwhile. So
+        // only the failure path has anything left to clean up, and it leaves
+        // the current lobby live.
+        void onSwitchServer!(wsUrl).catch(() => {
+          chip.disabled = false
+          noticeEl.textContent = `Could not connect to ${labelFor(wsUrl)}.`
+        })
+      })
+    }
+  }
+
+  if (!guest) {
+    const chip = view.querySelector<HTMLButtonElement>('#lobby-account-chip')!
+    const menuEl = view.querySelector<HTMLElement>('#lobby-account-menu')!
+    const logoutBtn = view.querySelector<HTMLButtonElement>('#lobby-logout')!
+    const closeMenu = wireChipMenu(chip, menuEl)
+    closeChipMenu = closeMenu
+
+    view.querySelector('#lobby-settings')!.addEventListener('click', () => {
+      closeMenu()
+      openSettings()
+    })
     view.querySelector('#lobby-about')!.addEventListener('click', () => {
       closeMenu()
       openAboutDoc()
@@ -175,6 +258,8 @@ export function buildLobbyView(
     view.querySelector('#lobby-changelog')!.addEventListener('click', () => {
       closeMenu()
       openChangelogDoc()
+      // Opening the doc marked it seen — clear both this view's dots.
+      view.querySelectorAll('.unread-dot').forEach(el => el.remove())
     })
 
     logoutBtn.addEventListener('click', () => {
@@ -449,7 +534,7 @@ export function buildLobbyView(
     const parts: string[] = []
     const hasMeta = g.char || g.xl != null || g.place
     if (g.char) parts.push(escHtml(g.char))
-    if (g.xl != null) parts.push(`XL${g.xl}`)
+    if (g.xl != null) parts.push(`XL:${g.xl}`)
     if (g.place) parts.push(escHtml(g.place))
     if (!hasMeta && g.milestone) parts.push(`<i>${escHtml(g.milestone.replace(/^started /, ''))}</i>`)
     const ver = versionLabel(g.game_id)
@@ -529,16 +614,17 @@ export function buildLobbyView(
 // Matches the reference's normal_exit set (client.js:exit_reason_message).
 const NORMAL_EXIT = new Set(['quit', 'won', 'bailed out', 'dead', 'saved', 'cancel'])
 
-// Render the post-game exit dialog over the lobby. Mirrors the reference, which
+// Render the post-game exit dialog over the lobby (exported for the offline
+// lobby, which shows the same dialog for engine endings). Mirrors the reference, which
 // has no title — just body content: an optional reason sentence on top, then
 // the summary blurb. The reason sentence appears only for abnormal (crash/
 // error/disconnect) or spectated exits ("Unfortunately your game crashed." /
-// "tdpma stopped playing (saved)."); a first-person normal exit (died/won/quit)
+// "bram stopped playing (saved)."); a first-person normal exit (died/won/quit)
 // lets the summary speak for itself. The summary is always shown when present,
 // even when it repeats the game-over screen just seen, so the recap lives in
 // one place. Suppressed only when there's nothing to say (a first-person normal
 // exit with no summary, e.g. cancel), matching the reference's show condition.
-function maybeShowExitDialog(view: HTMLElement, exit: GameExit): void {
+export function maybeShowExitDialog(view: HTMLElement, exit: GameExit): void {
   const abnormal = !NORMAL_EXIT.has(exit.reason)
   const sentence = abnormal || !!exit.spectated
   if (!sentence && !exit.message) return
@@ -627,10 +713,6 @@ function dumpLabel(reason: string): string {
   if (reason === 'saved') return 'Character dump'
   if (reason === 'crash') return 'Crash log'
   return 'Morgue file'
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function versionLabel(gameId: string): string {

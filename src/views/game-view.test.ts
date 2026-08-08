@@ -280,6 +280,42 @@ describe('ui-push / ui-pop overlay stack', () => {
     expect(isHidden(overlay(h))).toBe(true)
   })
 
+  it("renders a formatted-scroller's more footer (scroller.cc m_more, e.g. the fatal-error popup)", () => {
+    const h = setup()
+    h.dispatch({
+      msg: 'ui-push', type: 'formatted-scroller', tag: 'error',
+      text: 'Something went badly wrong.',
+      more: '<cyan>Hit any key to exit...</cyan>',
+    })
+    const footer = overlay(h).querySelector<HTMLElement>('.scroller-more')
+    expect(footer).not.toBeNull()
+    expect(footer!.textContent).toBe('Hit any key to exit...')
+    // The body text is still there above it.
+    expect(overlay(h).textContent).toContain('Something went badly wrong.')
+  })
+
+  it('omits the scroller more footer when the wire field is empty or markup-only', () => {
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', tag: 'help', text: 'body', more: '' })
+    expect(overlay(h).querySelector('.scroller-more')).toBeNull()
+    h.dispatch({ msg: 'ui-pop' })
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', tag: 'help', text: 'body', more: '<lightgrey></lightgrey>' })
+    expect(overlay(h).querySelector('.scroller-more')).toBeNull()
+  })
+
+  it('a ui-state text update keeps the scroller more footer intact', () => {
+    const h = setup()
+    h.dispatch({
+      msg: 'ui-push', type: 'formatted-scroller', tag: 'error',
+      text: 'first page', more: 'Hit any key to exit...',
+    })
+    // Scroller ui-states carry only text/highlight (scroller.cc:122-124);
+    // `more` must survive from the original push through the in-place update.
+    h.dispatch({ msg: 'ui-state', type: 'formatted-scroller', text: 'second page' })
+    expect(overlay(h).textContent).toContain('second page')
+    expect(overlay(h).querySelector('.scroller-more')?.textContent).toBe('Hit any key to exit...')
+  })
+
   it('unwraps server hanging-indent prop blocks into one hang-classed prose line', () => {
     const h = setup()
     // Wire layout from _format_prop_desc (describe.cc): 80-col hard wrap with
@@ -462,6 +498,25 @@ describe('ui-push / ui-pop overlay stack', () => {
     expect(isHidden(overlay(h))).toBe(false)
     expect(overlay(h).querySelector('.overlay-title span')?.textContent).toBe('SNAP')
   })
+
+  it('ui-stack REPLACES a live-pushed stack instead of duplicating it (offline attach)', () => {
+    // Offline, the mini-server's attach handshake forces _send_everything
+    // while the newgame screen is already up live: the snapshot re-sends the
+    // same push. Appending would leave a phantom copy that one ui-pop later
+    // uncovers (species screen stuck over the running game).
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'newgame-choice', title: 'SPECIES' })
+    h.dispatch({ msg: 'ui-stack', items: [{ msg: 'ui-push', type: 'newgame-choice', title: 'SPECIES' }] })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('an empty ui-stack snapshot clears a stale overlay', () => {
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 'STALE', body: 'b' })
+    h.dispatch({ msg: 'ui-stack', items: [] })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
 })
 
 describe('menu handler', () => {
@@ -544,6 +599,373 @@ describe('menu handler', () => {
     expect(isHidden(overlay(h))).toBe(false)
     expect(overlay(h).textContent).toContain('a +0 short sword')   // untouched
     expect(overlay(h).textContent).toContain('a buckler (worn)')   // patched
+  })
+})
+
+// A yesno() popup as the engine emits it (prompt.cc yesno(): a Menu with
+// tag "prompt"; wire shape per Menu::webtiles_write_menu). With
+// MF_ARROWS_SELECT the opening `more` is the nav-help keyhelp *template* —
+// webtiles_write_more sends different more/alt_more variants (the
+// unscrollable one is "" for singleselect) — and default_answer 'N'
+// arrives as last_hovered on the No row.
+//
+// The rejected-key error (prompt.cc: allow_lowercase=false, typed
+// lowercase → pop.set_more) reaches the client two different ways:
+// - yesno()'s own loop: set_more runs after pop.show() returned, so
+//   update_more's webtiles send is skipped (`if (!alive) return`) and the
+//   next iteration REOPENS the popup — close_menu, then a fresh menu
+//   message with the error as both more and alt_more (non-template).
+// - a set_more on a still-open menu emits update_menu with the same
+//   identical more/alt_more pair.
+const yesnoPrompt = () => ({
+  msg: 'menu',
+  'ui-centred': false,
+  tag: 'prompt',
+  last_hovered: 1,
+  title: { text: 'Save game and exit? ' },
+  more: '<lightgrey>[<w>Up</w>|<w>Down</w>] select  [<w>Esc</w>] close</lightgrey>',
+  alt_more: '<lightgrey>[<w>Esc</w>] close</lightgrey>',
+  total_items: 2,
+  chunk_start: 0,
+  items: [
+    { level: 2, text: 'Y - Yes', hotkeys: [89, 121] },
+    { level: 2, text: 'N - No', hotkeys: [78, 110] },
+  ],
+})
+const UPPERCASE_ERR = '<lightred>Uppercase [Y]es or [N]o only, please.</lightred>'
+const errUpdate = () => ({ msg: 'update_menu', more: UPPERCASE_ERR, alt_more: UPPERCASE_ERR })
+
+describe('floating prompt (yesno/travel popups)', () => {
+  it('floats over the visible game in a card, with the default answer highlighted', () => {
+    const h = setup()
+    h.dispatch({ msg: 'player', hp: 10, hp_max: 10 })  // latch hudRevealed
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('overlay-float')).toBe(true)
+    expect(overlay(h).classList.contains('prompt-menu')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-card')).toBeTruthy()
+    // The game stays visible behind the backdrop.
+    expect(isHidden(msgLog(h))).toBe(false)
+    expect(isHidden(hud(h))).toBe(false)
+    // Seeded server hover (yesno's default answer) renders immediately.
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('N - No')
+  })
+
+  it('restores the playfield hidden by a covering ui-push when the prompt re-floats (G → ? → Esc)', () => {
+    const h = setup()
+    h.dispatch({ msg: 'player', hp: 10, hp_max: 10 })
+    h.dispatch(yesnoPrompt())
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', title: 'Help', body: 'Travel help.' })
+    const mapEl = h.view.querySelector<HTMLElement>('#map-grid')!
+    expect(isHidden(mapEl)).toBe(true)     // full-screen overlay hid the game
+    expect(isHidden(msgLog(h))).toBe(true)
+    expect(isHidden(hud(h))).toBe(true)
+    h.dispatch({ msg: 'ui-pop' })          // prompt re-floats…
+    expect(overlay(h).classList.contains('overlay-float')).toBe(true)
+    expect(isHidden(mapEl)).toBe(false)    // …over the restored game, not a black screen
+    expect(isHidden(msgLog(h))).toBe(false)
+    expect(isHidden(hud(h))).toBe(false)
+  })
+})
+
+// Non-prompt menus arrive with a hover seed too — Menu::show gives every
+// MF_ARROWS_SELECT menu a hover on its first selectable item (set_hovered(0)
+// + cycle_hover past headers) and webtiles_write_menu emits it. Policy: that
+// seed is noise outside the prompt family, so it must stay hidden AND out of
+// the cursor arithmetic until the user opts in by arrowing — otherwise the
+// first Down computes from a position the user never saw and skips an item.
+describe('non-prompt menu hover seeding', () => {
+  const arrowsMenu = () => ({
+    msg: 'menu',
+    tag: 'inv',
+    flags: 0x40000,  // MF_ARROWS_SELECT
+    last_hovered: 1, // server's cursor: first item after the header
+    title: { text: 'Inventory' },
+    total_items: 3,
+    chunk_start: 0,
+    items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a +0 buckler', hotkeys: [98] },
+    ],
+  })
+  const arrowDown = () => document.dispatchEvent(new KeyboardEvent('keydown',
+    { key: 'ArrowDown', code: 'ArrowDown', bubbles: true } as KeyboardEventInit))
+
+  it('ignores the seed: no highlight on open, and the first Down lands on the first item', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+    expect(sent(h)).toContainEqual({ msg: 'menu_hover', hover: 1, mouse: false })
+  })
+
+  // A yesno popup stacked over a menu (e.g. the shopping list's "cannot
+  // afford; travel there anyway?" — shopping.cc, a non-null-prompt yesno
+  // while ui::has_layout()) seeds hoveredMenuIdx with no user action. When
+  // it closes, the restored parent must get a fresh-look reset, not inherit
+  // the prompt's hover as an index into the wrong menu's item space.
+  it('does not leak a stacked prompt\'s seeded hover into the restored parent menu', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    h.dispatch({
+      msg: 'menu', tag: 'prompt', flags: 0x40000, last_hovered: 1,
+      title: { text: 'You cannot afford this item; travel there anyway? ' },
+      total_items: 2, chunk_start: 0,
+      items: [
+        { level: 2, text: 'Y - Yes', hotkeys: [89, 121] },
+        { level: 2, text: 'N - No', hotkeys: [78, 110] },
+      ],
+    })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('N - No')
+    h.dispatch({ msg: 'close_menu' })
+    // Restored parent: no phantom highlight from the prompt's No row…
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    // …and the cursor arithmetic is unseeded too: first Down lands on the
+    // first selectable item, not one past the prompt's leaked index.
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+  })
+})
+
+// The paged inventory (0.34+/trunk MF_PAGED_INVENTORY) rebuilds the item list
+// in place when left/right flips category: update_menu (more/alt_more, then
+// total_items + last_hovered), update_menu_items chunk 0, update_menu title.
+// Footer and hover must survive that rebuild — reference shape: update_more()
+// derives the footer from current state on every event (menu.js:781), and
+// handle_size_change revalidates the hover against the new items.
+describe('menu footer derivation and hover revalidation (paged inventory)', () => {
+  const PAGED_MORE = '<lightgrey>[<w>PgDn</w>] page down  [<w>PgUp</w>] page up</lightgrey>  <lightgrey>[<w>XXX</w>]</lightgrey>'
+  // MF_ARROWS_SELECT | MF_PAGED_INVENTORY, like the real i-menu.
+  const gearMenu = () => ({
+    msg: 'menu', tag: 'inventory', flags: 0x240000, last_hovered: 1,
+    title: { text: 'Gear' }, more: PAGED_MORE, alt_more: '',
+    total_items: 3, chunk_start: 0,
+    items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler', hotkeys: [98] },
+    ],
+  })
+  const arrowDown = () => document.dispatchEvent(new KeyboardEvent('keydown',
+    { key: 'ArrowDown', code: 'ArrowDown', bubbles: true } as KeyboardEventInit))
+  const fakeOverflow = (el: HTMLElement) => {
+    Object.defineProperty(el, 'scrollHeight', { value: 400, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 100, configurable: true })
+  }
+
+  it('shows the unscrollable alt_more variant when the list does not overflow', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // happy-dom heights are 0 → not scrollable → the singleselect template's
+    // empty alt_more → footer hidden entirely, matching the reference.
+    expect(isHidden(overlay(h).querySelector<HTMLElement>('.overlay-footer')!)).toBe(true)
+  })
+
+  it('keeps the position indicator live across the list rebuild of a category flip', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    h.dispatch({ msg: 'update_menu', total_items: 3, last_hovered: -1 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    h.dispatch({ msg: 'update_menu', title: { text: 'Potions' } })
+    // The flip replaced the .overlay-list element; the scroll listener must
+    // be on the new one (it used to die with the old node, freezing the
+    // indicator for the rest of the menu's life).
+    const list = overlay(h).querySelector<HTMLElement>('.overlay-list')!
+    fakeOverflow(list)
+    list.scrollTop = 300
+    list.dispatchEvent(new Event('scroll'))
+    const footer = overlay(h).querySelector<HTMLElement>('.overlay-footer')!
+    expect(isHidden(footer)).toBe(false)
+    expect(footer.textContent).toContain('[bot]')
+    list.scrollTop = 0
+    list.dispatchEvent(new Event('scroll'))
+    expect(footer.textContent).toContain('[top]')
+  })
+
+  it('revalidates a hover that lands on a header after a flip: cycles to the next selectable row and re-syncs the server', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()  // reveal hover on idx 1 (short sword)
+    arrowDown()  // idx 2 (buckler)
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('buckler')
+    h.dispatch({ msg: 'update_menu', total_items: 4, last_hovered: 2 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 1, text: 'Unknown Potions' },        // idx 2: now a header
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('black potions')
+    expect(sent(h)).toContainEqual({ msg: 'menu_hover', hover: 3, mouse: false })
+  })
+
+  it('clears a hover past the end of a shorter category instead of ghosting it', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()
+    arrowDown()  // hover idx 2
+    h.dispatch({ msg: 'update_menu', total_items: 2 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Scrolls' },
+      { level: 2, text: 'c - a scroll of fog', hotkeys: [99] },
+    ] })
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+  })
+
+  it('a category flip starts the new category at the top instead of inheriting the old scroll offset', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    h.dispatch({ msg: 'update_menu', total_items: 4, last_hovered: -1 })  // ≠ 3: structural
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 1, text: 'Unknown Potions' },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(0)
+  })
+
+  it('a flip between equal-length categories still resets to the top (full-list replacement, same total)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu', total_items: 3, last_hovered: -1 })  // unchanged count
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(0)
+  })
+
+  it('an in-place patch keeps the scroll offset — including a chunk_start 0 selection echo', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 2, items: [
+      { level: 2, text: 'b - a buckler (worn)', hotkeys: [98] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+    // A single-row echo happening to start at index 0 must not read as a flip.
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Hand Weapons (2)' },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+  })
+
+  it('a full-list rewrite on a NON-paged menu keeps the scroll offset (ToggleableMenu ! toggles)', () => {
+    const h = setup()
+    h.dispatch({ ...gearMenu(), flags: 0x40000 })  // ARROWS_SELECT only
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword (weapon)', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler (worn)', hotkeys: [98] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+  })
+
+  it('ignores a non-forced menu_scroll when not spectating (reference server_menu_scroll gate)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()  // hover idx 1
+    h.dispatch({ msg: 'menu_scroll', first: 2, last_hovered: 2 })  // no force
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+  })
+
+  it('scrolls to a forced server scroll (cycle_headers section jump)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // menu_scroll with force (the ! / ? section-jump keys) must not throw and
+    // must apply the hover it carries once the user has driven hover.
+    arrowDown()
+    h.dispatch({ msg: 'menu_scroll', first: 2, last_hovered: 2, force: true })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('buckler')
+  })
+
+  it('footer derivation never touches a stacked describe-item actions bar (shared .overlay-footer class)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // Examining an item pushes a describe overlay whose [w]ield/[d]rop action
+    // bar is styled via the same .overlay-footer class the menu footer uses,
+    // while activeMenu stays set underneath. Any footer derivation firing now
+    // (the list-detach ResizeObserver notification, an update_menu) must
+    // leave the actions bar alone — it used to overwrite it with the menu
+    // keyhelp, or hide it outright when alt_more was empty.
+    h.dispatch({
+      msg: 'ui-push', type: 'describe-item', title: 'a - a +0 short sword',
+      body: 'A fine blade.', actions: '(w)ield, (d)rop, or (i)nscribe.',
+    })
+    const buttons = () => [...overlay(h).querySelectorAll<HTMLElement>('.overlay-actions .action-btn')]
+      .map(b => b.textContent)
+    expect(buttons()).toEqual(['(w)ield', '(d)rop', '(i)nscribe'])
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    const bar = overlay(h).querySelector<HTMLElement>('.overlay-actions')!
+    expect(buttons()).toEqual(['(w)ield', '(d)rop', '(i)nscribe'])
+    expect(isHidden(bar)).toBe(false)
+    // Closing the describe restores the menu with its own footer element.
+    h.dispatch({ msg: 'ui-pop' })
+    expect(overlay(h).querySelector('.overlay-actions')).toBeNull()
+    expect(overlay(h).querySelector('.menu-footer')).not.toBeNull()
+  })
+})
+
+describe('prompt footer error reveal (yesno set_more channel)', () => {
+  it('opens with the alert down, and a server echo of the opening more keeps it down', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
+    h.dispatch({ msg: 'update_menu', more: yesnoPrompt().more })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
+  })
+
+  it('the real yesno error sequence — reopen with more == alt_more — shows the footer from the start', () => {
+    // What the engine actually does on a rejected key: close the popup and
+    // push a fresh menu whose more IS the error (never an update_menu).
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch({ msg: 'close_menu' })
+    h.dispatch({ ...yesnoPrompt(), more: UPPERCASE_ERR, alt_more: UPPERCASE_ERR })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('a changed more on a still-open menu (alive-path update_menu) raises the alert too', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('the alert survives a ui-push/ui-pop re-render of the prompt', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', title: 'Help', body: 'x' })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('a fresh prompt opens with the alert cleared', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    h.dispatch({ msg: 'close_menu' })
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
   })
 })
 

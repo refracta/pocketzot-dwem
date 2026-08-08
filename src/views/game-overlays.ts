@@ -49,6 +49,10 @@ export interface UiPushMsg {
   features?: string
   changes?: string
   actions?: string
+  // formatted-scroller: footer text (scroller.cc m_more). Usually empty —
+  // scroller set_more() clears it — but carries real content on e.g. the
+  // fatal-error popup ("Hit any key to exit…") and arena results.
+  more?: string
   feats?: Array<{ title?: string; body?: string; quote?: string; tile?: { t: number; tex: number } }>
   fg_idx?: number  // describe-monster: monster's primary tile id (texture inferred)
   doll?: Array<[number, number]>  // describe-monster: player-doll part [tile_id, ymax] entries
@@ -109,8 +113,11 @@ export interface OverlayScreenCtx {
   focusView(): void
 }
 
-// ?-/ search prompts ("Describe what?", "Find what?", level travel, ...)
-// arrive as ui-push msgwin-get-line. The server drives the field via
+// ?/ search prompts ("Describe what?", "Find what?", ...) arrive as ui-push
+// msgwin-get-line — only when a popup layout is already open or no game is
+// running (message.cc:1646); in-play line prompts (Ctrl-F, travel depth)
+// use the in-log init_input path, and G's branch picker is a tag:"travel"
+// menu. The server drives the field via
 // ui-state-sync (widget_id "input") and we echo each edit back, so
 // generation_id must match. game-view's ui-state-sync handler finds the
 // field by its .input-dialog-field class.

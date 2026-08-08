@@ -1,14 +1,14 @@
-import type { WsConnection } from '../ws/connection'
+import type { GameConnection } from '../ws/connection'
 
 export interface DwemContext {
-  conn: WsConnection | null
+  conn: GameConnection | null
   username: string
   guest: boolean
   spectating?: { username: string }
 }
 
 export class SiteInformation {
-  conn: WsConnection | null = null
+  conn: GameConnection | null = null
   current_user = ''
   watching = false
   watching_username = ''
@@ -23,12 +23,12 @@ export class SiteInformation {
     this.playing = Boolean(ctx.conn) && !ctx.spectating && this.current_hash === '#game'
   }
 
-  setLobby(conn: WsConnection | null, username: string, guest: boolean): void {
+  setLobby(conn: GameConnection | null, username: string, guest: boolean): void {
     this.current_hash = '#lobby'
     this.setContext({ conn, username, guest })
   }
 
-  setGame(conn: WsConnection | null, username: string, guest: boolean, spectating?: { username: string }): void {
+  setGame(conn: GameConnection | null, username: string, guest: boolean, spectating?: { username: string }): void {
     this.current_hash = '#game'
     this.setContext({ conn, username, guest, spectating })
     this.playing = Boolean(conn) && !spectating

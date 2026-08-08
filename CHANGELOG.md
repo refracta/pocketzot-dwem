@@ -9,9 +9,79 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-05
+
+- Offline play: PocketZot can now run DCSS entirely on your device. Tap "Play
+  offline" on the login screen. The first launch installs the engine and tile
+  data as a one-time download. After that, games play with no network at all,
+  including in airplane mode.
+- Offline characters get named save slots, a past-games browser with scores
+  and full morgues, an editable options (RC) file, and one-file backup
+  export/import.
+- While spectating as a guest, the Guest chip at the top of the lobby now
+  opens a server menu, so you can switch to another server's spectate lobby
+  without going back to the home screen.
+
+## 2026-08-04
+
+- Fixed a tiles-mode bug where you could be drawn as translucent while
+  standing on a square where an invisible creature had died.
+
+## 2026-07-31
+
+- Tiles mode supports trunk's new item-stack markers, added yesterday:
+  the marker on a pile of items now comes in three styles, indicating the
+  presence of artefacts, special items, or only mundane ones.
+
+## 2026-07-23
+
+- New size settings: the D-pad and the message log (number of lines shown
+  and text size) are now adjustable in Settings. While playing, you can
+  adjust these directly over the live game.
+
+## 2026-07-20
+
+- Shift-tapping a spell in the quick-cast row now force-casts it (sends
+  `Za`).
+
+## 2026-07-18
+
+- Flipping to another inventory category now starts you at the top of it
+  instead of carrying over the previous category's scroll position.
+- Menus that fit on one screen no longer show scrolling hints and position.
+- In long menus, pressing an item-class key now jumps to that section.
+- Fixed the position indicator at the bottom of the inventory sometimes not
+  updating after switching categories.
+
+## 2026-07-17
+
+- Made prompt menus easier to reach and polished their appearance. Prompts
+  now float over the center of the map instead of covering the whole screen.
+
+## 2026-07-16
+
+- Made it harder to accidentally press touch controls while dragging down
+  to scroll the message log.
+- A dot on "What's new" now marks unread release notes.
+- Fixed the place name's tap target, which opens the minimap, being clipped
+  to a fraction of its intended size.
+- The minimap now avoids drawing under the device status bar and cutouts.
+- In tiles mode, the monster list now shows remaining health the way the
+  map does, replacing the console-version health chips, which remain in
+  ASCII mode.
+- Other improvements.
+
+## 2026-07-15
+
+- While playing, the chat/spectator chip no longer floats over menus.
+- Made it easier to exit the monster panel. Esc closes it, like any menu,
+  and tapping empty space below the list also closes it.
+- The phone's back button now works like Esc: it closes the open menu or
+  panel instead of leaving the game.
+
 ## 2026-07-11
 
-- Chat added: tap the ⊙ spectator count to read and send messages
+- Chat added: tap the ◉ spectator count to read and send messages
   while playing or spectating. When playing, the count appears once a
   spectator is present. New messages show a brief preview. Tap the message
   preview or the unread count to view.
@@ -226,11 +296,11 @@ Notable changes to PocketZot, newest first.
   or trunk servers after the server had been updated.
 - In describe menus, very long monster descriptions now stay a single tappable
   entry instead of splitting into separate rows.
-- Menu highlight follows the d-pad immediately on up/down, instead of after a server
-  round-trip.
+- Menu highlight follows the d-pad immediately on up/down, instead of
+  after a server round-trip.
 - D-pad diagonals page through long menus and jump to top/bottom.
-- Fixed a visible jump-back after paging on phone-width menus with tall description
-  rows.
+- Fixed a visible jump-back after paging on phone-width menus with tall
+  description rows.
 
 ## 2026-05-18
 

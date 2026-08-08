@@ -2,7 +2,8 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { setEnumsModule } from '../map/flag-decode'
 import {
   decodeMdam, decodeFgStatuses, decodeFgThreatTier,
-  buildStatusOverlays, mdamIconName, fgTileIndex,
+  buildStatusOverlays, mayHaveStatusOverlays, mdamIconName, fgTileIndex,
+  resolveOverlayId,
   nameColor, threatColor, isExcluded, monsterSort,
   mdamTier, MDAM_COLORS, THREAT_COLORS, FRIENDLY_COLOR, NEUTRAL_COLOR,
   filterAndSortMonsters,
@@ -157,7 +158,9 @@ describe('mdamIconName', () => {
 // (DOM). Mirrors cell_renderer.js draw_foreground ordering + status_shift.
 
 describe('buildStatusOverlays', () => {
-  const noSizes = new Map<number, number>()
+  // Sizer shape matches the server module's status_icon_size: id → width, -1 = skip.
+  const sizerOf = (m: Record<number, number>) => (id: number) => m[id] ?? -1
+  const noSizes = sizerOf({})
 
   it('empty for no flags / no icons', () => {
     expect(buildStatusOverlays(undefined, [], noSizes)).toEqual({ overlays: [], statusShift: 0 })
@@ -195,12 +198,12 @@ describe('buildStatusOverlays', () => {
 
   it('single-word fg has no poison (hi implicit 0)', () => {
     expect(buildStatusOverlays(FG_S_UNDER, [], noSizes).overlays).toEqual([
-      { name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
+      { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
     ])
   })
 
   it('cell.icons: skip width<0, pin width 0, fan width>0', () => {
-    const sizes = new Map<number, number>([[100, 6], [200, 0]])
+    const sizes = sizerOf({ 100: 6, 200: 0 })
     // No behaviour → shift starts at 0. 100 (w6) pins at 0 then advances to 6;
     // 200 (w0) stays fixed and does not advance; 999 (absent → -1) is dropped.
     const { overlays, statusShift } = buildStatusOverlays(0, [100, 200, 999], sizes)
@@ -212,7 +215,7 @@ describe('buildStatusOverlays', () => {
   })
 
   it('behaviour shift carries into cell.icons fan-out', () => {
-    const sizes = new Map<number, number>([[100, 6]])
+    const sizes = sizerOf({ 100: 6 })
     // STAB shift 12 → icon 100 at -12, then shift 18.
     const { overlays, statusShift } = buildStatusOverlays(FG_STAB, [100], sizes)
     expect(overlays).toEqual([
@@ -226,6 +229,12 @@ describe('buildStatusOverlays', () => {
     expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes).overlays).toEqual([])
     expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes, { includeMdam: true }).overlays)
       .toEqual([{ name: 'MDAM_LIGHTLY_DAMAGED', xofs: 0, yofs: 0 }])
+  })
+
+  it('includeMdam keeps the uninjured fast path (no overlays, predicate bails)', () => {
+    expect(mayHaveStatusOverlays(0, [], { includeMdam: true })).toBe(false)
+    expect(mayHaveStatusOverlays(FG_MDAM_LIGHT_LO, [], { includeMdam: true })).toBe(true)
+    expect(buildStatusOverlays(0, [], noSizes, { includeMdam: true }).overlays).toEqual([])
   })
 })
 
@@ -346,7 +355,7 @@ describe('monsterSort', () => {
 // backend — the bundled 0.34 fallback predates the flag.
 
 describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
-  const noSizes = new Map<number, number>()
+  const noSizes = (_id: number) => -1
   // Synthetic trunk-alike module (fg flags in lo bits like the flag-decode
   // test fake; bg REMEMBERED_INVIS at the trunk hi-word position).
   const trunkishEnums = {
@@ -385,6 +394,74 @@ describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
     // No server module installed → fallback backend, which never sets
     // REMEMBERED_INVIS (trunk's hi 0x080 means nothing in the 0.34 layout).
     expect(buildStatusOverlays(0, [], noSizes, { bg: [0, 0x080] }).overlays).toEqual([])
+  })
+})
+
+// ─── buildStatusOverlays — item-stack markers (trunk fg flags) ─────────────
+// The trunk item-stack rework (2985acfa17) split the S_UNDER marker into
+// three styles: plain (ITEM_STACK_1), branded/special beneath (S_UNDER_GOOD →
+// ITEM_STACK_2, fg hi 0x1000000), artefact beneath (S_UNDER_ARTEFACT →
+// ITEM_STACK_3, fg hi 0x2000000). The engine sets exactly one of the three.
+// The new flags need the server enums backend; the plain-S_UNDER overlay
+// carries SOMETHING_UNDER as altName for pre-rework icons modules.
+
+describe('buildStatusOverlays — item-stack flags', () => {
+  const noSizes = (_id: number) => -1
+  // Synthetic trunk-alike module: S_UNDER in the real lo position, the new
+  // stack flags at their real hi-word positions.
+  const trunkishEnums = {
+    prepare_fg_flags(raw: number | number[]) {
+      const lo = ((Array.isArray(raw) ? raw[0] : raw) ?? 0) >>> 0
+      const hi = Array.isArray(raw) ? (raw[1] ?? 0) : 0
+      return {
+        value: lo & 0xFFFF,
+        S_UNDER: (lo & 0x00040000) !== 0,
+        S_UNDER_GOOD: (hi & 0x1000000) !== 0,
+        S_UNDER_ARTEFACT: (hi & 0x2000000) !== 0,
+      }
+    },
+    prepare_bg_flags(raw: number | number[]) {
+      const lo = ((Array.isArray(raw) ? raw[0] : raw) ?? 0) >>> 0
+      return { value: lo & 0xFFFF }
+    },
+  }
+
+  afterEach(() => setEnumsModule(null))
+
+  it('picks the stack style from the flag (predicate included)', () => {
+    setEnumsModule(trunkishEnums)
+    expect(mayHaveStatusOverlays([0, 0x1000000], [])).toBe(true)
+    expect(mayHaveStatusOverlays([0, 0x2000000], [])).toBe(true)
+    expect(buildStatusOverlays([0, 0x1000000], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_2', xofs: 0, yofs: 0 },
+    ])
+    expect(buildStatusOverlays([0, 0x2000000], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_3', xofs: 0, yofs: 0 },
+    ])
+    expect(buildStatusOverlays([0x00040000, 0], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
+    ])
+  })
+
+  it('is off on versions predating the flags (bundled 0.34 fallback)', () => {
+    // No server module → fallback backend, which never sets the new flags
+    // (trunk's hi bits mean nothing in the 0.34 layout).
+    expect(buildStatusOverlays([0, 0x1000000], [], noSizes).overlays).toEqual([])
+  })
+})
+
+// ─── resolveOverlayId — altName era fallback ───────────────────────────────
+
+describe('resolveOverlayId', () => {
+  it('prefers name, falls back to altName, else undefined', () => {
+    const o = { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 }
+    expect(resolveOverlayId(o, { ITEM_STACK_1: 7, SOMETHING_UNDER: 3 })).toBe(7)
+    expect(resolveOverlayId(o, { SOMETHING_UNDER: 3 })).toBe(3)
+    expect(resolveOverlayId(o, {})).toBeUndefined()
+  })
+
+  it('raw ids pass through unchanged', () => {
+    expect(resolveOverlayId({ id: 42, xofs: 0, yofs: 0 }, {})).toBe(42)
   })
 })
 

@@ -11,12 +11,13 @@
 // APTITUDE_SIZE chars with no trailing pad — and the right column's hotkey
 // ends up preceded by just one space instead of two, which a `^  X` anchor
 // would miss.
-// Exported so skill-reflow.ts shares the exact same row anchor: the reflow's
-// column split and this parser must agree on what a skill row looks like.
 // Global (for matchAll); derive a non-global copy via `new RegExp(.source)` for
 // any single `.test()` call, since a global regex is stateful under `.test()`.
 // The first capture is the boundary; the second is the hotkey.
-export const SKILL_HOTKEY_RE = /(^|\s)([a-z0-9]) [+\-*] (?=\S)/g
+// Rows with no hotkey at all yield nothing, which is what we want: mastered
+// skills, and every row of a species with distributed training, are genuinely
+// unselectable.
+const SKILL_HOTKEY_RE = /(^|\s)([a-z0-9]) [+\-*] (?=\S)/g
 
 export function extractSkillHotkeys(lines: Iterable<string>): string[] {
   const seen = new Set<string>()
