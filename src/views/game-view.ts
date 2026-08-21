@@ -14,7 +14,7 @@ import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
 import { openSettings } from './settings-view'
-import { isOverlayOpen } from './overlay'
+import { isOverlayOpen, closeTopOverlay } from './overlay'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
@@ -42,6 +42,15 @@ import {
   showInputDialog, showNewgameChoice, showRandomCombo, showSeedSelection,
   type OverlayScreenCtx, type UiPushMsg,
 } from './game-overlays'
+
+// Minimal surface of Chromium's CloseWatcher API (absent from TS's DOM lib);
+// used by the Android back handler below. Feature-detected at the single use
+// site via an inline window cast (house style for nonstandard members) —
+// never assume presence.
+interface CloseWatcherLike {
+  onclose: (() => void) | null
+  destroy(): void
+}
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
 // for the duration of the y/N read, regardless of whether a menu is open.
@@ -152,41 +161,16 @@ export function buildGameView(
   // where the loader lands when it wasn't forwarded from the lobby.
   if (import.meta.env.DEV && loader) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
   let mapView: MapView | TileMapView = new MapView(store)
-  // Coalesced map rendering. A turn's `player` and `map` (plus any animation
-  // frames) usually arrive in one WS batch and dispatch within one task;
-  // rendering inside each handler meant the player-pan fullRender painted the
-  // *stale* store at the new center, then the map merge rendered again — all
-  // before the browser's next paint, so the first pass was pure wasted work.
-  // Handlers now schedule instead: store mutations stay synchronous, and one
-  // microtask flush (after the whole batch) paints the final state once. A
-  // pending full render subsumes any queued dirty set.
-  let pendingDirty: Set<string> | null = null
-  let pendingFull = false
-  let renderQueued = false
-  const scheduleRender = (dirty?: Set<string>): void => {
-    if (!dirty) {
-      pendingFull = true
-      pendingDirty = null
-    } else if (!pendingFull) {
-      // First dirty set of the flush window is adopted as-is (merge() returns
-      // a fresh Set per message); later ones union into it.
-      if (pendingDirty) for (const k of dirty) pendingDirty.add(k)
-      else pendingDirty = dirty
-    }
-    if (renderQueued) return
-    renderQueued = true
-    queueMicrotask(() => {
-      renderQueued = false
-      const full = pendingFull
-      const dirtySet = pendingDirty
-      pendingFull = false
-      pendingDirty = null
-      // Read `mapView` at flush time: a render-mode swap between schedule and
-      // flush should paint the live view, not the discarded one.
-      if (full) mapView.fullRender()
-      else if (dirtySet) mapView.render(dirtySet)
-    })
-  }
+  // Map rendering is synchronous per message, mirroring the reference client
+  // (display.js handle_map_message): the view center moves ONLY on map.vgrdc
+  // — never on player.pos — and the pan-blit + dirty repaint happen right in
+  // the map handler, before the next message dispatches. That ordering is
+  // what makes later same-batch paints (cursor, player HP stamp) safe by
+  // construction: nothing ever paints against a canvas whose origin is about
+  // to move. The earlier microtask-coalescing flush existed only to absorb
+  // the double paint caused by panning on player.pos; with vgrdc-only
+  // panning there is nothing to coalesce (multi-map batches are ~1% of
+  // traffic, and per-paint cost is sub-millisecond on the blit path).
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
   // created view, which otherwise starts at zero until the next player message.
@@ -360,6 +344,51 @@ export function buildGameView(
   // where the next keystroke gets eaten by the menu we forgot about.
   const menuStack: MenuMsg[] = []
   let activeMenu: MenuMsg | null = null
+  // Engine ui_cutoff (tileweb.cc push/pop_ui_cutoff): targeting, the level
+  // map, and inventory-adjust run *under* the popup stack (ui::cutoff_point
+  // in directn.cc / viewmap.cc / adjust.cc) — e.g. e(v)oke from an item
+  // describe pops the describe, then aims the wand while the inventory menu
+  // is still open server-side. `cutoff` is the engine menu-stack depth at
+  // push time: every layer at depth <= cutoff hides so the map and aiming
+  // prompt show through; -1 restores the survivors. Overlay *state* stays
+  // intact — the covered menu is still open server-side and tears down via
+  // its own close_menu after the targeter finishes.
+  let uiCutoff = -1
+  // Mirrors the engine's m_menu_stack depth (menus + CRT frames + ui-push
+  // layouts). Known skew: server-side a CRT occupies a real stack slot
+  // (push_crt_menu) while crtActive is a boolean that close_menu doesn't
+  // clear — between a CRT's close_menu and the layer/close_all_menus that
+  // follows, the count can be off by one. Pre-existing modeling; acceptable
+  // because no engine cutoff site can start under a CRT screen.
+  const overlayDepth = () => menuStack.length + (crtActive ? 1 : 0) + uiStack.length
+  const cutoffCovers = (depth: number) => uiCutoff >= 0 && depth <= uiCutoff
+  const cutoffHidesAll = () => cutoffCovers(overlayDepth())
+  // What belongs on screen right now, as one function of overlay state: the
+  // cutoff check plus the top-layer ladder, shared by every restore/repaint
+  // path (ui-pop, ui_cutoff, close_menu, ui-state) so the cutoff invariant
+  // holds by construction instead of per-site guards. ui-stack's
+  // empty-snapshot path stays separate on purpose — its terminal arm guards
+  // on dialogActive, not gameOverSeen.
+  const restoreTopLayer = () => {
+    // The monster panel can be up when this runs — it opens mid-cutoff by
+    // design (see serverPromptActive) — and every arm below wipes or hides
+    // its uiOverlay DOM. Drop the flag with the DOM, else the touch dispatch
+    // keeps swallowing keys for a panel that's gone and the list tap refuses
+    // to reopen. Flag only, not closeClientOverlays(): the paint arms manage
+    // the minimap themselves (enterOverlayLayout), and the hideOverlay arms
+    // must keep restoring a suspended spectator lens.
+    monsterPanelOpen = false
+    if (cutoffHidesAll()) {
+      // Skip the resync when already hidden: hideOverlay's rAF tail forces
+      // layout (fitToContainer), a real cost for a message-path no-op.
+      if (!gameOverSeen && uiOverlay.style.display !== 'none') hideOverlay()
+      return
+    }
+    if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
+    else if (crtActive) restoreCrt()
+    else if (activeMenu) showMenu(activeMenu)
+    else if (!gameOverSeen) hideOverlay()
+  }
   let hoveredMenuIdx = -1
   // Raw server-side hover index for the active menu. We drive menu hover
   // client-side via menu_hover (see cycleMenuHover) instead of forwarding raw
@@ -456,6 +485,14 @@ export function buildGameView(
     touchControls.closeKbd()
   }
 
+  // A user-driven dismissal (the Android back gesture) closes the kbd
+  // regardless of who opened it — and must clear the auto flag, or a later
+  // autoCloseKbdIfOurs closes a kbd the user reopened by hand.
+  function manualCloseKbd(): void {
+    kbdAutoOpened = false
+    touchControls.closeKbd()
+  }
+
   const view = document.createElement('div')
   view.id = 'game-view'
 
@@ -504,10 +541,7 @@ export function buildGameView(
           // (.dialog-body .button in style.css).
           btn.className = 'button'
           btn.textContent = 'Back to lobby'
-          btn.addEventListener('click', () => {
-            conn.send({ msg: 'go_lobby' })
-            exitToLobby()
-          })
+          btn.addEventListener('click', () => leaveToLobby())
           btnRow.appendChild(btn)
           body.append(p, btnRow)
           uiOverlay.appendChild(body)
@@ -751,9 +785,10 @@ export function buildGameView(
     }
   }
 
-  // Shared input dispatch for the touch-control buttons AND the phone back
-  // button (popstate below): the client-panel/lens/menu-nav guards here are
-  // what give an injected Esc the same meaning as a tapped one.
+  // Shared input dispatch for the touch-control buttons AND the Android
+  // back gesture (CloseWatcher below): the client-panel/lens/menu-nav
+  // guards here are what give an injected Esc the same meaning as a
+  // tapped one.
   function dispatchTouchInput(msg: ClientMsg): void {
     if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
     // The monster panel is a client-only overlay and the touch controls stay
@@ -820,10 +855,7 @@ export function buildGameView(
     exitBtn.className = 'lobby-btn-ghost'
     exitBtn.setAttribute('aria-label', 'Back to lobby')
     exitBtn.textContent = '← Lobby'
-    exitBtn.addEventListener('click', () => {
-      conn.send({ msg: 'go_lobby' })
-      exitToLobby()
-    })
+    exitBtn.addEventListener('click', () => leaveToLobby())
     const chip = document.createElement('div')
     chip.className = 'lobby-account-chip is-guest'
     chip.innerHTML = `
@@ -871,9 +903,23 @@ export function buildGameView(
   // mapView.fitToContainer() explicitly. That's redundant with the observer
   // but resolves the layout one frame earlier — without it there'd be a
   // brief flash at the old size before the observer's callback runs.
+  // Coalesced "re-fit next frame", modelled on scheduleMinimapRepaint below.
+  // Several triggers inside one frame (log growth + HUD change + keyboard,
+  // or an X-mode toggle landing on the same frame as an observer fire) used
+  // to schedule that many rAF re-fits, and fitToContainer is the most
+  // expensive thing on this path.
+  let fitQueued = false
+  function scheduleFit(): void {
+    if (fitQueued) return
+    fitQueued = true
+    requestAnimationFrame(() => {
+      fitQueued = false
+      mapView.fitToContainer()
+    })
+  }
   const fontScaleObserver = new ResizeObserver(() => {
     if (!hudRevealed) return
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
   })
   fontScaleObserver.observe(mapView.element)
 
@@ -941,44 +987,89 @@ export function buildGameView(
   }
   window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
 
-  // Phone back button: behaves exactly like the on-screen Esc button —
-  // same dispatch, same guards, no special cases. Without this, Back
-  // navigates the tab away and tears down the socket mid-game; users reach
-  // for it when a screen won't close (Android's universal dismiss gesture).
-  // A single sentinel history entry absorbs the pop, re-arms itself, and
-  // routes Esc; with nothing open Esc is a no-op, so Back never exits a
-  // running game (deliberate — accidental exit is the disaster case; the
-  // lobby button and home gesture remain). The chat sheet is deliberately
-  // NOT closed by Back: it's a companion pane carried across screens, and
-  // no other Esc path targets it either. Side effect, not a target: any
-  // other history-back lands here too — e.g. iOS Safari's in-browser edge
-  // swipe now stays in-app and reads as an Esc (installed PWAs have no
-  // swipe-back). Same lifecycle as the pref listeners above: released in
-  // exitToLobby, isConnected self-unhook as the backstop.
-  function onPopState(): void {
-    if (!view.isConnected) {
-      window.removeEventListener('popstate', onPopState)
+  // Android back (gesture or button) via CloseWatcher: a close request with
+  // no history traversal, so predictive-back has nothing to animate — the
+  // history-sentinel approach this replaced flashed an old-surface slide-in
+  // before popstate could re-arm. Back dismisses the topmost thing (virtual
+  // kbd, chat sheet, then any client overlay via the same Esc dispatch as
+  // the ⎋ button); with nothing open while playing it sends 'S', making the
+  // engine's own "Save game and exit?" prompt the exit offer — back never
+  // silently exits. Spectators leave for the lobby (the server discards a
+  // watcher's wire input, so an injected Esc would make back a no-op; mirror
+  // the physical-Esc handler instead). Android-only twice over: no
+  // other platform has a back contract (iOS edge-swipe stays inert now that
+  // nothing pushes history entries), and on desktop CloseWatcher treats the
+  // physical Esc KEY as the close signal — arming would double-fire every
+  // Esc. One watcher alive at a time, re-armed per close; no CloseWatcher
+  // (pre-126 Chromium, Samsung Internet <28) means native back behavior,
+  // accepted. Destroyed in exitToLobby, isConnected as the backstop.
+  let closeWatcher: CloseWatcherLike | null = null
+  function armCloseWatcher(): void {
+    // The platform gate lives here (not just at the initial arming) so the
+    // __dcssBack() dev hook can exercise onBackRequest's routing on any
+    // browser without the re-arm minting a real watcher — on desktop the
+    // close signal is the Esc KEY, and a live watcher would double-fire it.
+    if (!/android/i.test(navigator.userAgent)) return
+    const CW = (window as unknown as { CloseWatcher?: new () => CloseWatcherLike }).CloseWatcher
+    if (!CW) return
+    // Destroy any live predecessor first: after a real close it's spent and
+    // this is a no-op, but a direct __dcssBack() call re-arms while the old
+    // watcher is still alive — without this, each call would mint one more
+    // watcher in the same close-watcher group, and a single real back
+    // gesture would then fire onBackRequest once per watcher.
+    closeWatcher?.destroy()
+    const w = new CW()
+    w.onclose = onBackRequest
+    closeWatcher = w
+  }
+  function onBackRequest(): void {
+    // Declining to re-arm IS the self-unhook (the fired watcher is already
+    // spent), same backstop pattern as the pref listeners above.
+    if (!view.isConnected) return
+    armCloseWatcher()  // the fired watcher is spent; re-arm before handling
+    // Body-mounted overlays (Settings, docs, crypt) sit over everything and
+    // are invisible to uiQuiet — dismiss the topmost, like their Escape
+    // listener does (and like docKeyHandler, which checks them first).
+    if (closeTopOverlay()) return
+    if (touchControls.isKbdOpen()) {
+      manualCloseKbd()
       return
     }
-    history.pushState({ pz: 'game' }, '')
-    dispatchTouchInput({ msg: 'key', keycode: 27 })
+    if (chatView.isOpen) {
+      chatView.closeSheet()  // same routing as physical Esc (docKeyHandler)
+      return
+    }
+    if (spectating) {
+      // The server discards a watcher's game input, so an injected Esc
+      // would make back a no-op; leave client-side like physical Esc does.
+      leaveToLobby()
+      return
+    }
+    // With everything truly idle, 'S' makes the engine's own "Save game and
+    // exit?" prompt the exit offer; anything transient gets the canceling
+    // Esc instead (see idleAtCommandPrompt for the full inventory).
+    if (idleAtCommandPrompt()) dispatchTouchInput({ msg: 'input', text: 'S' })
+    else dispatchTouchInput({ msg: 'key', keycode: 27 })
   }
-  // Reloads and auto-resumes land with the sentinel already on top —
-  // don't stack another (each stale entry would cost one dead Back press
-  // after the view is gone).
-  if ((history.state as { pz?: string } | null)?.pz !== 'game') {
-    history.pushState({ pz: 'game' }, '')
-  }
-  window.addEventListener('popstate', onPopState)
+  armCloseWatcher()  // no-op off Android (gate inside)
 
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
     window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
-    window.removeEventListener('popstate', onPopState)
+    closeWatcher?.destroy()
+    closeWatcher = null
     touchControls.destroy()
     onLobby(exit)
+  }
+
+  // Deliberate user-driven leave: tell the server, then tear down locally.
+  // Shared by every "back to lobby" affordance (creation-guard button,
+  // spectator bar, spectator Esc/back) so the leave sequence can't drift.
+  function leaveToLobby(): void {
+    conn.send({ msg: 'go_lobby' })
+    exitToLobby()
   }
 
   // Save the player's current doll as a login-screen avatar recipe when their
@@ -1026,8 +1117,7 @@ export function buildGameView(
     const sig = JSON.stringify([doll, mcache, charMeta, fp])
     if (sig === lastAvatarSig) return
     lastAvatarSig = sig
-    // The turn count is the new-character signal: ../avatars appends when it drops
-    // below the slot's current entry (a fresh char reset it to 0), else upserts.
+    // The turn count is the new-character signal (../avatars REROLL_TURN_MAX).
     saveAvatar({
       wsUrl: conn.wsUrl, username, gameId, charName,
       httpBase: conn.httpBase, version: loader.version, fp, doll, mcache,
@@ -1071,6 +1161,12 @@ export function buildGameView(
     // whole strip. Toggles; pass true/false to force.
     ;(window as unknown as { __dcssMsgPill: (on?: boolean) => void }).__dcssMsgPill =
       (on) => { view.classList.toggle('msg-pill', on) }
+    // __dcssBack() — fire the Android back-gesture handler (onBackRequest)
+    // directly, so every routing branch is drivable in Playwright on any
+    // engine; only the CloseWatcher delivery itself needs a real device.
+    // armCloseWatcher's platform gate keeps the re-arm inert off Android.
+    ;(window as unknown as { __dcssBack: () => void }).__dcssBack =
+      () => onBackRequest()
     // __dcssMinimap() — open the level minimap overlay (same as tapping the
     // HUD place chip), for driving with __dcssSimulateIn'd map frames.
     ;(window as unknown as { __dcssMinimap: () => void }).__dcssMinimap =
@@ -1143,8 +1239,7 @@ export function buildGameView(
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
-        conn.send({ msg: 'go_lobby' })
-        exitToLobby()
+        leaveToLobby()
       }
       return
     }
@@ -1173,8 +1268,12 @@ export function buildGameView(
   // for barely one monster row. So gate on HEIGHT — tall landscape (tablet)
   // shows the full expanding list; short landscape (phone) collapses it to the
   // single-line compact chip. 600px cleanly separates phones (≤~430px tall in
-  // landscape) from tablets (≥744px). Portrait floats the full list over the
-  // map and never matches this query. Re-sync on rotation/resize, self-removing
+  // landscape) from tablets (≥744px) — and style.css's tablet-sidebar widen
+  // (min-height: 601px, the --sidebar-w override) is this query's complement:
+  // change one bound and the other must move with it, or a height could get
+  // the compact chip inside the wide sidebar. Portrait floats the full list
+  // over the map and never matches this query. Re-sync on rotation/resize,
+  // self-removing
   // once the view is gone (mirrors docKeyHandler); set the initial state before
   // the first map message so the first render is already in the right mode.
   const compactMql = window.matchMedia('(orientation: landscape) and (max-height: 600px)')
@@ -1200,7 +1299,7 @@ export function buildGameView(
       // actually sends.
       case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; closeClientOverlays(); harvester.reset(); hideOverlay() }
+        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; uiCutoff = -1; closeClientOverlays(); harvester.reset(); hideOverlay() }
         break
 
       // Raw-HTML modal pushed by the server (save-transfer prompt on trunk
@@ -1290,16 +1389,22 @@ export function buildGameView(
         mapSeen = true
         disarmCreationGuard()
         if (msg.clear) store.clear()
-        // vgrdc is resent on every map message even when it equals the
-        // current view center; setViewCenter returns true only on a real
-        // pan, so we can keep the dirty-render path live in steady state.
+        // vgrdc is the server's complete view-centering signal (present on a
+        // map message whenever it matters — roughly half of them in
+        // practice); setViewCenter returns true only on a real pan. The
+        // player handler never pans — reference parity (its player.js has no
+        // view-center writes at all).
         const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
         // Sticky like the reference's inv_mons_msg: only a present key
         // changes it ('' clears); store.clear() above also resets it.
         if (msg.invis_mon_desc !== undefined) store.invisMonDesc = msg.invis_mon_desc
         const dirty = store.merge(msg.cells ?? [])
-        if (msg.clear || panned) scheduleRender()
-        else scheduleRender(dirty)
+        // Render now, synchronously (reference display.js order, except we
+        // merge before panning so the blit's exposed strips paint this turn's
+        // cells instead of last turn's — panRender dedups strip∪dirty).
+        if (msg.clear) mapView.fullRender()          // store wiped — hard
+        else if (panned) mapView.panRender(dirty)    // origin moved — blit
+        else mapView.render(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
         scheduleMinimapRepaint()
@@ -1320,12 +1425,10 @@ export function buildGameView(
         tryResolveBackground() // name/species may have just arrived; see welcomeLine
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
-          // setViewCenter reports whether the center actually moved; reuse that
-          // instead of recomputing the prev/current comparison here. (Same gate
-          // as the 'map' case — full redraw only on a real pan.) Scheduled, not
-          // rendered: the same batch's `map` message merges this turn's deltas
-          // before the flush, so the full render paints the fresh store once.
-          if (mapView.setViewCenter(store.playerPos)) scheduleRender()
+          // Deliberately NO view-center change here: the view pans only on
+          // map.vgrdc, like the reference client (its player.js never touches
+          // the center). vgrdc arrives on the same turn's map message, whose
+          // handler pans and repaints synchronously before anything else runs.
           scheduleMinimapRepaint()
         }
         // Feed HP/MP to the renderer (tile mode draws under-tile mini-bars).
@@ -1361,6 +1464,10 @@ export function buildGameView(
         }
         break
       }
+
+      case 'options':
+        statsView.setOptions(msg.options ?? {})
+        break
 
       case 'txt': {
         // Renders a CRT screen / txt page / message — visible content, so the
@@ -1415,6 +1522,10 @@ export function buildGameView(
         const items = (msg as unknown as { items?: ServerMsg[] }).items
         if (!Array.isArray(items)) break
         uiStack.length = 0
+        // The attach snapshot never replays ui_cutoff (tileweb.cc
+        // _send_everything), so a stale pre-reconnect cutoff must not hide
+        // the re-sent stack.
+        uiCutoff = -1
         for (const item of items) handleMsg(item)
         // An empty snapshot must also clear a stale overlay — mirror
         // ui-pop's restore chain (dialogs live outside the engine stack).
@@ -1428,11 +1539,28 @@ export function buildGameView(
 
       case 'ui-pop':
         uiStack.pop()
-        if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
-        else if (crtActive) restoreCrt()
-        else if (activeMenu) showMenu(activeMenu)
-        else if (!gameOverSeen) hideOverlay()
+        restoreTopLayer()
         break
+
+      case 'ui_cutoff': {
+        // pop_ui_cutoff sends the *enclosing* cutoff (tileweb.cc:971), not
+        // always -1 — never branch on sign. Skip rendering under the
+        // end-screen hold (the offline mini-server swallows stack teardown
+        // after exitDeclared but not ui_cutoff — a trailing -1 must not
+        // paint a menu over the death screen) and under show_dialog modals
+        // (outside the engine stack, so no cutoff should touch them).
+        if (msg.cutoff === uiCutoff) break  // equal re-send: nothing to repaint
+        // A push hiding a visible menu wipes its list DOM (restoreTopLayer's
+        // hidden arm), and the pop's rebuild would land at the top — capture
+        // scroll first so e.g. a stash-preview round trip returns to where
+        // the user was. Safe here, unlike inside restoreTopLayer: any list
+        // in the DOM belongs to activeMenu (the close_menu divergence can't
+        // be in flight), and on pops the overlay is hidden so this no-ops.
+        captureMenuScroll()
+        uiCutoff = msg.cutoff
+        if (!gameOverSeen && !dialogActive) restoreTopLayer()
+        break
+      }
 
       case 'ui-state': {
         const raw = msg as unknown as Record<string, unknown>
@@ -1446,7 +1574,9 @@ export function buildGameView(
           const entry: UiPushMsg = { type: 'formatted-scroller', text, ...(highlight ? { highlight } : {}), ...(actions ? { actions } : {}) }
           if (uiStack.length > 0) {
             Object.assign(uiStack[uiStack.length - 1], entry)
-            showUiPush(uiStack[uiStack.length - 1])
+            // Update state always; restoreTopLayer repaints, so a body swap
+            // can't resurface a cutoff-hidden layer over the map.
+            restoreTopLayer()
           } else {
             showTxtPage(text)
           }
@@ -1456,7 +1586,7 @@ export function buildGameView(
           // sends a ui-state with the replacement body and keeps the parent
           // push's title, actions, and tile intact, so update body in place.
           uiStack[uiStack.length - 1].body = body
-          showUiPush(uiStack[uiStack.length - 1])
+          restoreTopLayer()
         }
         // from_webtiles=true is the server echoing our own
         // formatted_scroller_scroll back — our scroll position is already
@@ -1806,12 +1936,19 @@ export function buildGameView(
         // menu as indices in the wrong item space. The restored menu's own
         // pre-cover hover was already reset when the covering menu opened,
         // so this loses nothing: fresh look, fresh opt-in.
-        if (prev) showMenu(prev)
-        else {
+        if (prev) {
+          if (cutoffHidesAll()) {
+            // A close above an active cutoff must not repaint the covered
+            // menu over the targeting map: take the bookkeeping without the
+            // DOM build, then let restoreTopLayer clear the closed menu's
+            // surface (adoptMenu doesn't move overlayDepth, so it stays in
+            // the hidden arm).
+            adoptMenu(prev)
+            restoreTopLayer()
+          } else showMenu(prev)
+        } else {
           activeMenu = null
-          if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
-          else if (crtActive) restoreCrt()
-          else if (!gameOverSeen) hideOverlay()
+          restoreTopLayer()
         }
         break
       }
@@ -1823,6 +1960,7 @@ export function buildGameView(
         crtTag = undefined
         menuStack.length = 0
         activeMenu = null
+        uiCutoff = -1
         menuShift.reset()
         closeClientOverlays()
         titlePromptInput = null
@@ -1890,7 +2028,7 @@ export function buildGameView(
     // Zoom mode is left untouched: tiles already had zoom-on (forced at
     // construction by setRenderMode), and the scale shrinks each cell by
     // X_MODE_SCALE so the freed HUD/log area fills with more cells.
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
     // Stash-search activation opens an X-mode preview with the destination
     // cursor: swap the results menu out for the full map + d-pad so the
     // player can see where they'd travel and confirm with Enter. Restored
@@ -1913,7 +2051,7 @@ export function buildGameView(
     xdescReset()
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
     renderSpellRail()  // restore the quick-cast rail hidden by enterXMode
     if (activeMenu?.tag === 'stash') {
       // Returning to the stash results menu: keep HUD/msglog hidden (they were
@@ -2828,6 +2966,23 @@ export function buildGameView(
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
   }
 
+  // Truly idle at the command prompt — safe to inject a keystroke that must
+  // be read as a command (the Android back handler's 'S'). On top of
+  // commandChannelIdle (uiQuiet + harvest phase), input_mode must be COMMAND
+  // (1) — targeting and yesno reads are modes of their own that uiQuiet
+  // can't see (same guard as castSpellLetter's), where Esc is the cancel —
+  // and the client-only panels and the two inline input rows (text/numpad)
+  // must route Esc too: during a server line-read, an injected letter would
+  // be typed INTO the read (or pick an item slot at a slot prompt). The
+  // engine answers that Esc by returning input_mode to COMMAND, which is
+  // what removes the input rows client-side.
+  function idleAtCommandPrompt(): boolean {
+    return commandChannelIdle() && currentInputMode === 1
+      && !monsterPanelOpen && !minimapOpen
+      && !msgLog.querySelector('.game-text-input-row')
+      && numpadInput.style.display === 'none'
+  }
+
   // Fill the menu's `--more--` footer, hiding it entirely when the text is
   // empty: the bare element would still paint its hairline border, which
   // reads as a stray mini-bar at the overlay's bottom edge (starkest while
@@ -2880,23 +3035,24 @@ export function buildGameView(
     ? new ResizeObserver(() => updateMenuFooter())
     : null
 
-  function showMenu(msg: MenuMsg): void {
-    // The PromptMenu family — yesno() popups (prompt.cc, tag "prompt") and
-    // G's travel branch picker (travel.cc, tag "travel"; the only other
-    // PromptMenu in normal play) — floats as a modal over the still-visible
-    // game when arriving from normal play, like the reference .ui-popup:
-    // these questions are about the map you're standing on. A prompt fired
-    // while another menu/overlay owns the screen (shop purchase confirm,
-    // prompts over a CRT) keeps the full-screen treatment — the map isn't
-    // the context there, and un-hiding it would flash the wrong background.
-    // Checked before activeMenu is reassigned; a re-render of the same
-    // prompt (ui-pop restore) stays floating.
-    const promptFamily = msg.tag === 'prompt' || msg.tag === 'travel'
-    const floatPrompt = promptFamily && uiStack.length === 0
-      && !crtActive && !dialogActive && (activeMenu === null || activeMenu === msg)
+  // The PromptMenu family: yesno() popups (prompt.cc, tag "prompt") and G's
+  // travel branch picker (travel.cc, tag "travel") — the only PromptMenus in
+  // normal play.
+  function isPromptFamily(msg: MenuMsg): boolean {
+    return msg.tag === 'prompt' || msg.tag === 'travel'
+  }
+
+  // The state half of showMenu — everything menu adoption mutates except the
+  // paint. Split out so a cutoff-covered restore (close_menu while the engine
+  // targets on the map underneath) takes the bookkeeping without building DOM
+  // that hideOverlay would immediately discard — and without
+  // enterOverlayLayout's side effects (minimap suspend, chat-pill
+  // retraction) for an overlay that never becomes visible.
+  function adoptMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
       captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
+      const promptFamily = isPromptFamily(msg)
       // Prompt family only: seed the cursor from the menu's initial hover
       // and render it immediately (fillMenuItems highlights hoveredMenuIdx).
       // There the default hover is real information — yesno's default
@@ -2918,6 +3074,27 @@ export function buildGameView(
       promptInitialMore = msg.more ?? ''
     }
     activeMenu = msg
+  }
+
+  function showMenu(msg: MenuMsg): void {
+    // The PromptMenu family (isPromptFamily) floats as a modal over the
+    // still-visible game when arriving from normal play, like the reference
+    // .ui-popup: these questions are about the map you're standing on. A
+    // prompt fired while another menu/overlay owns the screen (shop purchase
+    // confirm, prompts over a CRT) keeps the full-screen treatment — the map
+    // isn't the context there, and un-hiding it would flash the wrong
+    // background. Checked before activeMenu is reassigned; a re-render of
+    // the same prompt (ui-pop restore) stays floating.
+    const promptFamily = isPromptFamily(msg)
+    const floatPrompt = promptFamily && uiStack.length === 0
+      && !crtActive && !dialogActive
+      && (activeMenu === null || activeMenu === msg
+        // Everything beneath this menu is cutoff-hidden (msg is already on
+        // menuStack when showMenu runs, so beneath = overlayDepth() - 1): a
+        // prompt arriving mid-targeting is a question about the live map,
+        // exactly the from-normal-play case, so it floats too.
+        || cutoffCovers(overlayDepth() - 1))
+    adoptMenu(msg)
     const title = stripDcss(msg.title?.text ?? '')
     // Prompt menus centre their question + 2-3 answer rows vertically
     // instead of pinning them under the status bar. enterOverlayLayout
@@ -3184,10 +3361,9 @@ export function buildGameView(
     )
   }
 
-  // Message-driven repaints coalesce through rAF, mirroring the main map's
-  // scheduleRender: a movement turn delivers player + map in one batch, and
-  // without this each message would repaint (and restyle) the lens
-  // separately.
+  // Message-driven repaints coalesce through rAF: a movement turn delivers
+  // player + map in one batch, and without this each message would repaint
+  // (and restyle) the lens separately.
   let minimapRepaintQueued = false
   function scheduleMinimapRepaint(): void {
     if (!minimapOpen || minimapRepaintQueued) return
@@ -3217,7 +3393,17 @@ export function buildGameView(
   // A server-driven prompt/menu owns the screen — no client-side map overlay
   // (monster panel, minimap) may open over it. Shared by the open guards so
   // the two can't drift apart.
+  //
+  // NOT a keystroke-safety check: idleAtCommandPrompt() is the injection
+  // guard, and it must keep seeing a cutoff-hidden menu as open — during a
+  // cutoff the targeter owns the keystream, so injecting is exactly as
+  // unsafe as under a visible menu.
   function serverPromptActive(): boolean {
+    // A cutoff covering the whole stack means the engine is running the map
+    // under it (targeting / level map entered from a popup): the screen is
+    // the live map, so the message pill and client lenses behave as in
+    // plain play. Dialogs live outside the engine stack and still count.
+    if (cutoffHidesAll()) return dialogActive || isHarvesting()
     return uiStack.length > 0 || crtActive || dialogActive || !!activeMenu || isHarvesting()
   }
 

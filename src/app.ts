@@ -8,6 +8,8 @@ import { siteInformation } from './dwem/site-information'
 import type { TileLoader } from './game/tiles/tile-loader'
 import { OFFLINE_GAME_ID } from './offline/offline-state'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
+import { count } from './counter'
+import { getPref } from './prefs'
 import { loadSession } from './auth/session'
 import { loadCredentials } from './auth/credentials'
 
@@ -51,6 +53,19 @@ export function initApp(appEl: HTMLElement): void {
   // lobby and mounts the game view directly: fixtures have no save slot, and
   // the replay flows drive rendering, not slot management.
   const params = new URLSearchParams(location.search)
+  // Perf harness: ?replay=<recording> replays a __dcssRec capture through the
+  // real game view with instrumentation (src/perf/replay.ts) — a lab bench,
+  // not a session: no login, no resume, no server. Checked first so a stale
+  // resume record can't hijack a profiling run. DEV-only (recordings are
+  // only served by the dev server); the DEV gate also keeps the lazy replay
+  // chunk out of prod builds entirely.
+  if (import.meta.env.DEV && params.get('replay')) {
+    void (async () => {
+      const { buildReplayView } = await import('./perf/replay')
+      setView(await buildReplayView(params))
+    })().catch((e: unknown) => showFatal(`Replay failed: ${e instanceof Error ? e.message : String(e)}`))
+    return
+  }
   if (params.has('offline')) {
     if (params.get('engine') === 'fake') void showOfflineGame('local')
     else showOfflineLobby()
@@ -96,13 +111,21 @@ function showOfflineLobby(exit?: GameExit): void {
 // header). Exit returns to the offline lobby, which shows the same
 // end-of-game dialog as the online one.
 async function showOfflineGame(name: string): Promise<void> {
-  const { bootOffline } = await import('./offline/boot')
+  let bootMod: typeof import('./offline/boot')
+  try {
+    bootMod = await import('./offline/boot')
+  } catch (e) {
+    showFatal(`Offline engine failed to load: ${String(e)}`)
+    return
+  }
+  const { bootOffline } = bootMod
   const params = new URLSearchParams(location.search)
   const boot = bootOffline(params, name)
   // Fixture replays get no gameId, keeping avatar/crypt writes disabled —
   // same reason boot.ts excludes them from the slot-record tracker: a golden
   // capture's character isn't yours and must not mint a phantom shelf entry.
   const gameId = params.get('engine') === 'fake' ? '' : OFFLINE_GAME_ID
+  if (gameId) count('play-offline', { ascii: getPref('mapRenderMode') === 'ascii' })
   state = 'game'
   conn = boot.conn
   currentUsername = name
@@ -191,6 +214,7 @@ async function switchSpectateServer(wsUrl: string): Promise<void> {
 }
 
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
+  count(spectating ? 'spectate' : 'play', { ascii: getPref('mapRenderMode') === 'ascii' })
   state = 'game'
   siteInformation.setGame(conn, currentUsername, currentIsGuest, spectating)
   setView(buildGameView(
@@ -284,6 +308,16 @@ function platformSuspendsSockets(): boolean {
 function setView(el: HTMLElement): void {
   root.textContent = ''
   root.appendChild(el)
+}
+
+// Dynamic-import failure surface: a stale SW start doc serving rotated chunk
+// hashes after a deploy makes lazy chunks 404 — that must render something,
+// not leave a blank #app with a silent unhandled rejection.
+function showFatal(text: string): void {
+  const el = document.createElement('pre')
+  el.style.cssText = 'padding:16px;color:#eeeeec;white-space:pre-wrap'
+  el.textContent = text
+  setView(el)
 }
 
 export { state }

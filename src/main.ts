@@ -4,6 +4,7 @@ import { installDwem } from './dwem'
 import { initUiScale } from './ui-scale'
 import { maybeMountSafeAreaProbe } from './safe-area-probe'
 import { registerServiceWorker } from './sw/register'
+import { count } from './counter'
 
 const appEl = document.getElementById('app')
 if (!appEl) throw new Error('#app element not found')
@@ -14,3 +15,4 @@ initUiScale()
 initApp(appEl)
 maybeMountSafeAreaProbe()
 registerServiceWorker()
+count('boot')

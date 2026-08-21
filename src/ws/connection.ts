@@ -1,5 +1,6 @@
 import type { ClientMsg, ServerMsg } from './types'
 import { ioHook, type IncomingMessage, type OutgoingMessage } from '../dwem/io-hook'
+import { recordFrame } from '../perf/recorder'
 
 export type MessageHandler = (msg: ServerMsg) => void
 export type StateHandler = () => void
@@ -108,6 +109,11 @@ export class WsConnection implements GameConnection {
   }
 
   private handleRawMessage(data: string): void {
+    // Perf-harness recorder tap (no-op unless __dcssRec.start() armed it):
+    // raw pre-parse frames, so batch boundaries survive into recordings.
+    // DEV-only like devLog below — on-device captures go through the phone
+    // PWA pointed at the LAN dev server, so prod builds carry no recorder.
+    if (import.meta.env.DEV) recordFrame(data, this)
     let parsed: unknown
     try {
       parsed = JSON.parse(data)

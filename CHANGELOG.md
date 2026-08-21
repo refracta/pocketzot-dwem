@@ -9,6 +9,39 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-14
+
+- Fixed an issue with attempting to evoke a wand from within an item
+  description.
+
+## 2026-08-13
+
+- Map rendering is now ~3.5x faster in ASCII mode and ~30% faster while
+  moving in tiles mode.
+
+## 2026-08-10
+
+- Reworked the Android back button/gesture. Back now dismisses whatever is
+  topmost: keyboard, chat, or any menu. It also brings up the game's
+  save-and-exit prompt when nothing is open, and returns to the lobby while
+  spectating. I have no Android device to test on. Reports welcome.
+
+## 2026-08-09
+
+- Fixed the installed app on iPhone allowing the swipe-from-left-edge
+  gesture during a game.
+
+## 2026-08-08
+
+- Improved iPad/tablet layouts, including the portrait controls, landscape
+  sidebar and stats panel, and lobby.
+
+## 2026-08-07
+
+- Polished character cards for offline's active saves and ended games.
+- Some touch controls repeat on tap-hold: d-pad, virtual-keyboard characters,
+  backspace, and Tab.
+
 ## 2026-08-05
 
 - Offline play: PocketZot can now run DCSS entirely on your device. Tap "Play

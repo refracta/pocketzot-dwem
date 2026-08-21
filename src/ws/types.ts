@@ -151,6 +151,12 @@ export type ServerMsg =
   // '' clears. Shown as the monster list's first row.
   | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string }
   | { msg: 'player' } & PlayerMsg
+  // Game-option snapshot from the binary (TilesFramework::send_options),
+  // sent at process start and again whenever options change (rc reload).
+  // We consume stat_colour ([{value, colour}] warning thresholds, default
+  // "3:red"); the rest (tile_* prefs, hp/mp_colour — unused even by the
+  // reference HUD) are ignored.
+  | { msg: 'options'; options?: Record<string, unknown> }
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }
   | { msg: 'game_client'; version: string; content: string }
@@ -173,6 +179,10 @@ export type ServerMsg =
   | { msg: 'close_menu' }
   | { msg: 'ui-push'; type: string; body?: string }
   | { msg: 'ui-pop' }
+  // tileweb.cc push/pop_ui_cutoff: hide every overlay layer at engine
+  // menu-stack depth <= cutoff (the map runs underneath, e.g. wand aiming
+  // entered from an item describe); -1 restores. See ui::cutoff_point.
+  | { msg: 'ui_cutoff'; cutoff: number }
   | { msg: 'ui-stack'; items: ServerMsg[] }
   | { msg: 'ui-state'; type: string; props?: Record<string, unknown> }
   | { msg: 'ui-scroller-scroll'; scroll?: number }
