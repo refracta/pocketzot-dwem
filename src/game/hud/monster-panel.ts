@@ -1,13 +1,13 @@
 import type { MapStore, MonsterCell } from '../map/map-store'
 import { decodeColor } from '../map/colors'
 import { bgFlags } from '../map/flag-decode'
-import { appendTiles, appendIconOverlays, monsterTileSpec, prependDngnIndex, prependDngnLayer } from '../tiles/tile-view'
+import { appendIconOverlays, appendMonsterActor, prependDngnIndex, prependDngnLayer } from '../tiles/tile-view'
 import type { TileLoader } from '../tiles/tile-loader'
 import {
   MDAM_COLORS,
   decodeMdam, mdamTier,
   decodeFgStatuses,
-  fgHaloDngnName, fgThreatDngnName, fgTileIndex,
+  fgHaloDngnName, fgThreatDngnName,
   filterAndSortMonsters, nameColor,
 } from './monster-style'
 
@@ -42,7 +42,11 @@ export class MonsterPanelView {
     if (list.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'mp-empty'
-      empty.textContent = 'No monsters in view.'
+      // Reachable with the floating list non-empty: a sensed-but-unlocated
+      // invisible monster (store.invisMonDesc) shows there but has no
+      // coordinate to describe, so it gets no row here. The wording must
+      // stay true next to that list entry — "no monsters" wouldn't be.
+      empty.textContent = 'Nothing in view to examine.'
       this.element.appendChild(empty)
       return
     }
@@ -76,16 +80,7 @@ export class MonsterPanelView {
     const tileEl = document.createElement('div')
     tileEl.className = 'tile-stack mp-tile'
     row.appendChild(tileEl)
-    const baseSpec = monsterTileSpec({
-      fg_idx: fgTileIndex(cell?.fg),
-      doll: cell?.doll,
-      mcache: cell?.mcache,
-    })
-    // centre: reference-map placement (bottom-aligned authored box); fit:
-    // shrink 32×48 pan lord/boss sprites into the row's cell instead of
-    // letting the head poke out of the box (the reference monster list just
-    // clips the head off at its one-cell canvas edge).
-    if (baseSpec.length > 0) appendTiles(this.loader, tileEl, baseSpec, TILE_SCALE, { centre: true, fit: true })
+    appendMonsterActor(this.loader, tileEl, cell, TILE_SCALE)
     if (cell?.highlighted_summoner) prependDngnLayer(this.loader, tileEl, 'HALO_SUMMONER', TILE_SCALE)
     const threatWash = fgThreatDngnName(cell?.fg)
     if (threatWash) prependDngnLayer(this.loader, tileEl, threatWash, TILE_SCALE)

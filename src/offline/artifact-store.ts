@@ -44,13 +44,15 @@ const COMPLETE_KEYS: Record<string, string> = {
 }
 
 // The boot-critical engine set, as fetchArtifact alternative-lists (gzipped
-// name first, plain fallback for older installs). Prewarm is optional at
-// deploy time but all-or-nothing once its manifest is present.
-const ENGINE_GLUE = [appPath('/offline/crawl.js')]
-const ENGINE_WASM = [appPath('/offline/crawl.wasm.gz'), appPath('/offline/crawl.wasm')]
-const ENGINE_DATA = [appPath('/offline/crawl.data.gz'), appPath('/offline/crawl.data')]
-const PREWARM_MANIFEST = [appPath('/offline/prewarm/manifest.json')]
-const PREWARM_BIN = [appPath('/offline/prewarm/prewarm.bin.gz'), appPath('/offline/prewarm/prewarm.bin')]
+// name first, plain fallback for older installs). Exported for the worker's
+// boot fetches — one list per artifact, so boot and the readiness download
+// can't drift apart on paths. Prewarm is optional at deploy time but
+// all-or-nothing once its manifest is present.
+export const ENGINE_GLUE = [appPath('/offline/crawl.js')]
+export const ENGINE_WASM = [appPath('/offline/crawl.wasm.gz'), appPath('/offline/crawl.wasm')]
+export const ENGINE_DATA = [appPath('/offline/crawl.data.gz'), appPath('/offline/crawl.data')]
+export const PREWARM_MANIFEST = [appPath('/offline/prewarm/manifest.json')]
+export const PREWARM_BIN = [appPath('/offline/prewarm/prewarm.bin.gz'), appPath('/offline/prewarm/prewarm.bin')]
 
 // Tiles gamedata file set when the install ships no manifest.json (installs
 // before 2026-07-14). The manifest, when present, is authoritative — the
@@ -184,20 +186,19 @@ export class ArtifactError extends Error {
 // "nothing left to fetch".
 const isAbsent = (e: unknown): boolean => e instanceof ArtifactError && e.status === 404
 
-// Cache-first fetch of one artifact; tries `paths` in order (gzipped name
+// Cache-first lookup of one artifact; tries `paths` in order (gzipped name
 // first, plain fallback for older installs). Never caches an HTML body — a
 // SPA-fallback 200 for a missing file must not become a sticky cache entry.
 // A quota failure on cache.put is swallowed (served uncached); the
 // __complete markers below re-verify presence, so a swallowed put can't
 // masquerade as readiness.
-export async function fetchArtifact(
+async function matchOrFetch(
   cache: Cache | null,
-  stats: FetchStats,
-  ...paths: string[]
-): Promise<ArrayBuffer> {
+  paths: string[],
+): Promise<{ res: Response; from: 'cache' | 'net' }> {
   for (const p of paths) {
     const hit = cache && await cache.match(p)
-    if (hit) { stats.cacheHits++; return hit.arrayBuffer() }
+    if (hit) return { res: hit, from: 'cache' }
   }
   let lastStatus = 0
   for (const p of paths) {
@@ -205,12 +206,42 @@ export async function fetchArtifact(
     if (!res || !res.ok) { lastStatus = res?.status ?? 0; continue }
     if ((res.headers.get('content-type') ?? '').includes('text/html')) { lastStatus = 404; continue }
     if (cache) await cache.put(p, res.clone()).catch(() => { /* quota — serve uncached */ })
-    stats.netFetches++
-    const buf = await res.arrayBuffer()
-    stats.netBytes += buf.byteLength
-    return buf
+    return { res, from: 'net' }
   }
   throw new ArtifactError(lastStatus, paths[0])
+}
+
+// Buffered fetch of one artifact (see matchOrFetch for the lookup rules).
+export async function fetchArtifact(
+  cache: Cache | null,
+  stats: FetchStats,
+  ...paths: string[]
+): Promise<ArrayBuffer> {
+  const { res, from } = await matchOrFetch(cache, paths)
+  if (from === 'cache') { stats.cacheHits++; return res.arrayBuffer() }
+  const buf = await res.arrayBuffer()
+  stats.netFetches++
+  stats.netBytes += buf.byteLength
+  return buf
+}
+
+// Streaming variant: the Response's body is unconsumed, for callers that
+// pipe it onward without ever materializing the buffer (the wasm compile,
+// engine.worker.ts). netBytes comes from Content-Length here — the body is
+// not ours to read — so a chunked response counts 0 toward the boot line's
+// "Downloaded N MB"; the deploy serves static files with a length.
+export async function fetchArtifactResponse(
+  cache: Cache | null,
+  stats: FetchStats,
+  ...paths: string[]
+): Promise<Response> {
+  const { res, from } = await matchOrFetch(cache, paths)
+  if (from === 'cache') stats.cacheHits++
+  else {
+    stats.netFetches++
+    stats.netBytes += Number(res.headers.get('content-length')) || 0
+  }
+  return res
 }
 
 // Transparent gunzip, keyed on magic bytes rather than filename: handles
@@ -222,6 +253,54 @@ export async function gunzipIfNeeded(buf: ArrayBuffer): Promise<ArrayBuffer> {
     throw new Error('gzipped engine artifact but DecompressionStream is unavailable')
   const ds = new DecompressionStream('gzip')
   return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer()
+}
+
+// Streaming twin of gunzipIfNeeded, same magic-byte keying, for the caller
+// that must never hold the whole artifact (the wasm compile pipes this into
+// WebAssembly.instantiateStreaming). Reads only enough of the body to sniff
+// the two magic bytes, then replays those chunks ahead of the rest.
+export async function gunzipStreamIfNeeded(res: Response): Promise<ReadableStream<Uint8Array>> {
+  const body = res.body
+  if (!body) throw new Error('artifact response has no body')
+  const reader = body.getReader()
+  const head: Uint8Array[] = []
+  let got = 0
+  while (got < 2) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value.byteLength === 0) continue
+    head.push(value)
+    got += value.byteLength
+  }
+  // The magic pair can straddle a chunk boundary (a 1-byte first read).
+  // Read before the stream is built: its start() empties `head`.
+  const b0 = head[0]?.[0]
+  const b1 = (head[0]?.byteLength ?? 0) > 1 ? head[0][1] : head[1]?.[0]
+  const replay = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of head) controller.enqueue(chunk)
+      // The queue owns the chunks now; this closure lives until the consumer
+      // finishes the whole stream, and a first read can span most of the
+      // body — keeping them here would pin megabytes across the compile.
+      head.length = 0
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read()
+      if (done) controller.close()
+      else controller.enqueue(value)
+    },
+    cancel(reason) {
+      return reader.cancel(reason)
+    },
+  })
+  if (b0 !== 0x1f || b1 !== 0x8b) return replay
+  if (typeof DecompressionStream === 'undefined') {
+    // The reader holds the body locked with chunks buffered; throwing
+    // without cancelling would pin them until GC.
+    void reader.cancel().catch(() => { /* already errored */ })
+    throw new Error('gzipped engine artifact but DecompressionStream is unavailable')
+  }
+  return replay.pipeThrough(new DecompressionStream('gzip') as ReadableWritablePair<Uint8Array, Uint8Array>)
 }
 
 // --- set-complete markers --------------------------------------------------------

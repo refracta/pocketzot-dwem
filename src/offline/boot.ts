@@ -8,7 +8,8 @@
 // public/offline/.
 
 import { FakeEnginePort } from './fake-engine'
-import { WorkerEnginePort } from './engine-port'
+import { WorkerEnginePort, type EnginePort } from './engine-port'
+import { MORGUE_DIR } from './game-records'
 import { LocalConnection } from './local-connection'
 import { createMiniServer } from './mini-server'
 import { offlineTracker } from './offline-state'
@@ -22,6 +23,12 @@ export interface OfflineBoot {
   // Kicks the engine. Call after the game view is mounted (mounting replaces
   // conn.onMessage; anything delivered earlier would be lost).
   start(): void
+  // Read a '#' dump out of the engine's live FS by its wire stem (the
+  // {msg:'dump'} filename) — mid-game the file exists only there, not in
+  // IDBFS, until the next checkpoint. Null when missing or the engine is
+  // gone; always-null for the fake port. game-view's dump-line download
+  // button is the consumer.
+  readMorgue(filename: string): Promise<Uint8Array<ArrayBuffer> | null>
   dispose(): void
 }
 
@@ -39,7 +46,7 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
   // meaningful for any future non-DEV offline build; the meter's cost is a
   // few timestamps per input.
   const perf = params.has('perf') || import.meta.env.DEV
-  const port = params.get('engine') === 'fake'
+  const port: EnginePort = params.get('engine') === 'fake'
     ? new FakeEnginePort(params.get('fixture') ?? undefined)
     : new WorkerEnginePort(perf, name)
 
@@ -83,6 +90,8 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
   return {
     conn,
     start: () => { engineRunning = true; mini.start() },
+    readMorgue: (filename) =>
+      port.readFile?.(`${MORGUE_DIR}${filename}.txt`) ?? Promise.resolve(null),
     dispose: () => { engineRunning = false; detachLifecycle?.(); mini.dispose() },
   }
 }

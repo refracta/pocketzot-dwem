@@ -2,14 +2,24 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  /* Amber CRT theme — warm near-black surfaces, amber accent.
-     Map (#map-grid) intentionally stays at #000000 because DCSS bg color
-     bytes (bg0–bg15) are calibrated for a black background; tinting it
-     would shift every cell's apparent color. The chrome around the map
-     uses --bg's warm near-black so the seam reads as a deliberate frame. */
-  --bg:        #0a0908;
+  /* Amber CRT theme — black base, amber accent. The base is the map's
+     black (DCSS bg colour bytes bg0–bg15 are calibrated against #000000;
+     #map-grid pins it literally), and it is ONE colour for page, chrome
+     and map: the OS paints the page background into every region we don't
+     control (iOS side insets and the status bar once viewport-fit=cover is
+     dropped, the Reduce Transparency bar, the splash), and those regions
+     border the map in landscape and the chrome in portrait, so any second
+     base colour surfaced as a seam somewhere (a warm #0a0908 chrome did,
+     2026-09-15). Hierarchy is the raised tokens below, never the base. */
+  --bg:        #000000;
   --surface:   #14110f;
   --surface2:  #1f1b18;
+  /* Pressed-state fill for every tappable control, dark-UI style: press
+     LIGHTENS (12% white over --surface, Material's pressed state-layer
+     opacity; iOS/Gboard dark keyboards make a similar-size jump). surface2
+     was tried as the press fill and is only ~1.1:1 against --surface —
+     invisible on an OLED phone; don't reuse a resting surface token here. */
+  --press:     #302e2c;
   --accent:    #f59e0b;
   --text:      #e7e5e4;
   --text-dim:  #a8a29e;
@@ -22,7 +32,7 @@
   --map-cursor: #fce94f;
   --border:    rgba(245, 158, 11, 0.12);
 
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, 'Courier New', monospace;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
   --font-ui:   system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --map-font-size: 17px;
   --map-line-height: 1.0;
@@ -31,9 +41,17 @@
   /* Server-menu/overlay font scale. Most server menus (i, a, shops,
      descriptions) read through the .overlay-* classes; the skills menu reads
      through #crt-display. Both paths share these tokens, so they're the single
-     knob for menu text. --fs-overlay is reading text (rows, descriptions,
-     titles, CRT body); --fs-overlay-chrome is secondary labels (headers,
-     footers). Control buttons stay literal — different role. */
+     knob for menu text: rows, descriptions, titles, CRT body, and
+     formatted-scroller streams (Ctrl-P, `%`, Ctrl-O, help) all sit at
+     --fs-overlay. Don't re-split a smaller size for the scrollers — 0.8rem
+     then 0.85rem were both tried on-device and reverted. Nothing in reach
+     un-wraps 80-column content (~0.5rem would), so it bought ~2 lines on the
+     only surface that can gain any: menu-row pitch is pinned by the sprite
+     (tiles) / tap-target padding (ASCII), so a smaller row saves no height
+     and just reads as demoted beside the title. Scrollers still differ in
+     line PITCH (.overlay-body--scroller). --fs-overlay-chrome is secondary
+     labels (headers, footers). Control buttons stay literal — different
+     role. */
   --fs-overlay:        0.9rem;
   --fs-overlay-chrome: 0.8rem;
 
@@ -45,9 +63,14 @@
      there. Applied per-component on the bottom-most interactive bars, not on
      #app — surfaces bleed to the screen edge, controls pad themselves. See
      dev-material/vertical-space-savings.md (safe-area migration). */
-  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 25px);
+  --home-indicator-cap: 25px;
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), var(--home-indicator-cap));
   /* Status-bar/Dynamic-Island clearance for surfaces that anchor to the
-     screen's top edge (menus, floats). Raw env. A sticky-calibration shim
+     screen's top edge (menus, floats). Raw env; the installed-iOS swap
+     overrides both --safe-* tokens (the html.pz-status-blur block below).
+     Keep these plain lengths, never max()/min() over env(): the fit paths
+     parseFloat --map-top-occlusion, which is var(--safe-top), and an
+     unregistered custom property never evaluates math. A sticky-calibration shim
      (viewport-inset.ts) once guarded this against suspected cold-start env()
      flakiness in installed mode; removed 2026-07-09 to playtest whether that
      flakiness was real or an artifact of the migration debug session — if
@@ -73,6 +96,10 @@ html, body {
   color: var(--text);
   font-family: var(--font-mono);
   overflow: hidden;
+  /* Kill the UA tap overlay app-wide (blue flash on Android Blink; the
+     property is inherited, and Blink kept the -webkit- spelling — there is
+     no unprefixed form). Don't re-add per-element copies. */
+  -webkit-tap-highlight-color: transparent;
 }
 /* Installed-app (home screen) mode with viewport-fit=cover: iOS misreports
    every dynamic viewport measure (100dvh/100svh, innerHeight,
@@ -80,16 +107,54 @@ html, body {
    full-screen — webkit.org bug #254868. 100vh is the one honest unit, and it
    must be forced on html/body too: at 100% they'd resolve to the misreported
    height and body's overflow:hidden would clip the app's bottom rows.
-   A flat --safe-bottom: 25px pin also lived here (guarding against suspected
-   cold-start env() flakiness); removed 2026-07-09 alongside the sticky top
-   shim to playtest whether that flakiness was real — if the bottom controls
-   ever sit flush against the physical bottom edge for a whole session
-   (taps colliding with the home swipe), restore it
-   (dev-material/ios-safe-area-viewport.md, "sticky shim"). */
+   Installed iOS now drops cover at boot (status-blur.ts); 100vh still
+   measured right without it (Test B, 2026-09-14). */
 @media (display-mode: standalone), (display-mode: fullscreen) {
   html, body, #app { height: 100vh; }
 }
+/* The installed-iOS swap (status-blur.ts has the mechanism): env() reads 0
+   once cover is gone, so both --safe-* tokens come from here instead, and
+   every consumer (top surfaces, the map's --map-top-occlusion, bottom bars)
+   clears the strip / indicator through its existing site.
+   Top: #status-strip's height, only where a status bar exists — portrait,
+   or iPad landscape (iPhone hides the bar in landscape and tops out at
+   ~440px tall there); the landscape leg is the sidebar's iPad-landscape
+   query (its comment explains the 768/601 numbers) — keep them in sync.
+   12px: WebKit's sampler skips boxes 10px or thinner on either axis
+   (LocalFrameView.cpp thinBorderWidth).
+   Bottom: the page still runs under the home indicator (measured
+   2026-09-14), so the field-tested cap is pinned flat on devices
+   status-blur.ts saw an indicator on while cover was live. */
+:root { --status-strip-h: 0px; }
+@media (orientation: portrait), (orientation: landscape) and (min-width: 768px) and (min-height: 601px) {
+  html.pz-status-blur { --status-strip-h: 12px; }
+}
+html.pz-status-blur { --safe-top: var(--status-strip-h); }
+html.pz-home-indicator { --safe-bottom: var(--home-indicator-cap); }
 
+/* The fixed box WebKit's top-edge sampler extends over the status bar. A
+   real element present from load — pseudo-elements never enter the
+   sampler's ancestor walk. Reads its own height token (0 off the swap), not
+   --safe-top, which is the real inset in a Safari tab under cover.
+   Its colour is the bar's: WebKit re-samples on the strip's repaint
+   (RenderLayerBacking::setNeedsFixedContainerEdgesUpdateIfNeeded), and
+   iPhone may re-sample the top edge after user interaction
+   (TopContentInsetBackgroundCanChangeAfterScrolling, small-screen idiom
+   only — an iPad keeps its first sample, the page background). One
+   colour on every screen: the base is black everywhere (see :root), so
+   the bar always meets a matching edge below it. A :has() rule that
+   switched it to the map's black in-game existed while the chrome was
+   warm; don't bring it back with a second base colour. */
+#status-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--status-strip-h);
+  background: var(--bg);
+  pointer-events: none;
+  z-index: 1000;
+}
 /* JS toggles collapsibles via the hidden attribute; author display rules
    (flex/grid) on the same element would otherwise defeat the UA's
    [hidden] { display: none }, so restate it with priority once, globally. */
@@ -114,6 +179,10 @@ html, body {
 }
 
 .login-card {
+  /* The card's two vertical gaps, shared with the disclosure headers' tap
+     overlays (see .login-group-toggle), which may extend only into them. */
+  --login-head-gap: 1.25rem;  /* title / avatar shelf → first group */
+  --login-group-gap: 1.6rem;  /* group → group */
   width: 100%;
   max-width: 360px;
   background: var(--surface);
@@ -137,7 +206,6 @@ html, body {
   padding: 0.7rem;
   margin: -0.7rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .login-settings-chip:active { opacity: 0.5; }  /* dim on press */
 
@@ -186,7 +254,7 @@ html, body {
   font-size: 1.4rem;
   color: var(--accent);
   text-align: center;
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--login-head-gap);
   letter-spacing: 0.1em;
 }
 
@@ -196,6 +264,7 @@ html, body {
    the block's box (and thus the hit area) to the wordmark itself rather than the
    full card width; margin-inline:auto re-centers the now-narrow box. */
 .logo-tappable {
+  position: relative; /* anchors the .logo-tell caption */
   cursor: pointer;
   touch-action: manipulation;
   -webkit-user-select: none;
@@ -207,10 +276,11 @@ html, body {
 
 /* Decorated wordmark (src/logo.ts). Each letter is its own span: it inherits the
    title's accent colour until a roll adds an `fgN` class, then `transition`
-   fades to the DCSS colour. No base `color` here, so inheritance holds pre-roll. */
+   fades to the DCSS colour. No base `color` here, so inheritance holds pre-roll.
+   Keep the fade shorter than the reveal pop below, so glyph and colour land together. */
 .login-title .logo-ch {
   display: inline-block;
-  transition: color 0.7s ease;
+  transition: color 0.4s ease;
   /* Tall fallback glyphs (box-drawing ╬, daggers †‡, ξ/ž descenders) paint
      outside the span's border box; the transform animation makes each span its
      own layer, but WebKit invalidates only the border box on a re-roll, leaving
@@ -219,14 +289,16 @@ html, body {
   will-change: transform;
 }
 /* Lookalike-glyph swaps (○ • ☼ © φ ß § † …): normalise size/baseline so they sit
-   on the line like the letters rather than ballooning in fallback fonts. */
+   on the line like the letters rather than ballooning in fallback fonts. The
+   font-size lives on the inner ink, NOT the span: em-based metrics on a resized
+   span would step the rarity rules at every swapped glyph. */
 .login-title .logo-ch--swap {
-  font-size: 0.9em;
   vertical-align: baseline;
   line-height: 1;
 }
-/* One-shot reveal pop as each letter morphs in (skipped under reduced motion —
-   logo.ts applies the roll without re-triggering this animation). */
+.login-title .logo-ch--swap .logo-ink { font-size: 0.9em; }
+/* One-shot reveal pop as each letter morphs in. logo.ts sets the class only for
+   an animated apply, so reduced motion and replays never carry it. */
 .login-title .logo-ch--lit {
   animation: logo-reveal 0.5s ease both;
 }
@@ -237,7 +309,87 @@ html, body {
 }
 @media (prefers-reduced-motion: reduce) {
   .login-title .logo-ch { transition: none; }
-  .login-title .logo-ch--lit { animation: none; }
+}
+
+/* Rare-roll tier caption (src/logo.ts), absolutely positioned into the title's
+   bottom margin so showing it never shifts the card. */
+.logo-tell {
+  position: absolute;
+  top: calc(100% + 0.22em); /* the caption's own em, not the title's: the extrusion's hard steps (0.12em of the title) stay clear because they sit in the title's line box below the baseline; only its faint soft drop reaches here */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+.logo-tell--show { animation: logo-tell 2.6s ease both; }
+@keyframes logo-tell {
+  0%        { opacity: 0; transform: translate(-50%, -0.25em); }
+  15%, 75%  { opacity: 1; transform: translate(-50%, 0); }
+  100%      { opacity: 0; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No fade: shown statically; logo.ts removes the class on a timer. */
+  .logo-tell--show { animation: none; opacity: 1; }
+}
+
+/* Tier captions: the card's muted grey → the deep purple mixed 30% toward
+   white in oklab (#6a1fb0 itself is 2.2:1 on the card; this is 4.7:1) →
+   the spectrum → white(15). */
+.tier-ornate      { color: var(--text-dim); }
+.tier-magnificent { color: #936bcb; }
+.tier-artifact    { color: #eeeeec; }
+/* Prismatic: one hue per letter, in spectrum order — the extrusion's six
+   steps plus CRT lightcyan(11), lightblue(9) and lightmagenta(13) to fill nine
+   letters. A continuous gradient washed its tail into the lavender step. */
+.tier-prismatic > :nth-child(1) { color: #ef2929; }
+.tier-prismatic > :nth-child(2) { color: #f57900; }
+.tier-prismatic > :nth-child(3) { color: #fce94f; }
+.tier-prismatic > :nth-child(4) { color: #8ae234; }
+.tier-prismatic > :nth-child(5) { color: #34e2e2; }
+.tier-prismatic > :nth-child(6) { color: #729fcf; }
+.tier-prismatic > :nth-child(7) { color: #5e78ff; }
+.tier-prismatic > :nth-child(8) { color: #ad7fa8; }
+.tier-prismatic > :nth-child(9) { color: #fd59fa; }
+
+/* Rarity decoration (setTierDecor in src/logo.ts): one extrusion, coloured per
+   tier — six hard steps down-right (--d1 nearest the letter, --d6 farthest)
+   and a soft drop. One light, and letters paint left to right, so each
+   letter's depth tucks under the next. Depth is text-shadow on the letter,
+   which is safe because no tier draws a text decoration for the shadow to
+   catch. The options weighed (and rejected) are in
+   dev-material/logo-wordmark-specimens.html; the ladder with its odds in
+   dev-material/logo-tier-ladder.html. */
+.decor-ornate .logo-ch,
+.decor-magnificent .logo-ch,
+.decor-prismatic .logo-ch,
+.decor-artifact .logo-ch {
+  text-shadow:
+    0.02em 0.02em 0 var(--d1), 0.04em 0.04em 0 var(--d2), 0.06em 0.06em 0 var(--d3),
+    0.08em 0.08em 0 var(--d4), 0.1em 0.1em 0 var(--d5), 0.12em 0.12em 0.02em var(--d6),
+    0.16em 0.2em 0.25em rgb(0 0 0 / 0.7);
+}
+/* Ornate: dark, in each letter's own colour. currentColor in the custom
+   property resolves on each .logo-ch, so the depth follows the colour fade. */
+.decor-ornate .logo-ch {
+  --d1: color-mix(in srgb, currentColor 40%, #000);
+  --d2: var(--d1); --d3: var(--d1); --d4: var(--d1); --d5: var(--d1); --d6: var(--d1);
+}
+/* Magnificent: one solid deep purple (off the CRT palette) on every step. */
+.decor-magnificent .logo-ch {
+  --d1: #6a1fb0;
+  --d2: var(--d1); --d3: var(--d1); --d4: var(--d1); --d5: var(--d1); --d6: var(--d1);
+}
+/* Prismatic: the spectrum, red at the letter so the depth still darkens away
+   from it like the other tiers. */
+.decor-prismatic .logo-ch {
+  --d1: #ef2929; --d2: #f57900; --d3: #fce94f; --d4: #8ae234; --d5: #729fcf; --d6: #ad7fa8;
+}
+/* Artifact: lit white, a bright rim at the seam. */
+.decor-artifact .logo-ch {
+  --d1: #fff; --d2: #eeeeec; --d3: #dededc; --d4: #cbcbc9; --d5: #b5b5b3; --d6: #a0a09e;
 }
 
 /* Recently-played character dolls (see src/avatars.ts): a bare, centered row of
@@ -253,8 +405,8 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
+  gap: 1rem;
+  margin-bottom: var(--login-head-gap);
   min-height: 64px;
   cursor: pointer;            /* the row taps through to the crypt (full history) */
   touch-action: manipulation; /* no iOS double-tap zoom on the tap target */
@@ -272,8 +424,10 @@ html, body {
   display: flex;
   flex-direction: column;
 }
-/* .crypt-header shares its base (padding + 36px centered row) with .lobby-header
-   via the grouped rule in the Lobby section. Only the bar pins; the flavor
+/* .crypt-header shares its base (padding + centered row) with .lobby-header
+   via the grouped rule in the Lobby section — where the declared min-height is
+   nominal, border-box making the padding eat it, so header height follows its
+   content (why .records-morgue-confirm pins its own). Only the bar pins; the flavor
    heading scrolls with the grid inside .crypt-scroll. */
 .crypt-scroll {
   flex: 1 1 auto;
@@ -304,14 +458,13 @@ html, body {
   justify-content: center;
   align-content: flex-start;
   align-items: flex-end;
-  gap: 1rem 0.5rem;
-  padding-top: 1rem;
+  gap: 1rem 0.75rem;
+  padding-top: 1.5rem;
 }
 /* Each doll is a tap target (→ its character card, crypt-view.ts). */
 .crypt-doll {
   cursor: pointer;
   touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
 }
 .crypt-doll:active { transform: scale(0.92); }
 /* Tap-a-doll card modal: the char-card itself is the dialog, centered over
@@ -320,6 +473,12 @@ html, body {
 .crypt-card-backdrop .char-card {
   width: 100%;
   max-width: 26rem;
+  /* The backdrop is a fixed, centered flex box with no scroll of its own
+     (like .doc-card): a tall card — long blurb + two rune rows on a
+     landscape phone — must scroll inside itself or its headline clips
+     off the top. */
+  max-height: 100%;
+  overflow-y: auto;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   outline: none; /* programmatic focus (dismissal focus-parking), no ring */
 }
@@ -328,7 +487,7 @@ html, body {
    group label's trailing hairline makes the mode split structural without
    boxing the groups; sub-labels inside a group are normal-case and dimmer,
    one clear level below. */
-.login-group { margin-bottom: 1.6rem; }
+.login-group { margin-bottom: var(--login-group-gap); }
 .login-group:last-of-type { margin-bottom: 0; }
 
 .login-group-label {
@@ -346,6 +505,62 @@ html, body {
   flex: 1;
   border-top: 1px solid var(--border);
 }
+/* The two mode groups as iOS-style disclosure sections (HIG DisclosureGroup:
+   Notes/Files/Reminders section headers): the header row is the control, a
+   trailing chevron points right collapsed / down open (no rotation animation
+   — by choice).
+   The chevron is the ::before pseudo pushed to the end via flex `order`, since
+   ::after is already the rule line. The tap target is widened by an
+   absolutely positioned child (.login-disclosure-hit; a click on it toggles
+   the details like any summary content) rather than padding + negative
+   margins: margins collapse through <details>/<section> engine-dependently,
+   and a measured WebKit build summed them so two collapsed headers' boxes
+   overlapped and the lower one stole the upper one's taps. The overlay is
+   bounded to the gap on each side — the whole head gap above the first
+   header, HALF the group gap between headers (each neighbour takes its half,
+   so two collapsed rows can never meet), the label's own 0.7rem below an
+   open header (empty space above its content). Portrait: 44px on the first
+   row, ~38px on the second; landscape's tighter gaps yield less, by design.
+   No other tap target lies inside those gaps. */
+.login-group-toggle > summary {
+  --hit-up: calc(var(--login-group-gap) / 2);
+  --hit-down: 0.7rem;
+  position: relative;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.login-group-toggle > summary::-webkit-details-marker { display: none; }
+.login-group:first-of-type > .login-group-toggle > summary { --hit-up: var(--login-head-gap); }
+.login-group-toggle:not([open]) > summary {
+  --hit-down: calc(var(--login-group-gap) / 2);
+  margin-bottom: 0;
+}
+.login-disclosure-hit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(-1 * var(--hit-up));
+  bottom: calc(-1 * var(--hit-down));
+}
+.login-group-toggle > summary::before {
+  content: "";
+  order: 2;
+  flex: none;
+  width: 0.6em;
+  height: 0.6em;
+  margin-right: 0.3em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  /* A tier below the account cards' → (full --text-dim): ~3.3:1 over the
+     card surface, the non-text-control floor, about iOS tertiaryLabel. */
+  opacity: 0.6;
+  transform: rotate(-45deg);
+}
+/* Pointing down, the V's optical centre sits below the box centre — lift it. */
+.login-group-toggle[open] > summary::before { transform: translateY(-0.15em) rotate(45deg); }
 
 .login-subsection { margin-bottom: 1.1rem; }
 .login-subsection:last-child { margin-bottom: 0; }
@@ -445,6 +660,7 @@ html, body {
 .login-offline-count {
   flex: 0 0 auto;
   font-size: 0.78rem;
+  font-style: italic;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -452,19 +668,26 @@ html, body {
 
 .login-add-section > summary {
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.85rem;  /* same scale as .login-sub-label; the chevron marks it as the action */
   color: var(--text-dim);
   list-style: none;
 }
 .login-add-section > summary::-webkit-details-marker { display: none; }
+/* Leading disclosure chevron, same right/down state pair (and the same
+   border-drawn glyph) as the section headers above it — one grammar per page. */
 .login-add-section > summary::before {
-  content: "+";
+  content: "";
   display: inline-block;
-  width: 1ch;
-  margin-right: 0.5ch;
-  text-align: center;
+  width: 0.5em;
+  height: 0.5em;
+  margin: 0 0.9ch 0 0.1em;
+  vertical-align: 0.05em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.6;  /* same tier as the section-header chevrons */
+  transform: rotate(-45deg);
 }
-.login-add-section[open] > summary::before { content: "−"; }
+.login-add-section[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
 .login-add-section[open] > summary { margin-bottom: 0.6rem; }
 
 .login-spectate-select {
@@ -1022,8 +1245,24 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lobby-game-row.is-idle .lobby-game-user { color: var(--text-dim); }
+/* Accent on a name means "your character" (the offline slot rows) — the
+   spectate list's strangers are neutral. */
+#lobby-list .lobby-game-user { color: var(--text); }
+#lobby-list .lobby-game-row.is-idle .lobby-game-user { color: var(--text-dim); }
 .cnc-profile-username { white-space: nowrap; }
+
+/* A game the server reports a save for (lobby.ts makeGameBtn): a headline
+   button carries the server's description as a second line, a version-list
+   button only the accent border. */
+.lobby-btn-primary.has-save { text-align: left; }
+.lobby-btn-save {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  font-weight: normal;
+  white-space: normal;
+}
+.lobby-btn-secondary.has-save { border-color: var(--accent); color: var(--text); }
 .lobby-game-info { font-size: 0.85rem; color: var(--text-dim); }
 .lobby-game-idle { flex: 0 0 auto; white-space: nowrap; font-size: 0.8rem; color: var(--text-dim); }
 .lobby-game-idle:empty { display: none; }
@@ -1041,7 +1280,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 /* ── Offline lobby (views/offline-lobby.ts) ──────────────────
    Shares the online lobby's shell (header/list/rows); these are the
    offline-only pieces: name form, the slot row's doll and milestone line,
-   readiness strip, storage rows. */
+   readiness strip, storage rows. Slot rows carry no delete affordance — a
+   saved character goes away by quitting it in-game, so the row stays
+   tap-to-resume like the online lobby's, arrow cue and all. */
 
 .offline-name-form {
   display: flex;
@@ -1053,6 +1294,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 0.75rem;
 }
 
+.offline-name-actions { display: flex; align-items: center; gap: 0.5rem; }
+
 /* Slot-row doll (offline-lobby.ts mountSlotDoll): the character's tile-stack —
    or its baked thumbnail — at the row's left edge. Fixed box so the name and
    metadata columns line up down the list; flex-end floors the sprite in it,
@@ -1060,13 +1303,60 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    slot with no recipe — or one whose atlas never resolves — costs no width. */
 .offline-slot-doll {
   flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
 .offline-slot-doll:empty { display: none; }
+
+/* Menu-entry icons (offline-lobby.ts paintMenuIcons — why this column and
+   this size live there): a 32px sprite in the glyph column of the menu
+   card's rows, and in the primary "New game" bar, which takes the same left
+   geometry (.offline-device: 1px card border, then .offline-device-row's
+   0.75rem padding, glyph column, 0.6rem gap) so its label starts on the menu
+   labels' edge. --glyph-col is the one width both read (the rows through
+   .offline-device-glyph): room for a 32px sprite, and one label edge for
+   every row on the page that has a glyph column. */
+.offline-lobby { --glyph-col: 2rem; }
+.offline-menu-icon { flex: none; display: flex; justify-content: center; width: var(--glyph-col); }
+.offline-menu-icon > * { flex: none; }
+/* Packless, the bar's empty box collapses; a card row's holds a text glyph
+   (paintMenuIcons), so it is never empty. */
+.offline-menu-icon:not(.offline-device-glyph):empty { display: none; }
+/* The bar has no border, so the card border's 1px joins its padding. The
+   negative block margin lets the sprite overhang the label's line box so the
+   bar keeps its sprite-less height — any value past the 7px overhang does. */
+#offline-new {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-left: calc(0.75rem + 1px);
+}
+#offline-new .offline-menu-icon { margin-block: -8px; }
+/* Inert during a download (setNewGameDisabled) — and looking it: the
+   progress that explains why is at the bottom of the page. Scoped to this
+   lobby's controls; .lobby-btn-primary has no disabled look of its own. */
+#offline-new:disabled,
+.offline-name-form button:disabled { opacity: 0.5; cursor: default; }
+
+/* Menu card rows that navigate (New game, Scores and morgues): the settings
+   row shape with the whole row as the control. Centre, not the settings
+   rows' baseline — a sprite has no baseline to hang the label's off. The
+   labels stay neutral: accent colour on this page is the characters'.
+   The doubled class is load-bearing: .offline-device-row's align-items is
+   declared further down the file, and would win at equal specificity. */
+.offline-device-row.offline-nav-row { align-items: center; cursor: pointer; }
+.offline-nav-row .offline-device-label { font-size: 0.95rem; }
+.offline-nav-row::after { content: "→"; color: var(--text-dim); font-size: 0.95rem; }
+.offline-nav-row:active { background: var(--surface2); }
+.offline-nav-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.offline-nav-row.is-disabled { opacity: 0.5; cursor: default; }
+/* The name form, opened in place of the New game row: the card is its
+   surface there, so it drops its own. */
+.offline-device > .offline-name-form { background: none; border: none; border-radius: 0; }
+.offline-device > .offline-name-form + .offline-device-row { border-top: 1px solid var(--border); }
 
 /* Slot-row meta line: stays one line beside the doll instead of wrapping the
    row taller. Only the char^god fact may shrink/ellipsize — rationale at
@@ -1098,27 +1388,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   white-space: nowrap;
 }
 
-/* The offline surfaces' delete affordance: a bare ✕ at a row's right edge
-   (records-view's morgue cards). Slot rows have none — a saved character goes
-   away by quitting it in-game, so its row is tap-to-resume like the online
-   lobby's, arrow cue and all. */
-.offline-slot-delete {
-  flex: 0 0 auto;
-  min-width: 36px;
-  min-height: 36px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-dim);
-  font-size: 0.9rem;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-@media (hover: hover) {
-  .offline-slot-delete:hover { border-color: var(--border); color: var(--danger); }
-}
-.offline-slot-delete:active { background: var(--surface2); }
-
 /* The confirm pair (delete-countdown.ts) never wraps. The Delete button counts
    down taps ("Delete in 3" → 2 → 1) — fixed-width text in the mono font, so it
    doesn't jiggle. */
@@ -1134,34 +1403,31 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .offline-slot-confirm-del { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
 .offline-slot-confirm-del:disabled { opacity: 0.5; cursor: default; }
 .offline-slot-confirm-del:active,
 .offline-slot-confirm-cancel:active { background: var(--surface2); }
 
-/* Price of the tap, under the play controls: shown only while the on-device
-   set is incomplete, so the size a launch would spend sits with the control
-   that spends it (the game-data row that used to carry it now lives at the
-   bottom under its own heading). Indented to the button's text, dim, and
-   gone entirely when there's nothing to pay. */
+/* The gate note (offline-lobby.ts renderGateNote; where it hangs and why:
+   placeNewGame). Dim, and gone entirely when there's nothing to pay. */
 .offline-gate-note {
   font-size: 0.75rem;
   line-height: 1.4;
   color: var(--text-dim);
-  /* Indented to the play button's own text inset (its 1rem padding) so the
-     price hangs off the control rather than off the page margin. */
-  padding-left: 1rem;
+  /* The cards' content inset (border + row padding), so the price hangs off
+     the controls rather than off the page margin. */
+  padding-left: calc(0.75rem + 1px);
   margin-top: -0.15rem;
 }
 
-/* Device cards (offline lobby): settings-style rows — status glyph, two-line
-   label, right-aligned compact actions — in one surface card each, under
-   GAME DATA (what the app installed: the engine + tiles pack, its state and
-   size) and YOUR DATA (what you made: options file, backup). Two headings
-   rather than one "Storage" card, so a row's group says whose data it is and
-   therefore what removing it would cost. */
+/* Device cards (offline lobby): settings-style rows — glyph column, two-line
+   label, right-aligned compact actions or a whole-row tap (.offline-nav-row)
+   — in surface cards: the headerless menu card under the saved games (New
+   game, Scores and morgues) and ON THIS DEVICE (the installed engine + tiles
+   pack, then what you made: options file, backup). One heading: GAME DATA /
+   YOUR DATA were two near-synonym headings over three rows, and each row's
+   own label already says whose data it is. */
 .offline-device {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1180,8 +1446,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 .offline-device-row + .offline-device-row {
   border-top: 1px solid var(--border);
 }
+/* A [hidden] first row still matches the sibling combinator above. */
+.offline-device-row[hidden] + .offline-device-row { border-top: none; }
 .offline-device-glyph {
-  width: 1.1rem;
+  width: var(--glyph-col); /* .offline-menu-icon block */
   text-align: center;
   flex-shrink: 0;
   color: var(--text-dim);
@@ -1222,7 +1490,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .offline-device-btn:active { background: var(--surface2); }
 .offline-device-btn:disabled { opacity: 0.5; cursor: default; }
@@ -1285,7 +1552,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 /* The escape glyph is thinner than text at the same size, so bump it to sit
    visually level with the "Save" label beside it (cf. .menu-ctrl-glyph). */
@@ -1367,7 +1633,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .lobby-exit-close:active { background: var(--surface2); }
 
@@ -1417,7 +1682,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .doc-close:active { background: var(--surface2); }
 .doc-body {
@@ -1459,15 +1723,15 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      --pz-msglog-lines on :root (ui-scale.ts); the fallbacks here are the
      stock values. */
   --msglog-font: var(--pz-msglog-font, 0.75rem);
-  --msglog-line: 1.3;
+  --msglog-line: 1.1;
   /* Message-log height in lines (line-count × font × line-height rather than
      `lh`, which would re-resolve against each consumer's own line-height).
-     A var so the spell-row rules below can offset #more-btn by exactly the
-     log's height. 4 lines still spans several turns (the server glues
+     A var so #map-grid can reserve exactly the log's height above the float.
+     5 lines still spans several turns (the server glues
      same-turn messages onto one line) and tapping the log opens full
      history; lines trimmed here come back as clear map area, since
      #map-grid reserves exactly this height above the floating log. */
-  --msglog-h: calc(var(--pz-msglog-lines, 4) * var(--msglog-font) * var(--msglog-line));
+  --msglog-h: calc(var(--pz-msglog-lines, 5) * var(--msglog-font) * var(--msglog-line));
   /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
      darkgrey) legible over bright floor tiles without raising the scrim — the
      scrim level is tuned for layer separation, not contrast. Shared with the
@@ -1486,9 +1750,21 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      which is also what swaps in TileMapView). */
   --msglog-bg: color-mix(in srgb, var(--bg) 30%, transparent);
   /* Spell-rail button band: 32px tile + 2×2px button padding + own 0.25rem
-     padding. Shared so the rail's height, the log float that sits just above it,
-     and the --more-- offset that clears both stay locked together. */
+     padding. Shared so the rail's height and the log float that sits just
+     above it stay locked together. */
   --spell-rail-h: calc(36px + 0.5rem);
+  /* The log's rendered box height: --msglog-h plus the inline --more-- row's
+     growth (--more-line-h is nonzero only under .more-active — see the
+     --more-- block). Every rule that clears or tracks the log box consumes
+     THIS, not --msglog-h, so the --more-- growth can't miss a consumer.
+     --msglog-h itself stays the map's centering reserve (#map-grid), which
+     deliberately excludes the growth — a pager must not refit the map. */
+  --msglog-box-h: calc(var(--msglog-h) + var(--more-line-h, 0px));
+  /* Prompt-channel cyan (channel_to_colour(MSGCH_PROMPT), = .fg3): every
+     --more-- surface — the inline row, the log frame, the X-mode fallback
+     button — carries this one colour so both presentations read as the
+     same prompt. */
+  --more-cyan: #06989a;
   position: relative;
   flex: 1;
   display: grid;
@@ -1513,6 +1789,16 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     "menu";
   overflow: hidden;
   outline: none;
+}
+
+/* Spectating: the ~46px spectator bar replaces the d-pad strip (≥150px) in
+   the `touch` slot, and the log spends part of the freed height on 3 more
+   lines (default 5 → 8, bracketing upstream's 7–10-line pane; +6 reads as
+   a wall of text at ~50-column wrapping). Must
+   override --msglog-h itself — the calc resolves on :root, so overriding
+   --pz-msglog-lines here would never reach it. */
+#game-view.spectating {
+  --msglog-h: calc((var(--pz-msglog-lines, 5) + 3) * var(--msglog-font) * var(--msglog-line));
 }
 
 /* Old-version advisory banner (maybeShowVersionNotice in game-view.ts):
@@ -1547,6 +1833,16 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 #map-wrap > #map-grid { flex: 1; }
 
+/* While a map long-press finger is still down (map-tap.ts sets/clears the
+   class): the describe overlay it opened sits under that finger, and iOS's
+   native selection long-press would otherwise grab a word in it. Page-wide
+   for the hold's duration only; selection is back on lift. */
+html.map-hold, html.map-hold * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* Map */
 #map-grid {
   background: #000000;
@@ -1559,6 +1855,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 2px;
   white-space: pre;
   user-select: none;
+  /* The map long-press (describe) must not pop iOS text selection on the
+     ASCII <pre> or the save-image callout on the tile canvas. */
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
@@ -1652,13 +1952,18 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   text-shadow: var(--msglog-text-shadow);
   /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
      box-sizing:border-box the padding-bottom lifts the bottom-pinned column up
-     off the bottom edge, which pushes the row scrolled just out of view a few
-     px clear of the top edge. That gap absorbs WebKit's fractional column-reverse
+     off the bottom edge, which pushes the row scrolled just out of view
+     clear of the top edge. That gap absorbs WebKit's fractional column-reverse
      scroll offset (which Chrome rounds away but Safari/iOS doesn't), so the
      hidden row's descenders no longer bleed in at the top. It also makes the
      content box no longer an exact line-box multiple, removing the
-     boundary-aligned cut that made the artifact possible. */
-  padding: 0.2rem 0.2rem;
+     boundary-aligned cut that made the artifact possible.
+     The lift also cuts the top visible row by the same amount, so it has to
+     fit the line's spare leading: at --msglog-line 1.1 ink starts ~1.9px
+     into a 12px line (measured, WebKit SF Mono) and the old 0.2rem lift
+     shaved the i/j dots. 0.12em splits the slack between the hidden row's
+     descenders and the top row's dots — re-measure if --msglog-line moves. */
+  padding: 0.2rem 0.2rem 0.12em;
   /* Bottom-pinned chat-log pattern: column-reverse lays children from the
      visual bottom upward, which lets the browser keep scroll naturally at
      the latest message without any JS scrollTop writes (which force layout).
@@ -1682,7 +1987,15 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   z-index: 3;
   background: var(--msglog-bg);
   overflow-y: auto;
+  /* Anchoring only skips at offset 0; at −1px it held the old rows and the
+     newest went off-screen for good (measured, both engines). Off, the
+     offset is distance-from-newest and stays put. */
+  overflow-anchor: none;
   cursor: pointer;
+  /* --msglog-box-h grows the box by exactly the inline --more-- row while
+     .more-active, on the map side — the anchored edge stays pinned — so no
+     message line is displaced while it shows. */
+  height: var(--msglog-box-h);
 }
 
 /* Tile rendering: lighter scrim — see --msglog-bg. */
@@ -1732,6 +2045,37 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 0;
 }
 
+/* --more-- (reference: webtiles' #more is an unstyled line directly
+   below #messages; console prints it as the message window's last line).
+   The row (#msg-more, game-view.ts syncMoreDisplay) rides inside the log as
+   the visual-bottom line, and the WHOLE log becomes the pause indicator and
+   dismiss target: a frame plus one extra line of height, grown on the map
+   side since the anchored edge is pinned (portrait bottom sits above the
+   rail/HUD, landscape top under the status bar), and the log's tap sends
+   Space while active (msgLog click handler). The map strip covered is the
+   one the old floating button occupied, minus its padding. X mode keeps the
+   floating #more-btn instead — the log is hidden there. */
+#game-view.more-active {
+  /* One line + the 2px the border-box frame takes from the content. */
+  --more-line-h: calc(var(--msglog-font) * var(--msglog-line) + 2px);
+}
+/* Stays scrollable: a long --more-- text (a named monster's description)
+   pushes its own head off the top, and the pause is exactly when you read
+   it. A stray swipe-tap's offset is re-pinned on dismiss (hideMore),
+   not prevented with touch-action:none. */
+#game-view.more-active #game-messages { border: 1px solid var(--more-cyan); }
+#msg-more {
+  /* Console (message.cc:718-731): left-aligned at the message column
+     — 1ch clears the turn-mark slot the way console's --more-- starts at
+     col 2 when first-col prefixes hold col 1. The frame + whole-log
+     tap carry the affordance, so the row itself reads as a log line. */
+  padding-left: 1ch;
+  color: var(--more-cyan);
+}
+/* Pill mode drops the log scrim; while the frame is up the box needs a body
+   again — restore it for the duration (also a "paused/resumed" cue). */
+#game-view.msg-pill.more-active #game-messages { background: var(--msglog-bg); }
+
 /* Portrait: the log (base rule) floats over the map's BOTTOM edge; these rules
    set its anchor and float the quick-cast rail. Both are out of flow, so the
    map keeps its full height and — crucially — the rail's late arrival (a
@@ -1756,15 +2100,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     z-index: 3;
   }
 
-  /* --more-- (z-index 4) sits above the floating log — and the rail, for
-     casters — so it never covers the newest message lines. (`#game-view` prefix
-     to outrank the base `#more-btn { bottom: 0 }`, which is later in source.) */
-  #game-view #more-btn { bottom: var(--msglog-h); }
-  #game-view.spell-row #more-btn { bottom: calc(var(--msglog-h) + var(--spell-rail-h)); }
-  /* X-mode hides the log (and drops the rail), so there's nothing to clear —
-     --more-- hugs the bottom edge. Equal specificity to the two rules above;
-     later in source wins. */
-  #game-view.x-mode #more-btn { bottom: 0; }
+  /* No portrait #more-btn offsets: the button shows only in X mode (see the
+     --more-- block above), where the log/rail are gone and the base rule's
+     bottom: 0 is right. */
 
   /* Reserve the log's strip as extra BOTTOM padding so the map centers the
      player in the clear area above the floating log/rail, not in the geometric
@@ -1812,7 +2150,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      spell-row variant supplies the matching bottom boundary — the actual
      top of messages, rail included when present). Resolves to 0 on
      notchless devices and in Safari tabs (env is 0), so this is a no-op
-     everywhere the pill isn't. */
+     everywhere the pill isn't; under the installed-iOS swap it is
+     #status-strip's height (the html.pz-status-blur block). */
   #game-view #map-grid { --map-top-occlusion: var(--safe-top); }
   /* X-mode: log hidden, examine viewport pans anywhere, and the grid is
      symmetric-centered (rules above) — the biased-centering model doesn't
@@ -1821,6 +2160,16 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 
 .game-msg { color: var(--text); line-height: var(--msglog-line); }
+
+/* The '#' dump line, tappable as a whole — offline once its bytes are
+   pre-read (game-view makeDumpRow), online linking the morgue URL
+   (decorateDumpUrlRow). Underline only the text span, not the
+   turn-mark slot. */
+.game-msg.msg-dump-link { cursor: pointer; }
+.game-msg.msg-dump-link > span:not(.msg-turn-mark) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 .msg-turn-mark {
   display: inline-block;
@@ -1926,7 +2275,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-size: 1.35rem;
 }
 
-.numpad-btn:active {
+.numpad-btn:active,
+.numpad-btn.pressed { background: var(--press); color: var(--accent); }
+/* The accent-filled primary can't lighten to --press; brighten it instead. */
+.numpad-btn.numpad-primary:active,
+.numpad-btn.numpad-primary.pressed {
+  background: var(--accent);
+  color: var(--bg);
   filter: brightness(1.25);
 }
 
@@ -2066,6 +2421,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 .seed-btn-primary:active { background: var(--surface); color: var(--accent); }
 
+/* X-mode-only --more-- fallback: normal play inlines --more-- into the log
+   (see the .more-active block), but X mode hides the log, so a pending pager
+   there still needs a visible, tappable target (syncMoreDisplay picks). */
 #more-btn {
   grid-area: map;
   position: absolute;
@@ -2074,8 +2432,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   bottom: 0;
   z-index: 4;
   background: var(--surface2);
-  border: 1px solid #eeeeec;
-  color: #eeeeec;
+  border: 1px solid var(--more-cyan);
+  color: var(--more-cyan);
   font-family: var(--font-mono);
   font-size: 0.8rem;
   padding: 0.4rem 0.5rem;
@@ -2163,17 +2521,54 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
        content. */
     top: max(0.25rem, var(--safe-top));
     left: 0.25rem;
-    /* The 7.5rem reservation keeps the panel's right edge (where the
-       collapse chevron floats) clear of the map's top-right corner, which
-       the floating chat chip owns at a higher z — an unbounded panel
-       parks the chevron exactly under the chip, untappable. Reserved
-       unconditionally, not just while the chip exists: the panel is
-       shrink-to-fit, so the cap only bites when a name is long, and
-       wrapping such a name into a corner card beats a full-width banner
-       anyway. No tighter bound: shrink-to-fit already hugs short content,
-       so extra caps can't prevent banners — they'd only force wraps on
-       wide (tablet) viewports where single lines fit fine. */
-    max-width: calc(100% - 7.5rem);
+    /* Swipe-to-move (attachCornerSwipe): the drag is a translate, so the
+       browser must not claim the touch for scrolling/zoom — and touch-action
+       doesn't cover WebKit's long-press selection/magnifier, which a slow
+       drag across the names would otherwise start (pairing as at
+       .logo-tappable / html.map-hold). */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    /* Shrink-to-fit up to the far gutter: a long name runs on one line
+       rather than wrapping into a taller card. The only thing that can
+       be in the way is the chat chip — see the :has() rule below. No
+       tighter bound: shrink-to-fit already hugs short content, so extra
+       caps can't prevent banners — they'd only force wraps on wide
+       (tablet) viewports where single lines fit fine. */
+    max-width: calc(100% - 0.5rem);
+  }
+
+  /* While the chat chip floats in the other top corner (playing role,
+     someone spectating or unread chat — .chat-chip-shown is syncChip's
+     class twin of its display toggle): keep the panel's far edge, where
+     the collapse chevron floats, out from under it — the chip sits at a
+     higher z, so an overlap leaves the chevron untappable. Measured
+     (WebKit, 402px): "◉3 # 2" with the unread badge = 71px ≈ 4.4rem; a
+     two-digit count adds ~0.5rem. 6rem = that + the chip's 0.4rem inset
+     + a gap. */
+  #game-view:has(> #chat-chip.chat-chip-float.chat-chip-shown) #monster-list {
+    max-width: calc(100% - 6rem);
+  }
+
+  /* The other top corner (monsterListCorner pref, class set by game-view).
+     The chat chip yields: its position carries no meaning, the list's is
+     the user's choice — so the two floats simply trade corners and the
+     width reservation above still describes the gap between them. */
+  #game-view.mons-right #monster-list {
+    left: auto;
+    right: 0.25rem;
+  }
+  #game-view.mons-right #chat-chip.chat-chip-float {
+    right: auto;
+    left: 0.4rem;
+  }
+
+  /* Mid-drag and during the snap: above the log float (3) and the chip (5)
+     so the card travels over everything, including the chip it's trading
+     corners with. */
+  #monster-list:is(.ml-dragging, .ml-snapping) {
+    z-index: 7;
   }
 }
 
@@ -2322,14 +2717,16 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding-top: max(0.25rem, var(--safe-top));
   padding-left: max(0.25rem, var(--safe-left));
   padding-right: max(0.25rem, var(--safe-right));
-  /* Keep the canvas clear of the floating log along the map's bottom edge. */
-  padding-bottom: calc(var(--msglog-h) + 0.25rem);
+  /* Keep the canvas clear of the floating log along the map's bottom edge
+     (--msglog-box-h: movement passes through the lens, so a pager can grow
+     the log while it's open). */
+  padding-bottom: calc(var(--msglog-box-h) + 0.25rem);
   background: rgba(0, 0, 0, 0.92);
 }
 /* With the spell rail up, the log floats a rail-height higher (same offset
-   pair as #more-btn) — keep the canvas clear of both. */
+   pair as #chat-pill) — keep the canvas clear of both. */
 #game-view.spell-row .minimap-lens {
-  padding-bottom: calc(var(--msglog-h) + var(--spell-rail-h) + 0.25rem);
+  padding-bottom: calc(var(--msglog-box-h) + var(--spell-rail-h) + 0.25rem);
 }
 .minimap-canvas {
   /* The bitmap is integer device-px per cell; keep upscaling (if any)
@@ -2372,7 +2769,29 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   line-height: 1;
   color: var(--text-dim);  /* quiet neutral, not the fg14 yellow of the name line */
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  /* Positioned for the same reason as .hud-place-chip: the padded box must
+     hit-test above the next row's inline text, which otherwise takes the
+     bottom 0.4rem back. */
+  position: relative;
+}
+/* Hit-area extension, inward only. The padded box is ~23×29 css px, and in
+   landscape it is pinned to the screen's top-right: the sidebar starts at
+   the physical top edge (phones report --safe-top 0 there) and its
+   --safe-right inset lands the gear inside the display's rounded corner
+   (measured: iPhone 15 Pro, corner radius ≈ safe-right), where a fingertip's
+   contact centroid gets pushed inward and misses. Growing up/right is
+   impossible (screen edge; #game-hud's landscape overflow clips there), so
+   grow down and left, where the finger lands — layout-free (absolute pseudo
+   takes no row width from #hud-title) and invisible. bottom is sized to
+   stop at the Health line; left to ~44px total width. Nothing under the
+   extension (species line, gold) is tappable. */
+.hud-settings-chip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: -0.7rem;
+  left: -1.3rem;
 }
 .hud-settings-chip:active { opacity: 0.5; }  /* dim on press */
 
@@ -2584,8 +3003,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 
 /* Stat / defense state colors (matches reference player.js classes).
    .weapon-corroded uses class-class specificity to override the .fgN
-   color class on the same element (matches reference's #game #stats_weapon
-   .corroded_weapon override). */
+   color class on the same element (matches ≤0.34's #game #stats_weapon
+   .corroded_weapon override; trunk dropped that rule with b51359a412, so
+   stats-view.ts only adds the class on servers without weapon_colour). */
 .stat-boosted, .def-boosted { color: #5e78ff; /* DCSS lightblue (.fg9) */ }
 .stat-zero { color: #ef2929; /* DCSS lightred (.fg12) */ }
 .stat-degenerated { color: #fce94f; /* DCSS yellow (.fg14) — reference degenerated_stat (drained) */ }
@@ -2697,6 +3117,32 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   gap: 0.4rem;
 }
 
+/* Share chip for exportable fixed-width screens (screen-export.ts): floats
+   over #ui-overlay's bottom-right corner (grid sibling, same containing-block
+   trick as #chat-chip.chat-chip-float), so it survives overlay re-renders
+   and stays reachable while the body scrolls beneath it. Bottom, not top:
+   heading lines run the full 80 columns so a top corner always covers text,
+   while the bottom-right is usually past the content's ragged edge.
+   Translucent fill for when it isn't. */
+.screen-export-btn {
+  grid-area: map;
+  position: absolute;
+  bottom: max(0.5rem, var(--safe-bottom));
+  right: 0.5rem;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  background: rgba(10, 9, 8, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  color: #babdb6; /* DCSS lightgrey (.fg7) — reads as chrome, not content */
+}
+.screen-export-btn[hidden] { display: none; }
+
 .overlay-title {
   display: flex;
   align-items: center;
@@ -2722,6 +3168,14 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   background-repeat: no-repeat;
 }
 
+/* Alpha/clip group around an actor's layers (appendMonsterActor): covers the
+   cell so the tiles inside keep their cell-relative placement; opacity and
+   clip-path are set inline per group. */
+.tile-stack .tile-split {
+  position: absolute;
+  inset: 0;
+}
+
 /* Baked doll thumbnail (src/game/tiles/avatar-bake.ts): a native-32px PNG
    standing in for a .tile-stack in the login strip / crypt grid. Same
    pixelated upscale as the live tiles; block display so it sizes like the
@@ -2735,13 +3189,21 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 
 .overlay-item .tile-stack {
   margin-right: -0.2rem;
-  /* Centre the 32px tile on the FIRST text line (not the whole row): the row
-     is align-items:flex-start, so pull the tile up by half its overhang vs one
-     line-height. Matches the reference client's vertical-align:middle tile on
-     its (non-wrapping) rows, but stays correct when our rows wrap to 2+ lines —
-     the icon sits next to the title/first line instead of floating at the
-     vertical middle of the block. */
-  margin-top: calc((1lh - 32px) / 2);
+  /* Centre the 32px tile on the FIRST text line, and let its overhang be
+     absorbed symmetrically so the text alone sets the row height. */
+  margin-block: calc((1lh - 32px) / 2);
+}
+/* Reference tile row = 34px li (32px tile + 1px padding + 1px border), whose
+   rows never wrap. Ours wrap to 2–3 lines at phone width, so the tile pins to
+   line 1 (the hotkey + item name it labels) rather than centring on the
+   block, keeping the tile column at one pitch across mixed-wrap lists. The
+   34px single-line height comes from padding, not min-height (a min-height
+   would also override the flex min-content floor and let an overflowing
+   .overlay-list squash wrapped rows), so a one-line row's text is centred by
+   construction and wrapped rows grow downward from .overlay-item's own
+   flex-start alignment. */
+.overlay-item:has(> .tile-stack) {
+  padding-block: calc((34px - 1lh) / 2);
 }
 
 .overlay-list {
@@ -2796,12 +3258,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid #000;
   outline: 2px solid #7d623c;
 }
-/* Rows here are short and never wrap, so centre the ✓/✗ tile and the text
-   in the row instead of the wrapping-row treatment (tile pulled up onto the
-   first text line), which pokes the tile out of the hover-highlight bar. */
-#ui-overlay.prompt-menu .overlay-item { align-items: center; }
-#ui-overlay.prompt-menu .overlay-item .tile-stack { margin-top: 0; }
-
 .overlay-item {
   display: flex;
   align-items: flex-start;
@@ -2814,16 +3270,17 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 0.35rem 0.25rem;
   text-align: left;
   cursor: pointer;
-  border-radius: 3px;
   width: 100%;
   touch-action: manipulation;
 }
 
-.overlay-item.item-selected { background: var(--surface); }
+/* The engine's menu cursor (last_hovered), shown only when game-view reveals
+   it (see adoptMenu); values are the reference's `.menu_contents li.hovered`
+   (game_data/static/style.css). Multiselect " + " rows get no styling — the
+   marker in the text carries it, as in the reference. */
 .overlay-item.item-hovered {
-  /*outline: 1px solid var(--accent);
-  outline-offset: -1px;*/
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;  /* outranks the row's fgN class (0,2,0 vs 0,1,0), as upstream */
 }
 
 /* Rows render item.text verbatim (hotkey + selection marker are inline in
@@ -2831,7 +3288,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    Note we don't follow the reference convention of right-aligned item prices
    within a 4-char column, followed by literal spaces before item names. To
    match that, append `white-space: pre-wrap;`. Tested and rejected. */
-.overlay-label { color: var(--text); min-width: 0; }
+/* No colour here — it would beat the row's fgN / hover colour. */
+.overlay-label { min-width: 0; }
 
 /* Rows carrying a fixed-width "<key> - " prefix (4 monospace cells) get a 4ch
    hanging indent so wrapped continuation lines sit under the item title:
@@ -2854,6 +3312,14 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   min-height: 0;
   height: 0;
   position: relative;
+}
+/* formatted-scroller bodies (Ctrl-P scrollback, Ctrl-O overview, help pages,
+   `%`): terminal-shaped line streams, not prose — tighter pitch (1.5 → 1.25),
+   same size as every other overlay (see the --fs-overlay comment for why the
+   size split was folded back). Ctrl-P alone can't be singled out: it arrives
+   untagged, like the others (see UiPushMsg.tag). */
+.overlay-body--scroller {
+  line-height: 1.25;
 }
 
 .overlay-line { min-height: 1lh; white-space: pre-wrap; }
@@ -2919,7 +3385,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .dialog-body .button:active,
 .dialog-body input[type="button"]:active { background: var(--surface2); }
@@ -2953,7 +3418,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border-radius: 4px;
   padding: 0.15rem 0.3rem;
   margin: 0 -0.3rem;
-  -webkit-tap-highlight-color: transparent;
 }
 .overlay-spell:active { background: rgba(255, 255, 255, 0.12); }
 @media (hover: hover) {
@@ -2998,7 +3462,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   background: color-mix(in srgb, var(--bg) 70%, transparent);
   border: 0;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .spell-rail-btn:active { background: var(--surface); }
 /* Corner cast-keystroke letter ("za"), shared by the rail and the z-tab grid
@@ -3058,77 +3521,378 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   cursor: default;
 }
 
-/* Newgame choice grid */
-.ngc-wrap {
+/* Newgame choice screen (newgame-view.ts; spec
+   dev-material/newgame-redesign.md). The wire's columns as a horizontal
+   snap strip of full-width panels for species/backgrounds, plain rows for
+   weapons; #ui-overlay is the scroll container, so the footer pins with
+   position:sticky at its bottom. */
+.ngv-wrap {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  /* Grows to the footer so the footer stays bottom-pinned on short
+     menus. */
+  flex: 1 0 auto;
 }
 
-.ngc-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--ngc-cols, 3), 1fr);
-  gap: 2px;
-}
-
-.ngc-col-header {
-  font-size: 0.7rem;
-  text-align: center;
-  padding: 0.15rem 0.1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.ngc-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 2px;
-  color: var(--text);
+.ngv-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  padding: 0.2rem 0.25rem;
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
-  overflow: hidden;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  padding: 0 0.25rem;
+  /* The map screen's title carries literal \n line breaks ("Welcome,
+     crawler.\n\nYou have a choice of maps:") that dcssToHtml passes
+     through — honour them (incl. the deliberate blank line, as the
+     reference renders) instead of running the lines together. */
+  white-space: pre-line;
+}
+
+.ngv-prompt { color: var(--text); }
+
+/* Shared header voice for the column header (.ngv-col-h below) and the
+   mid-column section labels; the two differ only in size/padding. No
+   underline rules: the reference draws these as bare lightblue text, and
+   with three tight columns a full-width rule per header fused into one
+   notched line across the screen. */
+.ngv-sec-h,
+.ngv-col-h {
+  color: #5e78ff;  /* lightblue */
+  font-family: var(--font-mono);
+}
+
+.ngv-sec-h {
+  text-align: center;
+  font-size: 0.8rem;
+  padding: 0.45rem 0 0.2rem;
+  margin-bottom: 0.25rem;
+}
+
+.ngv-groups {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0.4rem;
+}
+
+.ngv-card-row {
+  display: flex;
+  justify-content: center;
+}
+
+/* The column strip. Panels split the width evenly (flex-grow, basis 0)
+   so every wire column fits on one screen wherever the floor allows —
+   3 × 7rem clears a 360px phone — and the strip only actually scrolls
+   when they can't (a 4-column menu, a very narrow viewport), where the
+   min-width forces overflow and the snap behavior takes over as-is. The
+   name column funds every pixel spent between panels: at 402px
+   "Elementalist" clears its line by ~5px with 1px gaps and the compact
+   row metrics below, so don't widen gaps or padding here without
+   re-measuring that word ON DEVICE — iOS falls back to a wider mono
+   face, and desktop WebKit passed a 28px→32px sprite bump that clipped
+   "Fire Elementali…" on a real phone (traced on the superseded
+   newgame-choice-redesign branch, same budget). No page dots: nothing
+   scrolls in the common case, and when it does the cut-off panel at the
+   edge is the cue. Full-bleed to the overlay's edges so the first
+   panel's rows start where the title does and a snapped panel isn't
+   inset from the edge it snapped to. Only the strip scrolls
+   horizontally — never the overlay. Vertical scroll, when a column is
+   taller than the screen, stays with #ui-overlay. */
+.ngv-colblock {
+  min-width: 0;
+  /* Wide-layout queries below measure the strip, not the viewport — a
+     landscape sidebar takes 256-320px of the overlay (same trap as the
+     dock's width note in dev-material/newgame-redesign.md). */
+  container-type: inline-size;
+}
+
+.ngv-strip {
+  display: flex;
+  gap: 1px;
+  overflow-x: auto;
+  /* `visible` is a wish: any non-visible overflow-x makes the other axis
+     clip too, and the selection ring is an OUTLINE painted outside the
+     row's box — so the strip carries 3px of vertical padding for the
+     ring's top/bottom edges to land in (on-device the last row's ring
+     lost its bottom edge at the strip's edge). */
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  margin: 0 -0.5rem;
+  padding: 3px 0.5rem;
+  scroll-padding: 0 0.5rem;
+}
+.ngv-strip::-webkit-scrollbar { display: none; }
+
+.ngv-col {
+  flex: 1 1 0;
+  /* The floor is what decides fit-vs-scroll (see the strip comment);
+     the cap keeps a lone wide screen from stretching two columns into
+     ~40-character rows, and doubles as the peek bound (100% - 2.5rem)
+     when the strip does scroll. */
+  min-width: 7rem;
+  max-width: min(20rem, 100% - 2.5rem);
+  /* start, and nothing pads the strip's end: the scroll range is
+     exactly the columns, so the last one simply stops at the right edge
+     (snapping picks the max offset) instead of parking left-aligned with
+     a void beside it. */
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Column header = the wire's y:0 label, as the reference draws it; mid-
+   column labels reuse .ngv-sec-h beneath it. */
+.ngv-col-h {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.4rem 0.25rem;
+  margin-bottom: 0.2rem;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ngc-btn:active { background: rgba(245, 158, 11, 0.15); }
-.ngc-btn.ngc-selected { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.4); }
+.ngv-col .ngv-sec-h { text-align: left; padding-left: 0.4rem; }
 
-.ngc-desc {
+/* Item buttons share the reference's invisible-until-selected outline;
+   the selected color is the wire highlight_colour (set inline as
+   --ngv-sel-color: blue = axis unknown, green = recommended, lightgrey
+   = restricted). It is an inset shadow rather than a border so it costs
+   the layout nothing: in a 4-card row a 12-character name ("Shapeshifter")
+   clears its card by ~1.7px, and a 1px border on each side is enough to
+   push its last letter onto a second line. */
+.ngv-card,
+.ngv-row {
+  background: transparent;
+  border: none;
+  outline: 1px solid transparent;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 0.3rem 0.15rem;
+}
+
+/* Cards share the row evenly but never exceed a third of it: a 4-card
+   row lands at 25% (the tightest name column), 3- and 2-card rows widen
+   to 33% so balanced short rows still span the full width instead of
+   sitting at a narrower pitch than their neighbours. */
+.ngv-card {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 33.34%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.ngv-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  /* 44px: the sprite is only 32, and a list of 32px rows is a column of
+     sliver tap targets — the exact failure the redesign replaced. */
+  min-height: 44px;
+  width: 100%;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+/* The name is the width-critical part of a card, and the card's own
+   horizontal padding is there for the sprite and the selection border —
+   so let the text have those pixels back. In a 4-card row "Shapeshifter"
+   misses a one-line fit by under a pixel on iOS (whose monospace metrics
+   run a touch wider than desktop WebKit's); an ellipsis there would spend
+   a letter's width to hide a letter. Genuinely long names (Earth
+   Elementalist) still wrap, which is correct — the full name matters when
+   you are picking a background. */
+.ngv-card-name {
+  width: calc(100% + 0.3rem);
+  margin-inline: -0.15rem;
+  /* Names sit centred, so the reclaimed padding is shared either side;
+     the selection ring is inset and overlaps at most a hairline of a
+     name that runs the full width. */
+}
+
+.ngv-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ngv-row-suffix { margin-left: auto; flex-shrink: 0; }
+
+/* Rows inside the strip run three abreast at phone width, so they trade
+   the loose single-column metrics for the compact set the superseded
+   newgame-choice-redesign branch validated on device: 28px sprite
+   (COL_SPRITE_SCALE in newgame-view.ts), hairline gap/padding, and
+   names that wrap to two lines instead of ellipsizing — the anywhere
+   break only fires on a single word too long for the column, and
+   "Elementalist" (the longest word on trunk) still fits one line. The
+   44px min-height is untouched: the row, not the sprite, is the tap
+   target. */
+.ngv-col .ngv-row {
+  gap: 0.15rem;
+  padding: 0.2rem 0.1rem;
+}
+.ngv-col .ngv-row-name {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+/* Once the strip gives three columns ~14rem each (tablet, landscape
+   with no sidebar eating the overlay), the compact text metrics relax.
+   The sprite stays 28px — it's sized in JS at build, and a fixed sprite
+   beside larger text reads fine where a resized one would need a
+   repaint. */
+@container (min-width: 42rem) {
+  .ngv-col .ngv-row { gap: 0.4rem; padding: 0.2rem 0.3rem; }
+  .ngv-col .ngv-row-name { font-size: 0.85rem; }
+}
+
+.ngv-card.ngv-sel,
+.ngv-row.ngv-sel,
+.ngv-action.ngv-sel {
+  /* Outline, not border or inset shadow: it costs the layout nothing AND
+     draws outside the box, so a name that runs the card's full width
+     keeps its clearance instead of being crowded by the ring. Cards abut
+     with no gap, but the pixel it borrows from a neighbour is always
+     empty — their names are centred. */
+  outline: 1px solid var(--ngv-sel-color, var(--accent));
+  background: rgba(255, 255, 255, 0.04);
+}
+/* Armed shortcut: the ring hugs a one-line label, so give it a hair of
+   air and a radius; the grid row doesn't move (outline is paint-only). */
+.ngv-action.ngv-sel {
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.ngv-doll { flex-shrink: 0; }
+
+/* The footer: sub-items shortcuts, with the armed item's description
+   above them during the two-tap confirm. Static text on the overlay's own
+   black — no panel, no rule, no shadow (the reference simply ends the
+   popup with the brown shortcut lines). margin-top:auto keeps it at the
+   bottom when the grid is shorter than the screen; sticky keeps the
+   shortcuts reachable on the long single-column lists (weapons, sprint
+   maps), where the column strip doesn't apply. A sticky element is
+   confined to its containing block (the flex CONTENT box), so the overlay
+   drops its bottom padding for this screen and the footer carries it. */
+#ui-overlay:has(> .ngv-foot) { padding-bottom: 0; }
+/* ...and the Esc bar beneath it loses its top rule: the footer is plain
+   text on the same black, so the rule would be the only line on screen. */
+#ui-overlay:has(> .ngv-foot) ~ #menu-controls { border-top-color: transparent; }
+
+.ngv-foot {
+  position: sticky;
+  bottom: 0;
+  margin: auto -0.5rem 0;
+  z-index: 2;
+  background: var(--bg);
+  padding: 0.5rem 0.6rem 0.7rem;
+}
+
+/* The wire sub-items grid verbatim (.ngv-actions-2 when its wire width
+   is ≥2, capped at 2 for phone widths; each entry carries its wire
+   column). Equal tracks keep the key glyphs in two straight gutters;
+   over-long entries ellipsise tail-first, so the "K - " prefix always
+   survives. */
+/* Footer content holds a readable measure instead of stretching to a
+   tablet's full width: at 685px the description ran ~92 characters a
+   line and the two shortcut columns bunched against the left edge. */
+.ngv-desc,
+.ngv-actions {
+  max-width: 34rem;
+  margin-inline: auto;
+}
+
+.ngv-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 0.3rem;
+  row-gap: 0;
+}
+
+/* Two-column wire grids: the left track takes only what its own entries
+   need (capped at half) rather than a flat 50%, handing the slack to the
+   right track — which is where the long entries live ("Space - Pick
+   background first", "Tab - <previous character>"), so they ellipsise a
+   couple of characters later. Never worse than 50/50: the cap is the
+   fallback when the left entries are the long ones (weapon menu). */
+/* One rule at every width, so nothing jumps as the window narrows.
+   Both tracks are sized to their own content and pushed to opposite
+   edges: the left column's text starts on the block's left edge and the
+   right column's longest line ends on its right edge, spanning the same
+   width as the rule above them. Entries stay left-aligned INSIDE each
+   track, which is what keeps the dashes in a line.
+
+   It degrades continuously because of how grid sizes tracks. Wide: both
+   reach max-content and the leftover becomes the gap. Narrowing: the gap
+   closes to zero. Narrower still: track sizing distributes what's left
+   equally BUT freezes a track at its own max-content and rolls the
+   remainder into the other — so on a phone the left column takes only
+   the width its entries need and the right column, which holds the long
+   ones, gets everything else. That is exactly what an explicit
+   `fit-content(50%) minmax(0, 1fr)` bought (measured identical), without
+   a second rule to snap between. minmax(0, ...) rather than bare
+   max-content so an over-long entry (the Tab shortcut carries a whole
+   character description) shrinks the tracks and ellipsises instead of
+   overflowing the footer. */
+.ngv-actions-2 {
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content);
+  justify-content: space-between;
+}
+
+.ngv-action {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  /* 1.9: ~4px more per row than body text — a taller tap target that
+     still reads as the reference's block of shortcut lines, not a list. */
+  line-height: 1.9;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* pre, not nowrap: the wire label's leading spaces ARE the alignment
+     (see buildActions) and normal white-space processing would eat them. */
+  white-space: pre;
+}
+
+/* Sits above the shortcuts, which are always mounted — so no reserved
+   min-height: the footer grows by the description's own lines when an
+   item is armed and shrinks back when it isn't. Nothing above it moves
+   either way (it is bottom-pinned; the grid scrolls under it). */
+.ngv-desc {
   font-size: 0.75rem;
   line-height: 1.45;
-  padding: 0.4rem 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
   color: var(--text);
-  min-height: 3.8em;
+  /* Air, not a rule, between the preview and the menu's own commands —
+     the footer is plain text on the overlay's black. */
+  margin-bottom: 0.5rem;
+  max-height: 30vh;
+  overflow-y: auto;
 }
 
-.ngc-desc-text { color: var(--text-dim); }
-.ngc-confirm-hint { color: var(--text-dim); font-size: 0.7rem; }
-
-.ngc-sub-grid {
-  border-top: 1px solid var(--border);
-  padding-top: 0.25rem;
-}
-
-.ngc-sub-grid .ngc-btn {
-  font-size: 0.75rem;
-}
-
-.ngc-btn .ngc-btn-main {
-  display: inline-block;
-}
-
-.ngc-btn .ngc-btn-suffix {
-  float: right;
-  margin-left: 0.5rem;
-  color: var(--text-dim);
-}
+.ngv-desc .ngv-confirm { color: var(--text-dim); font-size: 0.68rem; }
 
 /* Menu controls (replaces touch controls during menus) */
 #menu-controls {
@@ -3162,8 +3926,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   -webkit-user-select: none;
   padding: 0.3rem 0.5rem;
   text-align: center;
+  /* Glyph + word labels ("⏎ Buy"): the HTML space between the glyph span
+     and the text is leading whitespace of an anonymous flex item, which
+     flex strips — the gap is the visible space. */
+  column-gap: 0.35em;
 }
-.menu-ctrl-btn:active { background: var(--surface); color: var(--accent); }
+.menu-ctrl-btn:active,
+.menu-ctrl-btn.pressed { background: var(--press); color: var(--accent); }
 .menu-ctrl-glyph { font-size: 1.25rem; line-height: 1; }
 
 .skill-letter-row {
@@ -3190,6 +3959,21 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   background: var(--accent);
   color: var(--bg);
   font-weight: bold;
+  /* The label is dynamic (syncAcceptBtn). A wrapped label makes the button
+     taller and the whole bar with it, so keep it on one line: the button
+     widens at its siblings' expense instead (flex min-content). The cap
+     fits the longest label, "⏎ Accept (NN chosen)" (~221px). */
+  white-space: nowrap;
+  max-width: 15rem;
+}
+/* Accent-filled like .numpad-primary: can't lighten to --press, brighten
+   instead. Same (0,2,0) specificity as .menu-ctrl-btn.pressed, later in
+   source, so without this the Accept button showed no press at all. */
+.menu-ctrl-btn[data-dynamic="accept"]:active,
+.menu-ctrl-btn[data-dynamic="accept"].pressed {
+  background: var(--accent);
+  color: var(--bg);
+  filter: brightness(1.25);
 }
 
 .menu-ctrl-btn[data-shift="true"].active {
@@ -3219,11 +4003,11 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   --tc-dpad: var(--pz-dpad, 3.5rem);
   /* Resting palette one step darker than the app-wide tokens: at night the
      map is sparse dim glyphs on near-black, so --text/--surface2 buttons
-     outshine the play area. Presses brighten (--tc-press + accent label) —
-     the inverse of the app-wide darken-on-press — so tap feedback stays
-     crisp against the dim resting state. */
+     outshine the play area. Presses brighten to the app-wide --press fill
+     (+ accent label), so tap feedback stays crisp against the dim resting
+     state. */
   --tc-fill: var(--surface);
-  --tc-press: var(--surface2);
+  --tc-press: var(--press);
   --tc-label: var(--text-dim);
   --tc-label-dim: #78716c;  /* one stone step below --text-dim, for the wait btn */
   --tc-border: rgba(245, 158, 11, 0.07);
@@ -3329,7 +4113,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   touch-action: manipulation;
 }
 
-.tc-dpad-btn:active { background: var(--tc-press); color: var(--accent); }
+/* `.pressed` alongside :active on every touch control: see bindPressedClass
+   in touch.ts (Blink drops :active on a preventDefault()ed touchstart). */
+.tc-dpad-btn:active,
+.tc-dpad-btn.pressed { background: var(--tc-press); color: var(--accent); }
 .tc-dpad-btn.wait { color: var(--tc-label-dim); }
 
 /* Right panel */
@@ -3370,24 +4157,44 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 
 .tc-esc:active,
-.tc-enter:active { background: var(--tc-press); color: var(--accent); }
+.tc-esc.pressed,
+.tc-enter:active,
+.tc-enter.pressed { background: var(--tc-press); color: var(--accent); }
 
-/* Tab strip */
+/* Tab strip: a segmented control — ONE bordered track holding borderless
+   segments, the selected one a filled lozenge. The tabs used to be styled
+   as the same bordered-button family as the Esc/Enter actions flanking
+   them, so the active tab read as "a pressed button" and nothing marked
+   @ > ? as a mutually exclusive group; the track is what separates
+   selectors from actions in the row. The track is the same --tc-fill as
+   the buttons: a recessed half-step (toward --bg) was tried and read as a
+   hole in the row — --surface is only ~5 levels above --bg, so the step
+   down was invisible; a raised half-step (toward --surface2) reads as a
+   lighter slab that pulls the eye off the row. Flush, the track is just a
+   wider member of the button family and the amber lozenge alone carries
+   the selection. No dividers between segments: iOS hides them next to
+   the selection anyway, and at this size they'd be noise. */
 .tc-tabs {
   display: flex;
   flex-direction: row;
   flex: 1;
-  gap: 2px;
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
+  border-radius: 3px;
+  /* 1px inset for the lozenge: iOS insets its segment 2pt in a 32pt track
+     (~12% per edge); 2px here on a 22px track was ~27% and read as a
+     lozenge that failed to fill. 0 would make it a flush button again. */
+  padding: 1px;
+  height: 1.4rem;  /* = .tc-esc/.tc-enter (border-box); segments stretch inside */
 }
 
 .tc-tab {
   flex: 1;
-  background: var(--tc-fill);
-  border: 1px solid var(--tc-border);
-  border-radius: 3px;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
   color: var(--tc-label);
-  font-size: 0.72rem;
-  height: 1.4rem;
+  font-size: 0.8rem;  /* = .tc-esc/.tc-enter — same row, same glyph size */
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3398,13 +4205,19 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 0 0.1rem;
 }
 
+/* No hit-area extension above the tabs: a ::after reaching upward was
+   tried and leaks out of the strip into whatever the layout puts above it
+   — the HUD in normal play, but the examine map in X mode, the chat input
+   row with the sheet open, the spell rail in landscape — each needing its
+   own gate. The row was usable as-is; keep hit-testing inside the strip. */
+
 .tc-tab.active {
-  border-color: var(--accent);
   color: var(--accent);
   background: rgba(245, 158, 11, 0.18);
 }
 
-.tc-tab:active { background: var(--tc-press); }
+.tc-tab:active,
+.tc-tab.pressed { background: var(--tc-press); color: var(--accent); }
 
 /* Content area: tab-specific buttons */
 .tc-content {
@@ -3439,7 +4252,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   touch-action: manipulation;
 }
 
-.tc-btn:active { background: var(--tc-press); color: var(--accent); }
+.tc-btn:active,
+.tc-btn.pressed { background: var(--tc-press); color: var(--accent); }
 
 .tc-btn-spacer { background: transparent; border-color: transparent; pointer-events: none; }
 
@@ -3480,7 +4294,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   background: transparent;
   border: 0;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 /* --tc-press (not --tc-fill) so the tap still contrasts against the tray fill. */
@@ -3527,8 +4340,11 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 
 .tc-shift:active,
+.tc-shift.pressed,
 .tc-ctrl:active,
-.tc-kbd:active { background: var(--tc-press); color: var(--accent); }
+.tc-ctrl.pressed,
+.tc-kbd:active,
+.tc-kbd.pressed { background: var(--tc-press); color: var(--accent); }
 
 /* Virtual QWERTY keyboard overlay */
 #kbd-overlay {
@@ -3616,7 +4432,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 .kbd-row > .kbd-key:first-child::after { left: -2rem; }
 .kbd-row > .kbd-key:last-child::after { right: -2rem; }
 
-.kbd-key:active { background: var(--surface); color: var(--accent); }
+.kbd-key:active,
+.kbd-key.pressed { background: var(--press); color: var(--accent); }
 
 .kbd-key.wide {
   width: auto;
@@ -3765,13 +4582,21 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
        minimum: .tc-panel declares min-height:0 for its portrait flex life,
        which zeroes that minimum here and would let a starved sidebar crush
        the panel until its footer keys paint over the row above. */
-    grid-template-rows: minmax(0, auto) auto 1fr auto minmax(max-content, auto);
+    /* The `chat` row spans BOTH columns — a row track can't do otherwise, and
+       a map-column-only sheet was tried: it strands a dead corner where the
+       sidebar's bottom rows vacated. Naming it here (rather than letting the
+       base #chat-sheet rule's `grid-area: chat` fall through to implicit
+       tracks) is load-bearing — the fallback was seen live mangling the whole
+       grid, sidebar shoved mid-screen. Hidden sheet = auto row collapsed to 0,
+       same as portrait. */
+    grid-template-rows: minmax(0, auto) auto 1fr auto minmax(max-content, auto) auto;
     grid-template-areas:
       "map hud"
       "map mons"
       "map ."
       "map spells"
-      "map panel";
+      "map panel"
+      "chat chat";
     column-gap: 0;
   }
 
@@ -3792,20 +4617,25 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     padding-bottom: max(0.75rem, var(--safe-bottom));
   }
   /* The portrait float rule's rows 1-3 would clip against this template's
-     5 rows; the map column spans them all, so the backdrop should too. */
-  #ui-overlay.overlay-float { grid-row: 1 / -1; }
+     map rows; the map column spans them all, so the backdrop should too.
+     Named lines, not `1 / -1`: the chat row is outside the map area, and a
+     numeric span would dim half the open sheet. */
+  #ui-overlay.overlay-float { grid-row: map; }
   /* Here the d-pad floats *inside* the map area (no separate touch row),
      so the full-span backdrop would dim and block it — lift it above the
      float backdrop (z 5) only, keeping the prompt answerable by arrows/Esc
      like portrait. Full-screen overlays still cover it as before. */
   #ui-overlay.overlay-float ~ #touch-controls .tc-dpad { z-index: 6; }
 
-  /* No `chat` area in this template — the portrait grid-area would resolve
-     to an implicit column off the right edge. Full-width implicit bottom
-     row instead; a real landscape home (likely the sidebar) is future work. */
+  /* Placement comes from the `chat` area in the template above. Only the
+     insets are landscape-specific: the map column is full-bleed, but the
+     sheet is content, so keep its text clear of the notch/island ear (insets
+     are symmetric — see the #game-view padding-right note) and the input row
+     out of the home-indicator swipe zone, matching the sidebar's bottom
+     lift. */
   #chat-sheet {
-    grid-area: auto;
-    grid-column: 1 / -1;
+    padding-left: var(--safe-left);
+    padding-bottom: var(--sidebar-lift);
   }
 
   /* The log floats over the map's TOP edge in landscape. Everything else —
@@ -3816,16 +4646,30 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      cleared by GROWING the box by --safe-top rather than moving it down:
      the scrim then backs the clock/battery instead of leaving raw map
      glyphs under them, while the padding keeps the text below the bar.
-     The log's bottom edge stays at --safe-top + --msglog-h either way, so
-     the #more-btn / minimap offsets below hold. Scrollback can slide old
+     The log's bottom edge stays at --safe-top + --msglog-box-h either way,
+     so the minimap offsets below hold. Scrollback can slide old
      lines up into the band (padding scrolls with content), but they stay
      on the scrim — no worse than any text under a translucent bar. Phones
      report a 0 inset in landscape, collapsing all of this to the base
-     rule. */
+     rule. Top edge pinned here, so --msglog-box-h's inline --more-- growth
+     extends the bottom edge toward map center. */
   #game-messages {
     top: 0;
-    height: calc(var(--msglog-h) + var(--safe-top));
+    height: calc(var(--msglog-box-h) + var(--safe-top));
     padding-top: calc(0.2rem + var(--safe-top));
+  }
+
+  /* Both floating text strips are flush with the physical LEFT screen edge
+     (the map column is full-bleed): on phones the first characters land in
+     the rounded corner / notch ear, so move the whole BOX clear — the box,
+     not just the text (an earlier padding-left version left dead scrim and
+     a hanging --more-- border to the left of the text). Unlike the
+     --safe-top treatment above there's nothing to back under the corner,
+     so the scrim edge should track the text. Portrait reports 0 side
+     insets, collapsing this to the base left:0. */
+  #game-messages,
+  #xdesc-strip {
+    left: var(--safe-left);
   }
 
   /* Monster list: in-flow sidebar card in the `mons` row, directly beneath the
@@ -3844,8 +4688,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     max-width: calc(var(--sidebar-w) - 0.8rem);
   }
 
-  /* --more-- re-anchors directly below the floating log (the base rule
-     already provides grid-area:map, absolute, left/right, z-index 4). */
+  /* The X-mode --more-- fallback button re-anchors to the log's usual band
+     (the log itself is hidden in X mode): top keeps it clear of the
+     bottom-anchored xdesc strip and d-pad. Base rule provides
+     grid-area:map, absolute, left/right, z-index 4. */
   #more-btn {
     top: calc(var(--safe-top) + var(--msglog-h));
     bottom: auto;
@@ -3858,7 +4704,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      clearance on either side. */
   .minimap-lens,
   #game-view.spell-row .minimap-lens {
-    padding-top: calc(var(--safe-top) + var(--msglog-h) + 0.25rem);
+    padding-top: calc(var(--safe-top) + var(--msglog-box-h) + 0.25rem);
     /* The landscape map cell reaches the physical screen bottom (no touch
        controls below it), so keep the canvas out of the home-indicator zone. */
     padding-bottom: max(0.25rem, var(--safe-bottom));
@@ -3975,6 +4821,11 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   #game-messages { display: flex  !important; }
   #game-hud      { display: flex  !important; }
   #touch-controls { display: contents !important; }
+  /* ...except the macro panel while the menu bar is up: the bar takes the
+     same `panel` area (game-view's setMenuBar), and a panel left in flow
+     there sizes the minmax(max-content) row to its own height, so the bar
+     stretched to 155px and a lone ⎋ filled it. The d-pad float stays. */
+  #game-view.menu-bar .tc-panel { display: none; }
 
   /* Spell rail: in-flow sidebar row directly above the touch panel. Base
      styling applies — including the fixed one-row height, so the rail
@@ -3996,6 +4847,82 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     --kbd-key-h: clamp(1.8rem, 9vh, 2.8rem);
     --kbd-row-gap: clamp(0.25rem, 1.2vh, 0.5rem);
   }
+
+  /* Character creation (the `newgame` view class, set by the creation
+     screens through enterLayout): there is no game behind these screens,
+     so the map-column confinement above is wrong for them — the sidebar
+     would show the pre-creation HUD (a caption skeleton, or on 0.34 the
+     previous character's title/species with zeros: the engine sends a
+     `player` frame with an empty name before the choice is made). The
+     overlay takes both columns over the sidebar's info rows instead, and
+     the newgame-choice screen lays itself out as columns + rail: the
+     footer (armed item's description, the shortcut list) moves into the
+     sidebar's column, above the Esc bar, which keeps its `panel` row.
+     Everything the overlay covers is hidden outright (!important beats
+     the forced-visible rules above), not just painted over: the sidebar
+     rows would still size themselves. Row 5 under the map column is an
+     empty band beside the bar — black on black. */
+  #game-view.newgame #ui-overlay {
+    grid-column: 1 / -1;
+    grid-row: 1 / 5;
+    padding-right: 0;
+  }
+  #game-view.newgame :is(#game-hud, #monster-list, #spell-rail, #game-messages, #map-wrap, .tc-dpad, .tc-panel) {
+    display: none !important;
+  }
+  #game-view.newgame #ui-overlay:has(> .ngv-foot) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
+    grid-template-rows: minmax(0, 1fr);
+    column-gap: 0.5rem;
+    overflow: hidden;
+  }
+  /* The column strip scrolls on its own; the rail stays put. overflow-x
+     hidden, not the auto that overflow-y alone implies: the strip's
+     -0.5rem side margins bleed past this column (they bled into the
+     overlay's padding before) and would give the wrap an 8px sideways
+     scroll of its own. */
+  #game-view.newgame .ngv-wrap {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  /* Rail: description at the top, shortcuts pinned to the bottom so they
+     sit on the Esc bar; a long description shrinks and scrolls between
+     them rather than pushing the shortcuts out of reach. Sticky/negative
+     margins were the bottom-dock geometry and go. */
+  #game-view.newgame .ngv-foot {
+    position: static;
+    margin: 0;
+    padding: 0 0.6rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #game-view.newgame .ngv-desc {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+  }
+  #game-view.newgame .ngv-actions {
+    flex: none;
+    margin-top: auto;
+    /* One column: "Space - Pick background first" alone fills 16rem. */
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: start;
+  }
+  /* Entries carry their wire column inline (buildActions), so the single
+     track needs !important to fold them; the wire's row-major order then
+     reads down the rail, keeping each recommended/random pair adjacent.
+     nowrap, not pre: the labels' leading spaces aligned the dashes of the
+     two-column grid (newgame.cc's "    * - " padding) and would indent
+     half the rail's lines; a line start drops them under nowrap, and the
+     ellipsis stays. */
+  #game-view.newgame .ngv-action {
+    grid-column: 1 !important;
+    white-space: nowrap;
+  }
 }
 
 /* Tablet landscape — min-height: 601px complements the compact-monster-
@@ -4010,7 +4937,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    extra columns. min-width keeps squarish desktop / Stage Manager windows
    (landscape only promises width>height, so ~620×610 qualifies) from
    spending over half their width on sidebar — every real iPad landscape
-   is ≥1024. */
+   is ≥1024. The status-strip query (html.pz-status-blur block) repeats
+   this condition as its landscape leg — change both together. */
 @media (orientation: landscape) and (min-width: 768px) and (min-height: 601px) {
   :root { --sidebar-w: var(--touch-panel-cap); }
   /* At the wide sidebar there's room for the reference's 45/55 stat split,
@@ -4032,8 +4960,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    without scrolling on a phone in landscape (≤500px tall). */
 @media (orientation: landscape) and (max-height: 500px) {
   .login-card { padding: 1rem 1.25rem; max-width: 380px; }
-  .login-title { font-size: 1.2rem; margin-bottom: 0.6rem; }
-  .login-group { margin-bottom: 0.85rem; }
+  .login-card { --login-head-gap: 0.6rem; --login-group-gap: 0.85rem; }
+  .login-title { font-size: 1.2rem; }
   .login-subsection { margin-bottom: 0.7rem; }
   .login-label { margin-bottom: 0.5rem; font-size: 0.8rem; }
   .login-label input,
@@ -4106,7 +5034,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .reconnect-btn:active { background: var(--surface2); }
 .reconnect-force-yes { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
@@ -4126,7 +5053,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .lobby-notice-actions button:active { background: var(--surface2); }
 
@@ -4175,7 +5101,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.85rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 /* Selected = accent border + amber fill, matching the .settings-seg active
    segment so selection reads the same everywhere on the page. */
@@ -4202,7 +5127,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   color: var(--text-dim);
   font-size: 1rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .set-row-more:active { background: var(--surface2); }
 .set-row-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0 0 0.25rem; }
@@ -4216,7 +5140,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.72rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .set-action:active { background: var(--surface2); }
 .set-action-danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
@@ -4234,7 +5157,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.85rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .settings-btn:active { background: var(--surface); }
 .settings-btn-primary { border-color: var(--accent); color: var(--accent); }
@@ -4285,7 +5207,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  -webkit-tap-highlight-color: transparent;
 }
 .set-slider-mark {
   width: 10px;
@@ -4499,7 +5420,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.72rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 
 /* Fused segmented control (Map display picker, editor's 3×3/3×4 toggle):
@@ -4526,7 +5446,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.95rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .ed-slot.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
 .ed-slot.picking { border-color: var(--accent); color: var(--accent); }
@@ -4583,7 +5502,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 0.72rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .ed-key:active { background: var(--surface); color: var(--accent); }
 /* current = what the slot holds now; armed = first tap of the two-tap send */
@@ -4612,7 +5530,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 #chat-chip .chat-chip-hash { color: var(--accent); font-weight: 600; }
 #chat-chip.chat-chip-open { border-color: var(--accent); }
@@ -4662,7 +5579,8 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   right: 0.75rem;
   margin-inline: auto;
   width: fit-content;
-  bottom: calc(var(--msglog-h) + 0.5rem);
+  /* --msglog-box-h: ride up with the log's inline --more-- growth. */
+  bottom: calc(var(--msglog-box-h) + 0.5rem);
   z-index: 5;
   padding: 0.35rem 0.7rem;
   border-radius: 16px;
@@ -4686,7 +5604,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   overflow: hidden;
   word-break: break-word;
 }
-#game-view.spell-row #chat-pill { bottom: calc(var(--msglog-h) + var(--spell-rail-h) + 0.5rem); }
+#game-view.spell-row #chat-pill { bottom: calc(var(--msglog-box-h) + var(--spell-rail-h) + 0.5rem); }
 
 /* Bottom sheet: history + input. Fixed so the map keeps playing above it —
    chatting while watching is the point. Above the touch/menu tier, below
@@ -4751,7 +5669,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   line-height: 1;
   padding: 0.1rem 0.4rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 
 .chat-history {
@@ -4874,15 +5791,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   line-height: 1;
   padding: 0 0.8rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .chat-send:active { background: var(--surface); }
 
 /* ── Character card (views/char-card.ts) ──────────────────────
-   Shared by the crypt, the offline scores browser, and online history.
-   Left accent bar carries the result: green for a win/escape, red for a
-   death, border-dim otherwise. Compact form (crypt grid) drops the stats,
-   meta, and god-rank lines in the renderer, not here. */
+   Shared by the crypt modal and the offline past-games list. The result
+   line alone carries the outcome colour (.char-card-kind-*); the frame
+   stays neutral. */
 .char-card {
   position: relative;
   display: flex;
@@ -4890,14 +5805,11 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   gap: 0.6rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
   border-radius: 8px;
   padding: 0.6rem 0.7rem;
   text-align: left;
 }
-.char-card-k-dead { border-left-color: var(--danger); }
-.char-card-k-won { border-left-color: var(--ok); }
-.char-card-tappable { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.char-card-tappable { cursor: pointer; }
 .char-card-tappable:active { background: var(--surface2); }
 .char-card-doll {
   flex: none;
@@ -4921,29 +5833,30 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 /* Fact-separator middot (char-card.ts joinedLine/sepSpan): margins set the
    gap — a text ' · ' join costs three full mono cells, too wide at phone
    width (thin/hair spaces fall back to the full space advance in this
-   stack, so spacing must come from CSS, not characters). */
+   stack, so spacing must come from CSS, not characters). The dot's gaps
+   sit at ~60% of a word space (measured on iOS and desktop WebKit);
+   matching a space needs ~0.8ch and costs a wrapped meta line per card,
+   so the tighter gap is the deliberate trade. */
 .char-card-sep { margin: 0 0.18em; opacity: 0.8; }
 /* One fact = one unbreakable run (joinedLine / statsRow groups): lines wrap
-   at the separators, never inside "the Shining One" / "7 days ago" /
+   at the separators, never inside "the Shining One" / "7d ago" /
    "0.35-a0" (hyphens are otherwise legal break points). */
 .char-card-fact { white-space: nowrap; }
 .char-card-result {
   color: var(--text);
   font-size: 0.8rem;
-  /* Online verbose blurbs are multi-line morgue text; keep their breaks but
-     clamp runaways. */
+  /* Online verbose blurbs are multi-line morgue text (death line + "..."
+     continuations, hiscores.cc); keep their breaks, show them whole — a
+     line clamp was tried and cut normal blurbs at phone width. */
   white-space: pre-line;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
 }
 .char-card-kind-won { color: var(--ok); }
 .char-card-kind-dead { color: var(--danger); }
 .char-card-kind-quit, .char-card-kind-left, .char-card-kind-saved, .char-card-kind-other { color: var(--text-dim); }
 .char-card-god { color: var(--text-dim); font-size: 0.78rem; font-style: italic; }
-.char-card-stats { color: var(--text-dim); font-size: 0.75rem; font-family: var(--font-mono); }
-/* Per-stat tints (à la dcss-stats), muted to sit inside the amber theme. */
+/* Values in the HUD's lightgrey (.fg7, #hud-stats' default). */
+.char-card-stats { color: #babdb6; font-size: 0.75rem; font-family: var(--font-mono); }
+/* Per-stat label tints, muted to sit inside the amber theme. */
 .char-card-st-str { color: #e07070; }
 .char-card-st-int { color: #7d93f0; }
 .char-card-st-dex { color: #8fbf5a; }
@@ -4951,6 +5864,47 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 .char-card-st-ev  { color: #b48fe0; }
 .char-card-st-sh  { color: #8fa8b8; }
 .char-card-meta { color: var(--text-dim); font-size: 0.72rem; opacity: 0.85; }
+/* Rune cells (src/views/rune-sprites.ts): a fixed box per rune/Orb holding
+   the ASCII item glyph (φ / 0, rune colour inline) until the sprite lands —
+   same footprint either way, so a swap never shifts layout. */
+.rune-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  vertical-align: middle;
+  line-height: 1;
+}
+.rune-glyph { font-family: var(--font-mono); font-weight: 600; line-height: 1; }
+/* Card rune row (rune-row.ts): 24px cells, wrapping — 15 runes make two
+   lines at phone width. */
+.rune-row { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+.char-card-runes { margin-top: 0.2rem; }
+/* Doll column: doll on the floor line, the Orb trophy centred beneath it. */
+.char-card-doll-col { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+/* Crypt modal (char-card.ts `hero`): the 64px doll, sized by HERO_DOLL_SCALE. */
+.char-card-hero .char-card-doll { min-width: 64px; min-height: 64px; }
+/* Doll marks (rune-marks.ts): wrapper keeps the doll's inline box; the marks
+   layer floats over it — Orb badge top-right, rune fan bottom-right with
+   each card overlapping the last, "+N" pip for the overflow. */
+.doll-marked { position: relative; display: inline-block; line-height: 0; }
+.doll-marks { position: absolute; inset: 0; pointer-events: none; }
+.doll-mark-orb { position: absolute; top: -4px; right: -6px; }
+.doll-mark-fan {
+  position: absolute; bottom: -3px; right: -4px;
+  display: flex; align-items: flex-end;
+}
+/* Oldest → newest left to right, each overlapping the previous by a third;
+   later siblings paint on top, so the newest rune is the fully visible one. */
+.doll-mark-fan .rune-cell { filter: drop-shadow(0 0 1px #000); }
+.doll-mark-fan .rune-cell + .rune-cell { margin-left: -6px; }
+.doll-mark-pip {
+  font-family: var(--font-mono);
+  font-size: 0.6rem; font-weight: 600; line-height: 1;
+  color: var(--text);
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
+  margin-left: 2px; margin-bottom: 2px;
+}
 /* Corner overlay, not a flex column — rationale in char-card.ts; has-open
    pads the headline clear of it. */
 .char-card-open {
@@ -4961,18 +5915,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-size: 0.9rem;
 }
 .char-card-has-open .char-card-head { padding-right: 1.1rem; }
-.char-card-compact { padding: 0.45rem 0.55rem; }
-.char-card-compact .char-card-doll { min-width: 48px; min-height: 48px; }
-.char-card-badge {
-  margin-left: 0.45rem;
-  font-size: 0.62rem;
-  font-weight: 400;
-  vertical-align: 0.1em;
-  color: var(--warn);
-  border: 1px solid rgba(250, 204, 21, 0.35);
-  border-radius: 4px;
-  padding: 0 0.3rem;
-}
+/* " *WIZ*" / " *EXPLORE*" headline tail: plain dim text like the title, the
+   game's own marker rather than a chip. */
+.char-card-badge { font-weight: 400; font-size: 0.8em; color: var(--text-dim); opacity: 0.8; }
 
 /* ── Records browser (views/records-view.ts) ─────────────────
    "Past games": full char-cards off the logfile, on the crypt-view shell.
@@ -4988,7 +5933,6 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   font-size: 0.75rem;
   padding: 0.25rem 0.7rem;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 }
 .records-sort-btn.is-active { color: var(--accent); border-color: var(--accent); }
 .records-list {
@@ -5015,19 +5959,71 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.records-morgue-del { margin-left: 0.5rem; }
-/* Delete confirm swapped into the header's right side (title+✕ removed);
-   reuses the shared confirm-button styles. */
+/* The header's three icon buttons: 36px transparent squares, chrome shared by
+   the grouped selector the way .offline-slot-confirm-* share theirs. All stay
+   text-dim — red on a resting header shouts at someone who came to read a
+   morgue; the danger colour belongs to the confirm's Delete, at the moment of
+   consequence (.offline-slot-confirm-del). */
+.records-morgue-zoom,
+.records-morgue-dl,
+.records-morgue-del {
+  flex: 0 0 auto;
+  min-width: 36px;
+  min-height: 36px;
+  /* …but they must not set the header's row height: the pinned bar sizes to
+     its tallest child, and every other shell's row is the ← Back button
+     (.lobby-btn-ghost, min-height 32px — 34.8 in Chromium's metrics), so a
+     36px child made the morgue's bar 4px taller and
+     dropped ← Back 2px as it stacked over the records list (measured in
+     WebKit at 402px: records 60px/back y=16, morgue 64px/y=18). The negative
+     block margin is (32 - 36) / 2: the tap box and its :active fill stay
+     36px, overflowing into the bar's own padding, while the row it
+     contributes to is 32px. Don't fix this by capping the header height
+     instead — a long username wraps the lobby's account chip to 40.8px and
+     the bar is expected to grow with it. */
+  margin-block: -2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .records-morgue-zoom:hover,
+  .records-morgue-dl:hover,
+  .records-morgue-del:hover { border-color: var(--border); }
+}
+.records-morgue-zoom:active,
+.records-morgue-dl:active,
+.records-morgue-del:active { background: var(--surface2); }
+/* Only ↓ ever disables (a record whose morgue file was never written), and it
+   sits beside a live ⌧ — without this it reads as tappable and does nothing. */
+.records-morgue-dl:disabled { opacity: 0.5; cursor: default; }
+/* The trio sits at the header's right edge and reads as one group: the boxes
+   abut (their 36px tap areas already hold the glyphs ~22px apart), with the
+   gap that separates them from the title larger than the gap between them. */
+.records-morgue-zoom { margin-left: 1.25rem; }
+/* Delete confirm swapped into the header's right side (openMorgue owns the
+   swap); reuses the shared confirm-button styles. */
 .records-morgue-confirm {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
+  /* Match the 36px ⌧/↓ buttons this row replaces — the confirm pair is
+     shorter, and without this the pinned header shrinks and the page
+     shifts up for the swap's duration. Same 36px box, same -2px correction,
+     for the same reason (see the trio's rule above). */
+  min-height: 36px;
+  margin-block: -2px;
 }
 /* Normal reading size (same as the % / inventory overlays); the 80-col dump
    overflows sideways and .crypt-scroll pans both axes (overflow-y:auto forces
-   overflow-x to auto). pre keeps the column alignment. */
+   overflow-x to auto). pre keeps the column alignment. The header's ⊖ swaps
+   in an inline fitToWidth font-size (records-view.ts applyZoom); line-height
+   stays unitless so the fit keeps the aspect ratio. */
 .records-morgue-pre {
   font-family: var(--font-mono);
   font-size: var(--fs-overlay);
@@ -5035,6 +6031,3 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   white-space: pre;
   color: var(--text);
 }
-/* The lobby's Past Games entry row keeps the base .lobby-game-row chrome,
-   including its ::after → affordance (slot rows suppress it; this row is a
-   real navigation). */

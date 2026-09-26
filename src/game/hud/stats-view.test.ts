@@ -61,17 +61,17 @@ describe('StatsView piety row', () => {
   })
 })
 
+function makeArmedView(): StatsView {
+  const inv = new InventoryStore()
+  inv.update({ 3: { name: '+2 mace', col: 2 } })
+  return new StatsView(inv)
+}
+
+function weaponRow(v: StatsView): HTMLElement {
+  return v.element.querySelector('#hud-wq')!
+}
+
 describe('StatsView weapon row (pre-0.33 equip fallback)', () => {
-  function makeArmedView(): StatsView {
-    const inv = new InventoryStore()
-    inv.update({ 3: { name: '+2 mace', col: 2 } })
-    return new StatsView(inv)
-  }
-
-  function weaponRow(v: StatsView): HTMLElement {
-    return v.element.querySelector('#hud-wq')!
-  }
-
   it('reads the legacy equip map when weapon_index is absent', () => {
     const v = makeArmedView()
     // 0.32-shaped player message: equip map + always-present unarmed_attack
@@ -98,6 +98,36 @@ describe('StatsView weapon row (pre-0.33 equip fallback)', () => {
     const v = new StatsView(inv)
     v.update({ weapon_index: 4, equip: { '0': 3 } })
     expect(weaponRow(v).textContent).toBe('e) +0 dagger')
+  })
+})
+
+// Colour source by era: ≤0.34 inventory col / unarmed_attack_colour + the
+// corroded-status paint, vs trunk's C++-computed weapon_colour fields
+// (presence-gated — see PlayerMsg in ws/types.ts).
+describe('StatsView weapon row colour era', () => {
+  function weaponSpan(v: StatsView): HTMLElement {
+    return weaponRow(v).querySelector('span:not(.hg-caption)')!
+  }
+
+  it('colours from inventory col and paints corrosion on ≤0.34 (no weapon_colour)', () => {
+    const v = makeArmedView()
+    v.update({ weapon_index: 3, status: [{ text: 'corroded', light: 'Corr' }] })
+    expect(weaponSpan(v).className).toBe('fg2 weapon-corroded')
+    v.update({ weapon_index: -1, unarmed_attack: 'Claws', unarmed_attack_colour: 4 })
+    expect(weaponSpan(v).className).toBe('fg4 weapon-corroded')
+  })
+
+  it('prefers the trunk weapon_colour fields and drops corrosion paint', () => {
+    const v = makeArmedView()
+    // mace has col 2 in inventory; trunk says lightgreen (10), 0 is a real colour
+    v.update({ weapon_index: 3, weapon_colour: 10, status: [{ text: 'corroded', light: 'Corr' }] })
+    expect(weaponSpan(v).className).toBe('fg10')
+    v.update({ weapon_index: -1, unarmed_attack: 'Claws', weapon_colour: 0 })
+    expect(weaponSpan(v).className).toBe('fg0')
+    // offhand row reads its own field
+    v.update({ weapon_index: 3, offhand_index: 3, offhand_weapon: 1, offhand_weapon_colour: 12 })
+    const off = v.element.querySelector('#hud-wq-offhand span:not(.hg-caption)')!
+    expect(off.className).toBe('fg12')
   })
 })
 

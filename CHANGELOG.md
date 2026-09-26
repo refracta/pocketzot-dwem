@@ -9,10 +9,150 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-09-17
+
+- Monster list: if it's blocking something on the map, you can now
+  swipe it to the other side, or drag it to peek behind and let it
+  snap back.
+- The monster list now grows wider when the chat chip is hidden.
+- Offline lobby polish.
+- Other improvements.
+
+## 2026-09-16
+
+- Holding a direction on the d-pad now sends a shift-move instead of
+  repeated single moves. The first touch still sends a single move.
+  During cursor movement (targeting, X-mode, menus), holding sends
+  repeated single steps as before.
+- Tapping outside of a pop-up prompt now closes it.
+
+## 2026-09-15
+
+- iOS 27 blurs the top edge of installed web apps, extending into the
+  app content, with no way to disable it. PocketZot now uses a solid
+  status bar, which avoids the blur, but the map no longer extends up
+  under the camera island. If Apple fixes this I'll switch it back.
+- The app background is now true black.
+
+## 2026-09-12
+
+- Added some missing ASCII-mode colors to the procedural logo. Now 8.6
+  trillion unique rolls.
+
+## 2026-09-10
+
+- Closed a death rollback for offline games.
+
+## 2026-09-09
+
+- In tiles mode, the zoomed map now fits line of sight exactly instead
+  of one cell beyond, for larger tiles. By default this is diameter 15.
+  For Barachi, or Ashenzari followers with range-eight monster
+  detection, it is set to 17.
+- Reduced line spacing in the full message history so more lines fit
+  on screen.
+- Date labels in character cards are now a bit more compact.
+- Fixed a stray skill letter appearing in certain situations.
+
+## 2026-09-08
+
+- Improved monster list rendering.
+
+## 2026-09-07
+
+- Monster spell lists now render color markup when present, e.g. for
+  Dithmenos marionnette markers.
+- Mastered skill buttons now appear when reading skill descriptions
+  with the `?` toggle.
+- Other improvements.
+
+## 2026-09-04
+
+- Runes collected outside the app are now synced when you open the
+  character overview (`%`).
+- Online and Offline play sections are now collapsible.
+
+## 2026-09-03
+
+- Crypt inscriptions now vary by character outcome.
+
+## 2026-09-01
+
+- In `X` mode, you can now drag to pan the level map. Tapping it still
+  places the cursor at that location.
+- Other minor improvements.
+
+## 2026-08-31
+
+- Added a Thanks section to the About page.
+
+## 2026-08-29
+
+- New map touch interactions: while targeting or examining (`x`), tap or
+  drag to move the cursor. In `X` mode, tap a location to send the cursor
+  there. Long press any map cell to inspect it.
+
+## 2026-08-28
+
+- Control buttons now show tap feedback on Android as intended, instead of
+  only on iOS.
+- Restyled the control tabs selector.
+- Restyled the menu row cursor.
+
+## 2026-08-26
+
+- Message log adjustments: reduced line height, +1 default line into the
+  freed space (existing installs unchanged), and +3 lines while spectating.
+- Improvements to character card content and styling.
+- Other minor improvements.
+
+## 2026-08-25
+
+- Added control rows for the ability and spell list menus.
+- Reordered the custom control rows for several menus.
+
+## 2026-08-24
+
+- Character cards now show the runes a character has collected, and the Orb
+  of Zot if carried. Characters on the login screen, in the crypt, and on
+  the offline save list also show these as badges.
+
+## 2026-08-23
+
+- Redesigned the character creation screens.
+- Fixed a black screen that could occur after resuming a game directly into
+  the skills screen (no skills being trained).
+
+## 2026-08-19
+
+- The character overview, dungeon overview, and game end screens can now be
+  exported as images at full width.
+- Opening a skill's description from the skills menu now keeps the menu's
+  context controls instead of swapping in the d-pad.
+- On Android, the app should now always use the device's default monospace
+  font instead of an unintended fallback. Unverified as I have no Android
+  device.
+
+## 2026-08-18
+
+- Online char dumps (`#`) now link the server's dump file in the message
+  log.
+
+## 2026-08-17
+
+- Offline games now use less memory and release it sooner after exit.
+- Offline morgue files can now be downloaded from the morgue view.
+- Offline char dumps (`#`) can now be downloaded from the message log.
+- Held touch controls no longer auto-repeat when the app loses focus
+  mid-press.
+- The app now recovers on its own if the device relaunches it into an
+  outdated cached version.
+
 ## 2026-08-14
 
-- Fixed an issue with attempting to evoke a wand from within an item
-  description.
+- Reworked the --more-- prompt.
+- Fixed an issue with evoking while in an item description.
+- While spectating, tapping anywhere in the monster panel now closes it.
 
 ## 2026-08-13
 

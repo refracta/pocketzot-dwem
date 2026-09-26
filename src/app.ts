@@ -5,13 +5,16 @@ import { buildLobbyView } from './views/lobby'
 import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
 import { siteInformation } from './dwem/site-information'
+import { disposeView } from './views/view-dispose'
 import type { TileLoader } from './game/tiles/tile-loader'
 import { OFFLINE_GAME_ID } from './offline/offline-state'
-import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
-import { count } from './counter'
-import { getPref } from './prefs'
+import { activeGameStart, attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
+import { count, type CountFlags } from './counter'
+import { getActiveControlSet } from './game/input/control-sets'
+import { getPref, setPref } from './prefs'
 import { loadSession } from './auth/session'
 import { loadCredentials } from './auth/credentials'
+import { staleShellReloadOnce } from './util/self-heal'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -31,7 +34,7 @@ export function initApp(appEl: HTMLElement): void {
       // resume then eats the server's hardcoded ~10s stale-purge wait. Close
       // cleanly while we still can: the server saves the game at swap-away
       // time and the resume replays `play` against a free slot in ~2s.
-      if (state === 'game' && conn?.connected && !resumeActive
+      if (gameInProgress() && conn?.connected && !resumeActive
           && platformSuspendsSockets() && canResumeAfterClose()) {
         markProactiveClose()
         conn.close()
@@ -115,6 +118,12 @@ async function showOfflineGame(name: string): Promise<void> {
   try {
     bootMod = await import('./offline/boot')
   } catch (e) {
+    // The one production way this import fails is a stale shell whose
+    // boot-chunk hash rotated off the deploy — heal with the offline
+    // context pinned, so the reload lands back in the offline lobby
+    // rather than falling into login/auto-resume (the engine-port worker
+    // path passes the same param for the same reason).
+    if (staleShellReloadOnce({ offline: '1' })) return
     showFatal(`Offline engine failed to load: ${String(e)}`)
     return
   }
@@ -125,7 +134,10 @@ async function showOfflineGame(name: string): Promise<void> {
   // same reason boot.ts excludes them from the slot-record tracker: a golden
   // capture's character isn't yours and must not mint a phantom shelf entry.
   const gameId = params.get('engine') === 'fake' ? '' : OFFLINE_GAME_ID
-  if (gameId) count('play-offline', { ascii: getPref('mapRenderMode') === 'ascii' })
+  if (gameId) {
+    count('play-offline', gameStartFlags())
+    setPref('loginOfflineOpen', null)  // playing offline outranks an old collapse; back to auto
+  }
   state = 'game'
   conn = boot.conn
   currentUsername = name
@@ -151,11 +163,12 @@ async function showOfflineGame(name: string): Promise<void> {
     currentUsername,
     gameId,
     currentIsGuest,
+    (filename) => boot.readMorgue(filename),
   ))
   boot.start()
 }
 
-function showLogin(notice?: string): void {
+function showLogin(notice?: string, prefill?: { wsUrl: string; username: string }): void {
   conn?.close()
   conn = null
   siteInformation.clear()
@@ -163,7 +176,7 @@ function showLogin(notice?: string): void {
   clearGameStart()
   setView(buildLoginView((result) => {
     enterLobby(result.conn, result.username, result.guest ?? false)
-  }, notice, () => showOfflineLobby()))
+  }, notice, () => showOfflineLobby(), prefill))
 }
 
 // Every route onto a server ends the same way: take the connection, record who
@@ -213,8 +226,18 @@ async function switchSpectateServer(wsUrl: string): Promise<void> {
   enterLobby(next, '', true)
 }
 
+// Session-start facts for the game-start counter rows. U reads the RESOLVED
+// set (getActiveControlSet falls back to builtin Standard on a dangling id),
+// so a deleted custom set doesn't keep counting as custom usage.
+function gameStartFlags(): CountFlags {
+  return {
+    ascii: getPref('mapRenderMode') === 'ascii',
+    userControls: !getActiveControlSet().builtin,
+  }
+}
+
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
-  count(spectating ? 'spectate' : 'play', { ascii: getPref('mapRenderMode') === 'ascii' })
+  count(spectating ? 'spectate' : 'play', gameStartFlags())
   state = 'game'
   siteInformation.setGame(conn, currentUsername, currentIsGuest, spectating)
   setView(buildGameView(
@@ -243,11 +266,24 @@ function adoptConn(c: GameConnection): void {
 // dev-material/sticky-lobby-shelved.md.)
 function connLost(): void {
   if (resumeActive) return
-  if (state === 'game') {
+  if (gameInProgress()) {
     startResume(conn!.wsUrl)
     return
   }
   showLogin(state === 'lobby' ? undefined : 'Connection lost.')
+}
+
+// "In a game" for the purposes of the proactive close and the resume: the
+// game view is mounted, OR the lobby has a play/watch in flight. `state`
+// only flips to 'game' at the transition, but the lobby's play is armed at
+// click time (rememberGameStart) and the server may hold it in the ~10s
+// stale_processes wait — exactly when a user swaps away. Treating that
+// window as 'lobby' zombified the socket (no proactive close) and then
+// dropped the user on the login screen with a second zombie process.
+// abortGameStart (lobby.ts) nulls the context when the attempt is refused,
+// so an idle lobby stays on the login-screen path.
+function gameInProgress(): boolean {
+  return state === 'game' || (state === 'lobby' && activeGameStart() != null)
 }
 
 function startResume(wsUrl: string): void {
@@ -276,7 +312,13 @@ function startResume(wsUrl: string): void {
     },
     onGiveUp: (notice) => {
       resumeActive = false
-      showLogin(notice)
+      // No session record = the account card is gone (the server refused
+      // the token; token-login.ts cleared it): hand the form the identity so
+      // re-entry is just the password. Every other give-up — retries
+      // exhausted, a server-sent close, cancel, the age cutoff — leaves the
+      // card on the login screen, where it is the better nudge.
+      const cardGone = !currentIsGuest && !loadSession(wsUrl, currentUsername)
+      showLogin(notice, cardGone ? { wsUrl, username: currentUsername } : undefined)
     },
   })
 }
@@ -306,13 +348,20 @@ function platformSuspendsSockets(): boolean {
 }
 
 function setView(el: HTMLElement): void {
+  // Tear down the outgoing view's out-of-tree listeners first — the resume
+  // route is the one that reaches here without the view's own exit having
+  // run (views/view-dispose.ts).
+  if (root.firstElementChild) disposeView(root.firstElementChild)
   root.textContent = ''
   root.appendChild(el)
 }
 
-// Dynamic-import failure surface: a stale SW start doc serving rotated chunk
-// hashes after a deploy makes lazy chunks 404 — that must render something,
-// not leave a blank #app with a silent unhandled rejection.
+// Dynamic-import failure surface of last resort: renders text rather than
+// leaving a blank #app with a silent rejection. Deliberately does NOT
+// attempt the self-heal reload itself — the heal needs the caller's
+// context (the offline-boot catch above passes ?offline=1; a bare reload
+// here would strand an offline user on login or auto-resume an unrelated
+// online game), so call sites heal first and fall through to this.
 function showFatal(text: string): void {
   const el = document.createElement('pre')
   el.style.cssText = 'padding:16px;color:#eeeeec;white-space:pre-wrap'

@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { count as countFn } from './counter'
 
 const realDev = import.meta.env.DEV
 const realBase = import.meta.env.BASE_URL
 
 // Fresh module per test — the latch is module state.
-async function freshCounter(dev = false, base = '/'): Promise<typeof countFn> {
+async function freshCounterModule(dev = false, base = '/'): Promise<typeof import('./counter')> {
   vi.resetModules()
   import.meta.env.DEV = dev
   import.meta.env.BASE_URL = base
-  return (await import('./counter')).count
+  return await import('./counter')
+}
+
+async function freshCounter(dev = false, base = '/'): Promise<typeof import('./counter')['count']> {
+  return (await freshCounterModule(dev, base)).count
 }
 
 describe('counter', () => {
@@ -61,6 +64,48 @@ describe('counter', () => {
     expect(sends).toEqual(['/api/e?e=play&f=A&src=pwa', '/api/e?e=spectate&src=pwa'])
   })
 
+  it('packs multiple flag letters in fixed order', async () => {
+    const count = await freshCounter()
+    count('boot', { swControlled: true, standalone: true })
+    count('play', { userControls: true, ascii: true, standalone: true })
+    expect(sends).toEqual(['/api/e?e=boot&f=WC', '/api/e?e=play&f=AWU'])
+  })
+
+  it('appends the event value as d= and omits it when absent', async () => {
+    const { count, countEach } = await freshCounterModule()
+    countEach('won-each', {}, 3)
+    count('dead')
+    expect(sends).toEqual(['/api/e?e=won-each&d=3', '/api/e?e=dead'])
+  })
+
+  it('countEach never latches — one row per occurrence', async () => {
+    const { countEach } = await freshCounterModule()
+    countEach('rune-each')
+    countEach('rune-each')
+    countEach('rune-each-offline')
+    expect(sends).toEqual(['/api/e?e=rune-each', '/api/e?e=rune-each',
+      '/api/e?e=rune-each-offline'])
+  })
+
+  it('boot self-attaches the environment letters inside the guard', async () => {
+    const count = await freshCounter()
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    vi.stubGlobal('navigator', {
+      sendBeacon: (url: string) => { sends.push(url); return true },
+      serviceWorker: { controller: {} },
+    })
+    count('boot')
+    count('play')  // environment letters are boot-only
+    expect(sends).toEqual(['/api/e?e=boot&f=WC', '/api/e?e=play'])
+  })
+
+  it('a throwing environment probe drops the letters, never the row', async () => {
+    const count = await freshCounter()
+    vi.stubGlobal('matchMedia', () => { throw new Error('boom') })
+    count('boot')
+    expect(sends).toEqual(['/api/e?e=boot'])
+  })
+
   it('is inert in DEV builds', async () => {
     const count = await freshCounter(true)
     count('boot')
@@ -68,8 +113,9 @@ describe('counter', () => {
   })
 
   it('is inert for static subpath builds without the root API', async () => {
-    const count = await freshCounter(false, '/pocketzot-dwem/')
+    const { count, countEach } = await freshCounterModule(false, '/pocketzot-dwem/')
     count('boot')
+    countEach('rune-each')
     expect(sends).toEqual([])
   })
 

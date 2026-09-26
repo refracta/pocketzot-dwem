@@ -7,6 +7,8 @@
 // bytes). WorkerEnginePort hosts the real WASM build; FakeEnginePort
 // (fake-engine.ts) replays golden fixtures so the whole seam runs without it.
 
+import { staleShellReloadOnce } from '../util/self-heal'
+
 export interface EnginePort {
   // Begin emitting. Wire onOutput/onExit before calling.
   start(): void
@@ -21,6 +23,11 @@ export interface EnginePort {
   // suspension state pick a targeted rescue; the default fallback is a
   // spectator_joined over the control channel (idempotent full resend).
   nudge?(): void
+  // Read one file out of the engine's live FS. Mid-game writes (a '#' dump)
+  // exist only in the worker's MEMFS until the next checkpoint syncs them to
+  // IndexedDB, so main-thread IDB reads can't see them — this can. Resolves
+  // null when the file is missing or the engine is gone.
+  readFile?(path: string): Promise<Uint8Array<ArrayBuffer> | null>
   onOutput: (chunk: string) => void
   onExit: (code: number) => void
   // Boot-phase progress ("Loading the offline engine..." etc.), covering the
@@ -42,9 +49,12 @@ export type WorkerInMsg =
   | { type: 'nudge' }
   // Reply arrives as a {type:'log'} snapshot of the queue/wake state.
   | { type: 'debug' }
+  // Live-FS read (EnginePort.readFile); reply is the matching {type:'file'}.
+  | { type: 'readFile'; id: number; path: string }
 export type WorkerOutMsg =
   | { type: 'lines'; chunk: string }
   | { type: 'exit'; code: number }
+  | { type: 'file'; id: number; data: Uint8Array<ArrayBuffer> | null }
   // Engine stdout/stderr, relayed because WebKit doesn't surface worker
   // console output to the page.
   | { type: 'log'; text: string }
@@ -165,6 +175,10 @@ export class WorkerEnginePort implements EnginePort {
   onProgress: (text: string) => void = () => {}
   private worker: Worker | null = null
   private meter: PerfMeter | null = null
+  // Whether the worker has delivered ANY message. Its very first act is a
+  // progress post, so this cleanly separates "worker script never executed"
+  // (load failure) from errors thrown by a running worker.
+  private gotMessage = false
   // DEV diagnostics: last raw engine output chunks, pre-parse (so losses in
   // the mini-server's line handling are visible). __pzEngine.chunks in the
   // console.
@@ -172,6 +186,10 @@ export class WorkerEnginePort implements EnginePort {
   // Heap gauge: the engine's current wasm memory size (high-water — it never
   // shrinks). __pzEngine.heapBytes in the console; growth also logs a line.
   heapBytes = 0
+  // In-flight readFile requests by id; resolved by the matching {type:'file'}
+  // reply, or with null on terminate so no caller hangs on a dead worker.
+  private readonly fileReqs = new Map<number, (data: Uint8Array<ArrayBuffer> | null) => void>()
+  private nextFileReq = 1
 
   constructor(
     private readonly perf: boolean,
@@ -184,7 +202,29 @@ export class WorkerEnginePort implements EnginePort {
     this.worker = new Worker(new URL('./engine.worker.ts', import.meta.url), {
       type: 'module',
     })
+    // Script-load failure net. A worker whose script never loads (observed
+    // live: an iOS crash relaunch resurrected a stale start doc whose
+    // engine.worker chunk hash had rotated off the deploy — 404) fires
+    // `error` on the Worker object and nothing else, ever: no progress, no
+    // output, no exit — a silent black screen. First response is the
+    // stale-shell self-heal reload; if that's spent (or storage is
+    // unavailable), synthesize the same starred error exit the worker's own
+    // boot-failure path posts, so the normal game_ended dialog shows.
+    // Errors from a RUNNING worker are its own crash net's job
+    // (engine.worker.ts): gotMessage gates this to the never-ran case.
+    this.worker.onerror = (e: ErrorEvent) => {
+      if (this.gotMessage) return
+      console.warn('[engine] worker script failed to load', e.message ?? '')
+      if (staleShellReloadOnce({ offline: '1' })) return
+      this.onOutput(`*${JSON.stringify({
+        msg: 'exit_reason',
+        type: 'error',
+        message: 'The offline engine failed to load. Close the app completely and reopen it, then try again — your save is intact.',
+      })}\n`)
+      this.onExit(1)
+    }
     this.worker.onmessage = (e: MessageEvent<WorkerOutMsg>) => {
+      this.gotMessage = true
       const m = e.data
       if (m.type === 'lines') {
         this.meter?.chunk()
@@ -197,6 +237,10 @@ export class WorkerEnginePort implements EnginePort {
       else if (m.type === 'log') console.log('[engine]', m.text)
       else if (m.type === 'progress') this.onProgress(m.text)
       else if (m.type === 'perf') this.meter?.engine(m.engineMs)
+      else if (m.type === 'file') {
+        this.fileReqs.get(m.id)?.(m.data)
+        this.fileReqs.delete(m.id)
+      }
       else if (m.type === 'heap') {
         const prev = this.heapBytes
         this.heapBytes = m.bytes
@@ -222,6 +266,15 @@ export class WorkerEnginePort implements EnginePort {
     this.post({ type: 'nudge' })
   }
 
+  readFile(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
+    if (!this.worker) return Promise.resolve(null)
+    const id = this.nextFileReq++
+    return new Promise((resolve) => {
+      this.fileReqs.set(id, resolve)
+      this.post({ type: 'readFile', id, path })
+    })
+  }
+
   // DEV diagnostics: ask the worker to log the engine queue state.
   debug(): void {
     this.post({ type: 'debug' })
@@ -230,6 +283,8 @@ export class WorkerEnginePort implements EnginePort {
   terminate(): void {
     this.worker?.terminate()
     this.worker = null
+    for (const resolve of this.fileReqs.values()) resolve(null)
+    this.fileReqs.clear()
   }
 
   private post(msg: WorkerInMsg): void {

@@ -14,9 +14,9 @@
 // (dev-material/character-cards.md "Step zero").
 
 import { avatarSlotKey, type Avatar } from '../avatars'
+import { parseMorgueRunes } from '../game/rune-messages'
 import { bakedDollUrl } from '../game/tiles/avatar-bake'
 import { dollTileSpec } from '../game/tiles/tile-view'
-import type { DollRecipe } from '../views/avatar-tiles'
 import { OFFLINE_GAME_ID, OFFLINE_WS_URL } from './offline-state'
 import {
   deleteOfflineFiles, readOfflineFile, readOfflineFilesAt, writeOfflineFiles, type SavedFile,
@@ -83,13 +83,19 @@ export async function deleteGameRecord(rec: XlogRecord): Promise<void> {
   }
 }
 
+// A record's morgue in the engine mount, or null when the record can't name
+// one (no name/end). The one derivation every morgue-adjacent path uses.
+function morguePath(rec: XlogRecord): string | null {
+  const morgue = rec['name'] ? morgueFileName(rec['name'], rec['end']) : null
+  return morgue ? MORGUE_DIR + morgue : null
+}
+
 // --- Doll sidecars -------------------------------------------------------------
 
 // The doll sidecar riding beside a record's morgue files: same stem,
 // .doll.png. Null when the record can't name a morgue (no name/end).
 export function dollSidecarPath(rec: XlogRecord): string | null {
-  const morgue = rec['name'] ? morgueFileName(rec['name'], rec['end']) : null
-  return morgue ? MORGUE_DIR + morgue.replace(/\.txt$/, '.doll.png') : null
+  return morguePath(rec)?.replace(/\.txt$/, '.doll.png') ?? null
 }
 
 // Freeze finished games' dolls into their sidecars: for each record without
@@ -147,6 +153,33 @@ export async function readDollSidecars(
   return out
 }
 
+// The runes named in each record's morgue (`}` line — parseMorgueRunes), one
+// read transaction. Only records whose xlog says they hold a rune (`urune`)
+// are read at all: morgues run ~100 KB each, and most games end rune-less.
+// Records whose morgue is missing — or has no rune line (an RC `dump_order`
+// without the overview screen drops it; a truncated import) — are absent
+// from the map, so the caller falls back to the avatar join's live-parsed
+// pickups.
+export async function readMorgueRunes(
+  recs: readonly XlogRecord[],
+): Promise<Map<XlogRecord, string[]>> {
+  const wanted = recs
+    .filter((rec) => Number(rec['urune']) > 0)
+    .map((rec) => ({ rec, path: morguePath(rec) }))
+    .filter((w): w is { rec: XlogRecord; path: string } => w.path !== null)
+  const out = new Map<XlogRecord, string[]>()
+  if (wanted.length === 0) return out
+  const files = await readOfflineFilesAt(wanted.map((w) => w.path))
+  const dec = new TextDecoder()
+  for (const { rec, path } of wanted) {
+    const bytes = files.get(path)
+    const runes = bytes?.length ? parseMorgueRunes(dec.decode(bytes)) : []
+    if (runes.length > 0) out.set(rec, runes)
+  }
+  return out
+}
+
+
 // A sidecar counts as present only with bytes in it. A zero-length file — a
 // truncated write, or a size:0 entry in an imported pack — would otherwise
 // decode to an empty data URL no <img> can show *and* satisfy the
@@ -201,9 +234,10 @@ export function sortRecords(recs: readonly XlogRecord[], mode: RecordsSort): Xlo
   return out
 }
 
-// The client stamps outcome.endedAt when it receives game_ended — seconds
-// after the engine's death_time, so a generous window still can't cross two
-// games of the same character.
+// The client stamps outcome.endedAt on game_ending (the engine's flush of
+// the ending, types.ts) or, failing that, game_ended — seconds after the
+// engine's death_time either way, so a generous window still can't cross
+// two games of the same character.
 const JOIN_WINDOW_MS = 10 * 60_000
 
 // Best-effort xlog→doll join against the avatars store — the doll-sidecar
@@ -214,7 +248,7 @@ const JOIN_WINDOW_MS = 10 * 60_000
 // caps at 20 globally, so an old logfile entry stops joining once its
 // character rolls off — which is exactly why the materializer freezes the
 // result into a file while the entry is still fresh.
-export function joinDollRecipe(rec: XlogRecord, avatars: readonly Avatar[]): DollRecipe | null {
+export function joinDollRecipe(rec: XlogRecord, avatars: readonly Avatar[]): Avatar | null {
   const name = rec['name']?.toLowerCase()
   if (!name) return null
   const end = xlogTimeMs(rec['end'])
@@ -242,7 +276,7 @@ export function joinDollRecipe(rec: XlogRecord, avatars: readonly Avatar[]): Dol
 // that character finished and the engine unlinked its save, so a slot
 // carrying the name again is a different life and must not borrow the dead
 // one's doll.
-export function liveDollRecipe(name: string, avatars: readonly Avatar[]): DollRecipe | null {
+export function liveDollRecipe(name: string, avatars: readonly Avatar[]): Avatar | null {
   const key = avatarSlotKey({ wsUrl: OFFLINE_WS_URL, username: name, gameId: OFFLINE_GAME_ID })
   const cur = avatars.find((a) => avatarSlotKey(a) === key)
   return cur && !cur.outcome ? cur : null

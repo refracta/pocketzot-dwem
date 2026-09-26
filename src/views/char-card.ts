@@ -11,31 +11,37 @@
 
 import type { Avatar } from '../avatars'
 import { compactPlace, nameTitle } from '../game/char-label'
+import { parseExitBlurb } from '../game/exit-blurb'
 import { tagFor } from '../servers'
 import type { XlogRecord } from '../offline/xlog'
 import { morgueFileName, xlogTimeMs } from '../offline/xlog'
 import { bakedImg, paintAvatars, type DollRecipe } from './avatar-tiles'
+import { dollTileSpec } from '../game/tiles/tile-view'
+import { renderOrbTrophy, renderRuneRow } from './rune-sprites'
 
 export type DumpRef =
   | { kind: 'url'; href: string }    // online: morgue URL (extension included)
   | { kind: 'idbfs'; path: string }  // offline: absolute path in the engine mount
 
 export interface CardResult {
-  kind: 'won' | 'dead' | 'quit' | 'left' | 'saved' | 'other' // 'won' also drives the green accent
+  kind: 'won' | 'dead' | 'quit' | 'left' | 'saved' | 'other' // colours the result line (.char-card-kind-*)
   verb: string     // "Quit the game" | "Slain by a tengu warrior" — offline tmsg
                    // (which already carries "… and 3 runes!" on wins), online reason
-  verbose?: string // longer form: offline vmsg, online the game_ended blurb verbatim
+  verbose?: string // longer form: offline vmsg; online the blurb's death description
+                   // (exit-blurb.ts `rest`), or the whole blurb when it doesn't parse
 }
 
 export interface CharCardModel {
   charName: string           // headline identity, bold: "Bram" (name) or species+background
   charTitle?: string         // headline tail, regular weight, own joiner: "the Chopper" / ", Duchess of …"
-  badge?: string             // headline qualifier chip ("wizmode"/"explore")
+  badge?: 'wizmode' | 'explore' // headline tail " *WIZ*" / " *EXPLORE*" — the game's own
+                             // marker (hiscores.cc: trails the identity line; W/E in
+                             // the scores list), so it qualifies the character, not the death
   species?: string           // "Mountain Dwarf"
   background?: string        // "Berserker" — xlog cls, or online/offline-live the
                              // welcome-line parse (absent on pre-capture entries)
   god?: string               // absent/'' = godless
-  godRank?: string           // "Was a Follower of Trog." — offline only (needs piety)
+  godRank?: string           // "Was a Follower of Trog." — xlog piety (godRankLine) or the blurb's own line
 
   result: CardResult
   xl?: number
@@ -53,39 +59,70 @@ export interface CharCardModel {
   version?: string           // "0.34.1" / "dcss-0.34"
   origin?: string            // "Local" | server tag ("CAO")
 
+  orb?: boolean              // carrying the Orb (a live save or a death on the orb run) —
+                             // shows the trophy like a win does
+  runes?: string[]           // rune adjectives (rune-tiles.ts) — the rune-row line; the
+                             // Orb is implied by result.kind 'won' / `orb`, never listed here.
+                             // Order is the source's: pickup order from the store,
+                             // rune_type enum order from a morgue } line
   dump?: DumpRef
   doll?: DollRecipe | null
   dollUrl?: string | null        // ready image URL (morgue sidecar) — wins over doll
 }
 
 const DOLL_SCALE = 1.75 // 56px box — between the login strip (64) and inline row sizes
+// The crypt modal: 64px — the login shelf's size, and an integer scale of
+// the 32px sprite, so every source pixel is a clean 2×2. Not the grid's
+// 80px: that narrows the text column until the stats line wraps to three
+// rows. (A 4× centred "hero" doll was also tried and dropped — it only
+// repeated the grid tile behind the modal, bigger.)
+const HERO_DOLL_SCALE = 2
 
-// Pure, synchronous DOM builder — no store reads. compact drops the stats,
-// meta, and god-rank lines (crypt-grid form); the full card is the list form.
+// Pure, synchronous DOM builder — no store reads. hero (the crypt modal) is
+// the card with the larger doll.
 export function renderCharCard(
   model: CharCardModel,
-  opts: { onOpen?: (dump?: DumpRef) => void; compact?: boolean } = {},
+  opts: { onOpen?: (dump?: DumpRef) => void; hero?: boolean } = {},
 ): HTMLElement {
   const card = document.createElement('article')
-  card.className = `char-card char-card-k-${model.result.kind}`
-  if (opts.compact) card.classList.add('char-card-compact')
+  card.className = 'char-card'
+  if (opts.hero) card.classList.add('char-card-hero')
+  const dollScale = opts.hero ? HERO_DOLL_SCALE : DOLL_SCALE
 
-  if (model.dollUrl) {
-    const box = line(card, 'char-card-doll', '')
-    const img = bakedImg(model.dollUrl, DOLL_SCALE)
-    // An undecodable sidecar (a corrupt PNG in an imported pack) must not
-    // sit as a permanent broken-image box — fall back to painting the
-    // recipe when one came along, else drop the doll box and render the
-    // card doll-less. (paintAvatars' baked path self-heals the same way.)
-    img.addEventListener('error', () => {
-      img.remove()
-      if (model.doll) void paintAvatars(box, [model.doll], DOLL_SCALE, 'char-card-doll-img')
-      else box.remove()
-    })
-    box.append(img)
-  } else if (model.doll) {
-    const box = line(card, 'char-card-doll', '')
-    void paintAvatars(box, [model.doll], DOLL_SCALE, 'char-card-doll-img')
+  // The doll column: the doll (sidecar image, or the recipe painted live —
+  // without marks: the body row and the trophy below carry the collection)
+  // with the Orb of Zot beneath it on wins, the trophy at the character's
+  // feet. A rune-less win keeps the column for the Orb alone.
+  const won = model.result.kind === 'won' || model.orb === true
+  // The same emptiness test paintAvatars filters on (a recipe whose layers
+  // all mask out paints nothing, so it gets no box either).
+  const recipeDoll = model.doll && dollTileSpec({ doll: model.doll.doll, mcache: model.doll.mcache }).length > 0 ? model.doll : null
+  if (model.dollUrl || recipeDoll || won) {
+    const col = line(card, 'char-card-doll-col', '')
+    const NO_MARKS = { marks: false }
+    if (model.dollUrl) {
+      const box = line(col, 'char-card-doll', '')
+      const img = bakedImg(model.dollUrl, dollScale)
+      // An undecodable sidecar (a corrupt PNG in an imported pack) must not
+      // sit as a permanent broken-image box — fall back to painting the
+      // recipe when one came along, else drop the doll box (and the column,
+      // unless the Orb still needs it) and render the card doll-less.
+      // (paintAvatars' baked path self-heals the same way.)
+      img.addEventListener('error', () => {
+        img.remove()
+        if (model.doll) void paintAvatars(box, [model.doll], dollScale, 'char-card-doll-img', NO_MARKS)
+        else if (won) box.remove()
+        else col.remove()
+      })
+      box.append(img)
+    } else if (recipeDoll) {
+      void paintAvatars(line(col, 'char-card-doll', ''), [recipeDoll], dollScale, 'char-card-doll-img', NO_MARKS)
+    }
+    if (won) {
+      const orb = renderOrbTrophy(model.doll, 1)
+      orb.classList.add('char-card-orb')
+      col.append(orb)
+    }
   }
   const body = line(card, 'char-card-body', '')
 
@@ -101,19 +138,18 @@ export function renderCharCard(
   if (model.badge) {
     const b = document.createElement('span')
     b.className = 'char-card-badge'
-    b.textContent = model.badge
+    b.textContent = model.badge === 'wizmode' ? ' *WIZ*' : ' *EXPLORE*'
     head.append(b)
   }
 
   // The end location belongs to the death sentence ("slain by an ogre in
-  // D:7") — but only the short verb can safely carry it: verbose prose may
-  // already narrate the location (online blurbs do), and the result line's
-  // 3-line clamp can swallow a tail appended to wrapped text. When verbose
-  // renders, the place falls back to the identity line instead.
+  // D:7") — but only the short verb can safely carry it: verbose prose
+  // already narrates the location (online blurbs do). When verbose renders,
+  // the place falls back to the identity line instead.
   // Wins/escapes suppress it everywhere — their xlog place is the dungeon
   // exit, noise. Live/other entries keep it on the identity line.
   const r = model.result
-  const resultText = (!opts.compact && r.verbose) || r.verb
+  const resultText = r.verbose || r.verb
   const placeInResult = model.place != null && resultText !== '' && resultText === r.verb
     && (r.kind === 'dead' || r.kind === 'quit')
   const placeInSub = model.place != null && !placeInResult && r.kind !== 'won' && r.kind !== 'left'
@@ -123,7 +159,7 @@ export function renderCharCard(
   if (model.xl != null) sub.push(`XL:${model.xl}`)
   if (model.place && placeInSub) sub.push(model.place)
   // God on the sub line only when there's no rank line to carry it.
-  if (model.god && !(model.godRank && !opts.compact)) sub.push(model.god)
+  if (model.god && !model.godRank) sub.push(model.god)
   // The combo may wrap internally — "Mountain Dwarf Earth Elementalist"
   // can outgrow a narrow line, and its own word breaks read fine. Every
   // other fact (god name, XL, place) moves whole — so no soft slot when
@@ -135,23 +171,32 @@ export function renderCharCard(
     el.classList.add(`char-card-kind-${r.kind}`)
   }
 
-  if (!opts.compact) {
-    if (model.godRank) line(body, 'char-card-god', model.godRank)
-    if (model.stats) body.append(statsRow(model.stats))
-    const meta: string[] = []
-    if (model.score != null) meta.push(`${model.score.toLocaleString()} pts`)
-    if (model.turns != null) meta.push(`${model.turns.toLocaleString()} turns`)
-    if (model.duration) meta.push(model.duration)
-    if (model.endedAt != null) {
-      const ago = agoLabel(model.endedAt)
-      const date = DATE_FMT.format(model.endedAt)
-      const when = ago || date
-      meta.push(model.dateQualifier ? `${model.dateQualifier} ${when}` : when)
-      if (ago) meta.push(date)
-    }
-    if (model.origin) meta.push(model.origin)
-    if (model.version) meta.push(model.version)
-    if (meta.length > 0) joinedLine(body, 'char-card-meta', meta)
+  if (model.godRank) line(body, 'char-card-god', model.godRank)
+  if (model.stats) body.append(statsRow(model.stats))
+
+  const meta: string[] = []
+  if (model.score != null) meta.push(`${model.score.toLocaleString()} pts`)
+  if (model.turns != null) meta.push(`${model.turns.toLocaleString()} turns`)
+  if (model.duration) meta.push(model.duration)
+  if (model.endedAt != null) {
+    const ago = agoLabel(model.endedAt)
+    const date = DATE_FMT.format(model.endedAt)
+    const when = ago || date
+    meta.push(model.dateQualifier ? `${model.dateQualifier} ${when}` : when)
+    if (ago) meta.push(date)
+  }
+  if (model.origin) meta.push(model.origin)
+  if (model.version) meta.push(model.version)
+  if (meta.length > 0) joinedLine(body, 'char-card-meta', meta)
+  // The collection, last — a trophy shelf under the text
+  // rather than a break in it (on-device call). Shown for any run that got a
+  // rune, not just wins (a 3-rune death is most players' proudest run).
+  // Sprites resolve async (rune-sprites.ts); the recipe is its cross-origin
+  // atlas fallback. The Orb is the doll column's trophy, never a row item.
+  if (model.runes?.length) {
+    const row = renderRuneRow(model.runes, { recipe: model.doll })
+    row.classList.add('char-card-runes')
+    body.append(row)
   }
 
   if (opts.onOpen) {
@@ -216,7 +261,7 @@ function sepSpan(): HTMLElement {
 }
 
 // Each fact rides in its own nowrap span (.char-card-fact) so it wraps to
-// the next line whole — "the Shining One", "7 days ago", "0.35-a0" never
+// the next line whole — "the Shining One", "7d ago", "0.35-a0" never
 // break mid-fact (NBSP joins can't do this: hyphens stay legal break
 // points). softIdx marks the one part allowed to wrap internally instead.
 function joinedLine(
@@ -237,12 +282,15 @@ function joinedLine(
   return el
 }
 
-// Color-coded per stat (à la dcss-stats) — each label+value pair is one
-// tinted span, separators plain. Label casing and group order follow the
-// HUD (and the morgue's char block): AC/EV/SH first, then Str/Int/Dex.
-// Each trio is a nowrap group, so a phone line too narrow for the whole
-// row (seen on-device: iOS metrics run wider than desktop WebKit) breaks
-// at the middot into two aligned halves, never mid-group.
+// Color-coded per stat: the tint sits on the "AC:" label only, the value
+// stays in the HUD's lightgrey. Tinting the whole pair and
+// the HUD's brown caption were both tried and read worse (the first buries
+// the number, the second makes all six pairs identical). Label casing and
+// group order follow the HUD (and the morgue's char block): AC/EV/SH
+// first, then Str/Int/Dex. Each trio is a nowrap group, so a phone line
+// too narrow for the whole row (seen on-device: iOS metrics run wider than
+// desktop WebKit) breaks at the middot into two aligned halves, never
+// mid-group.
 function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
   const row = document.createElement('div')
   row.className = 'char-card-stats'
@@ -256,10 +304,10 @@ function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
     grp.className = 'char-card-fact'
     pairs.forEach(([label, v], i) => {
       if (i > 0) grp.append(' ')
-      const span = document.createElement('span')
-      span.className = `char-card-st-${label.toLowerCase()}`
-      span.textContent = `${label}:${v}`
-      grp.append(span)
+      const cap = document.createElement('span')
+      cap.className = `char-card-st-${label.toLowerCase()}`
+      cap.textContent = `${label}:`
+      grp.append(cap, String(v))
     })
     row.append(grp)
   })
@@ -267,19 +315,21 @@ function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
 }
 
 // Compact relative-age label for the meta line; empty beyond a year (the
-// absolute date says it better by then).
+// absolute date says it better by then). iOS notification-style stamp
+// (m/h/d/mo, no space), not SI's "6 h": months are always "mo", so a bare
+// "m" is unambiguously minutes.
 export function agoLabel(endedAt: number, now = Date.now()): string {
   const s = Math.floor((now - endedAt) / 1000)
   if (s < 0) return ''
   if (s < 90) return 'just now'
   const min = Math.round(s / 60)
-  if (min < 90) return `${min} min ago`
+  if (min < 90) return `${min}m ago`
   const h = Math.round(min / 60)
-  if (h < 36) return `${h} h ago`
+  if (h < 36) return `${h}h ago`
   const d = Math.round(h / 24)
-  if (d < 45) return `${d} days ago`
+  if (d < 45) return `${d}d ago`
   const mo = Math.round(d / 30)
-  if (mo <= 12) return `${mo} months ago`
+  if (mo <= 12) return `${mo}mo ago`
   return ''
 }
 
@@ -323,10 +373,14 @@ const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s)
 // `doll` is the fallback the caller can supply alongside (or instead of) the
 // sidecar URL: renderCharCard prefers dollUrl and paints the recipe live when
 // the sidecar is missing — or when its image fails to decode.
+// `runes`: the morgue `}` line's list (game-records readMorgueRunes) — the
+// exact source; callers fall back to the joined avatar entry's live-parsed
+// pickups when the morgue is gone.
 export function xlogToCard(
   e: XlogRecord,
   dollUrl?: string | null,
   doll?: DollRecipe | null,
+  runes?: readonly string[] | null,
 ): CharCardModel {
   const num = (k: string): number | undefined => {
     const v = e[k]
@@ -384,6 +438,7 @@ export function xlogToCard(
     // run of short facts.
     origin: 'Local',
     dump: morgue ? { kind: 'idbfs', path: `/crawl/morgue/${morgue}` } : undefined,
+    runes: runes?.length ? [...runes] : undefined,
     dollUrl,
     doll,
   }
@@ -427,22 +482,36 @@ export function avatarToCard(a: Avatar): CharCardModel {
   // sentinel gameId (both minted together in app.ts), so origin and the
   // version suppression key off the same test rather than two magic strings.
   const local = a.wsUrl.startsWith('local://')
+  // The blurb's fixed header lines become facts (score, turns, duration,
+  // god rank, the *WIZ*/*EXPLORE* headline marker, final XL) and only its death description
+  // stays as the verbose result; an unparseable blurb renders verbatim.
+  const blurb = o?.message ? parseExitBlurb(o.message) : null
+  // "Began as a Merfolk Wanderer": the job is what follows the species we
+  // already know — the only safe split (both halves can be multi-word).
+  const comboBg = blurb?.combo && a.species && blurb.combo.startsWith(`${a.species} `)
+    ? blurb.combo.slice(a.species.length + 1)
+    : undefined
   return {
     charName: a.charName || a.username,
     charTitle: a.title,
+    badge: blurb?.mode,
     species: a.species,
-    background: a.background,
+    background: a.background ?? comboBg,
     god: a.god || undefined,
+    godRank: blurb?.godRank,
     result: {
       kind: o ? (REASON_KIND[o.reason] ?? 'other') : 'saved',
       verb: o ? (REASON_VERB[o.reason] ?? cap(o.reason)) : '',
-      verbose: o?.message,
+      verbose: blurb ? (blurb.rest || undefined) : o?.message,
     },
-    xl: a.xl,
+    xl: blurb?.xl ?? a.xl,
+    score: blurb?.score,
+    turns: blurb?.turns,
+    duration: blurb?.duration,
     place: a.place ? compactPlace(a.place, a.depth) : undefined,
     endedAt: o?.endedAt ?? a.seenAt,
     // A live save's card is a snapshot of the last capture, not an ending —
-    // qualify its age so "16 days ago" doesn't read as when the run ended.
+    // qualify its age so "16d ago" doesn't read as when the run ended.
     dateQualifier: o ? undefined : 'Last seen',
     // The offline sentinel gameId is pure noise next to origin "Local";
     // real ids ("dcss-0.34") are the closest thing to a version the store
@@ -450,6 +519,8 @@ export function avatarToCard(a: Avatar): CharCardModel {
     version: local ? undefined : a.gameId,
     origin: local ? 'Local' : serverTag(a.wsUrl),
     dump: o?.dump ? { kind: 'url', href: `${o.dump}.txt` } : undefined,
+    runes: a.runes?.length ? [...a.runes] : undefined,
+    orb: a.orb,
     doll: a,
   }
 }

@@ -1,8 +1,8 @@
 import type { Avatar } from '../avatars'
 import { bakedDollUrl, dropBakedDoll, ensureDollBaked } from '../game/tiles/avatar-bake'
-import { cachedFingerprint, resolvePlayerLoader, seedLocalPlayerAtlas } from '../game/tiles/atlas-dedup'
-import type { TileLoader } from '../game/tiles/tile-loader'
+import { bakeViaLocalPack, cachedFingerprint, resolvePlayerLoader, seedLocalPlayerAtlas } from '../game/tiles/atlas-dedup'
 import { CELL, renderTiles, dollTileSpec } from '../game/tiles/tile-view'
+import { marksFor, wrapWithRuneMarks } from './rune-marks'
 
 // Paint saved-character doll recipes (../avatars) into `container` as DOM
 // tile-stacks — the same CSS-background tile path the in-game monster panel uses
@@ -32,22 +32,37 @@ import { CELL, renderTiles, dollTileSpec } from '../game/tiles/tile-view'
 // its atlas identity. Full Avatars satisfy it structurally; the char-card
 // model carries exactly this shape for entries joined from other sources.
 export type DollRecipe = Pick<Avatar, 'doll' | 'mcache' | 'httpBase' | 'version' | 'fp'>
+// What paintAvatars accepts: a recipe, plus the collection when the caller
+// wants rune marks drawn (rune-marks.ts marksFor) — full Avatars carry it.
+export type MarkedRecipe = DollRecipe & Partial<Pick<Avatar, 'runes' | 'orb' | 'outcome'>>
 
-// `decorate`: called once per placed doll element with the avatar's index in
-// the ORIGINAL `avatars` list (empty-spec entries are filtered before painting,
-// so the placement index alone would drift past them). The crypt uses it to
-// wire per-doll tap targets. A baked thumbnail that self-heals re-places a
-// fresh element, which is decorated again — attach listeners, don't toggle.
+export interface PaintOpts {
+  signal?: AbortSignal
+  // Called once per placed doll element with the avatar's index in the
+  // ORIGINAL `avatars` list (empty-spec entries are filtered before
+  // painting, so the placement index alone would drift past them). The crypt
+  // uses it to wire per-doll tap targets. A baked thumbnail that self-heals
+  // re-places a fresh element, which is decorated again — attach listeners,
+  // don't toggle.
+  decorate?: (el: HTMLElement, index: number) => void
+  // Draw the rune fan / Orb badge over dolls whose recipe carries a
+  // collection (default on — every doll surface shows it; the character
+  // card turns it off, its body row and Orb trophy carry the same facts).
+  marks?: boolean
+}
+
 export async function paintAvatars(
   container: HTMLElement,
-  avatars: readonly DollRecipe[],
+  avatars: readonly MarkedRecipe[],
   scale: number,
   cls: string,
-  signal?: AbortSignal,
-  decorate?: (el: HTMLElement, index: number) => void,
+  { signal, decorate, marks = true }: PaintOpts = {},
 ): Promise<void> {
   const entries = avatars
-    .map((a, idx) => ({ spec: dollTileSpec({ doll: a.doll, mcache: a.mcache }), httpBase: a.httpBase, version: a.version, fp: a.fp, idx }))
+    .map((a, idx) => ({
+      spec: dollTileSpec({ doll: a.doll, mcache: a.mcache }), httpBase: a.httpBase, version: a.version, fp: a.fp, idx,
+      marks: marks ? marksFor(a) : null, recipe: a,
+    }))
     .filter((e) => e.spec.length > 0)
   // Start the local-pack group claim now, but only make the LIVE path wait on
   // it: baked entries place immediately, and on the first paint after a pack
@@ -62,8 +77,12 @@ export async function paintAvatars(
   // inserted at its stored index, so the row stays in list order regardless of
   // which atlas wins the race.
   const placed: Array<HTMLElement | undefined> = []
-  const place = (i: number, el: HTMLElement): void => {
+  const place = (i: number, dollEl: HTMLElement): void => {
     if (signal?.aborted) return
+    // Marked dolls are placed as their wrapper (rune-marks.ts): it carries
+    // the class and the tap target, the doll element inside stays pure.
+    const m = entries[i].marks
+    const el = m ? wrapWithRuneMarks(dollEl, m, scale, entries[i].recipe) : dollEl
     el.classList.add(cls)
     decorate?.(el, entries[i].idx)
     // Insert before the nearest already-placed later doll to preserve list order.
@@ -81,17 +100,44 @@ export async function paintAvatars(
   // cache filled by earlier live resolves of this version.
   const fpOf = (e: typeof entries[number]): string | null =>
     e.fp ?? cachedFingerprint(e.httpBase, e.version)
-  // Resolve one entry live: place its tile-stack, and bake a thumbnail for
-  // next time (ensureDollBaked no-ops for cross-origin loaders and existing
-  // bakes; fire-and-forget — the paint never waits on a bake).
-  const resolveLive = async (e: typeof entries[number], i: number): Promise<TileLoader | null> => {
-    await seeded
+  // Resolve one entry off an atlas: place its tile-stack, and bake a
+  // thumbnail for next time (ensureDollBaked no-ops for cross-origin loaders
+  // and existing bakes; fire-and-forget — the paint never waits on a bake).
+  const resolveAtlas = async (e: typeof entries[number], i: number): Promise<boolean> => {
     const loader = await resolvePlayerLoader(e.httpBase, e.version)
-    if (!loader) return null
+    if (!loader) return false
     place(i, renderTiles(loader, e.spec, scale))
     const fp = fpOf(e)  // a cache-filling resolve may have just minted it
     if (fp != null) void ensureDollBaked(loader, fp, e.spec)
-    return loader
+    return true
+  }
+  // A stored bake that no longer decodes would otherwise be a permanently
+  // broken box (baked placements skip live resolution): drop it, remove the
+  // element (the wrapper when marked), and re-render via `heal`.
+  const selfHealing = (img: HTMLElement, e: typeof entries[number], i: number, fp: string, heal: () => Promise<boolean>): HTMLElement => {
+    img.addEventListener('error', () => {
+      dropBakedDoll(fp, e.spec)
+      ;(placed[i] ?? img).remove()
+      placed[i] = undefined
+      void heal()
+    })
+    return img
+  }
+  // Resolve one entry live. First try baking it off the on-device pack by
+  // tile name (atlas-dedup bakeViaLocalPack): a foreign-era recipe — most
+  // saved characters, see there — then places as a bake without its server's
+  // atlas ever loading, and hits the baked short-circuit from the next paint
+  // on. A pack bake can be a pre-existing stored one (fp uncached at paint
+  // start), so it self-heals too — onto the atlas path, never back through
+  // the pack, so a bake that keeps coming out broken can't loop.
+  const resolveLive = async (e: typeof entries[number], i: number): Promise<boolean> => {
+    await seeded
+    const viaPack = await bakeViaLocalPack(e.httpBase, e.version, fpOf(e), e.spec)
+    if (viaPack) {
+      place(i, selfHealing(bakedImg(viaPack.url, scale), e, i, viaPack.fp, () => resolveAtlas(e, i)))
+      return true
+    }
+    return resolveAtlas(e, i)
   }
   const resolved = await Promise.all(entries.map(async (e, i) => {
     // Baked thumbnail first: instant, and independent of any atlas being
@@ -100,17 +146,7 @@ export async function paintAvatars(
     const fp = fpOf(e)
     const baked = fp != null ? bakedDollUrl(fp, e.spec) : null
     if (fp != null && baked != null) {
-      const img = bakedImg(baked, scale)
-      // Self-heal: a stored data-URL that no longer decodes would otherwise
-      // be a permanently broken box (the baked path skips live resolution).
-      // Drop the bad bake and re-render this doll live.
-      img.addEventListener('error', () => {
-        dropBakedDoll(fp, e.spec)
-        img.remove()
-        placed[i] = undefined
-        void resolveLive(e, i)
-      })
-      place(i, img)
+      place(i, selfHealing(bakedImg(baked, scale), e, i, fp, () => resolveLive(e, i)))
       return 'baked' as const
     }
     return resolveLive(e, i)

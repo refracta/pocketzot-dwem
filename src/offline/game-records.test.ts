@@ -5,7 +5,7 @@ import { dollTileSpec } from '../game/tiles/tile-view'
 import { fakeStorage } from '../test/fake-storage'
 import {
   deleteGameRecord, dollSidecarPath, joinDollRecipe, liveDollRecipe,
-  materializeDollSidecars, readDollSidecars, sortRecords, stripRecordLine,
+  materializeDollSidecars, readDollSidecars, readMorgueRunes, sortRecords, stripRecordLine,
 } from './game-records'
 import { deleteOfflineFiles, readOfflineFilesAt, writeOfflineFiles } from './save-transfer'
 import { parseXlogLine, type XlogRecord } from './xlog'
@@ -230,5 +230,33 @@ describe('doll sidecars', () => {
       '/crawl/morgue/morgue-Bram-20260720-221149.lst',
       SIDECAR,
     ])
+  })
+})
+
+describe('readMorgueRunes', () => {
+  const enc = new TextEncoder()
+  it('reads only rune-holding records\' morgues and parses their } line', async () => {
+    const withRunes = rec({ name: 'Bram', urune: '2', end: END_LATER })
+    const none = rec({ name: 'Bram', urune: '0', end: END_NOON })
+    const unknown = rec({ name: 'Bram', end: END_NOON })
+    vi.mocked(readOfflineFilesAt).mockResolvedValueOnce(new Map([
+      ['/crawl/morgue/morgue-Bram-20260720-221149.txt', enc.encode('x\n}: 2/15 runes: golden, silver\na: y\n')],
+    ]))
+    const out = await readMorgueRunes([withRunes, none, unknown])
+    expect(vi.mocked(readOfflineFilesAt).mock.calls.at(-1)?.[0]).toEqual(['/crawl/morgue/morgue-Bram-20260720-221149.txt'])
+    expect(out.get(withRunes)).toEqual(['golden', 'silver'])
+    expect(out.has(none)).toBe(false)
+  })
+  it('omits records whose morgue is missing or rune-line-less, and skips the read when nothing qualifies', async () => {
+    vi.mocked(readOfflineFilesAt).mockClear()
+    expect((await readMorgueRunes([rec({ urune: '0' })])).size).toBe(0)
+    expect(readOfflineFilesAt).not.toHaveBeenCalled()
+    expect((await readMorgueRunes([rec({ urune: '3' })])).size).toBe(0)
+    // A morgue without the } line (RC dump_order without the overview) must
+    // leave the record absent so the caller's avatar fallback runs.
+    vi.mocked(readOfflineFilesAt).mockResolvedValueOnce(new Map([
+      ['/crawl/morgue/morgue-Bram-20260720-221149.txt', enc.encode('header only\n')],
+    ]))
+    expect((await readMorgueRunes([rec({ urune: '3' })])).size).toBe(0)
   })
 })

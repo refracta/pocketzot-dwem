@@ -1,42 +1,27 @@
-// Standalone full-screen overlay renderers, split out of game-view.ts: the
-// character-creation flow (newgame-choice grid, newgame-random-combo confirm,
-// seed-selection) plus the msgwin-get-line input dialog. Each owns one
-// ui-push type wholesale — none of them share the title/body/actions frame
-// the describe-*/menu overlays get from showUiPush. They build their DOM
+// Standalone full-screen overlay renderers, split out of game-view.ts:
+// seed-selection plus the msgwin-get-line input dialog, and the shared
+// OverlayScreenCtx. The newgame-choice grid and newgame-random-combo
+// confirm live in newgame-view.ts, their wire types in newgame-model.ts
+// (spec: dev-material/newgame-redesign.md). Each screen owns one ui-push type
+// wholesale — none of them share the title/body/actions frame the
+// describe-*/menu overlays get from showUiPush. They build their DOM
 // into ctx.overlay (#ui-overlay) after ctx.enterLayout()/ctx.renderOverlay()
 // swaps the screen from map/HUD/log to overlay layout, and reach everything
 // stateful (WS sends, virtual keyboard, focus) through OverlayScreenCtx so
 // no game-view closure state leaks in here.
 import type { ClientMsg } from '../ws/types'
-import { dcssToHtml, escHtml } from '../game/dcss-colors'
-import { stripDcss, type SpellBook } from './overlay-body'
-
-export interface NewgameButton {
-  hotkey?: string | number
-  label?: string
-  labels?: string[]
-  x?: number
-  y?: number
-  description?: string
-  highlight_colour?: number
-  tile?: Array<{t: number; tex: number}>
-}
-
-export interface NewgameGridLabel {
-  x: number
-  y: number
-  label: string
-}
-
-export interface NewgameItems {
-  buttons?: NewgameButton[]
-  labels?: NewgameGridLabel[]
-  width?: number
-  height?: number
-}
+import type { TileLoader } from '../game/tiles/tile-loader'
+import { dcssToHtml } from '../game/dcss-colors'
+import type { SpellBook } from './overlay-body'
+import type { NewgameItems } from './newgame-model'
 
 export interface UiPushMsg {
   type: string
+  // formatted-scroller: the scroller's self-declared identity (scroller.cc
+  // m_tag, e.g. "resists" for the `%` overview) — the screen-export allowlist
+  // key. scroller.cc writes it unconditionally: untagged scrollers (Ctrl-O,
+  // Ctrl-P, `?/` responses) arrive as tag:"", never with the field missing.
+  tag?: string
   title?: string
   prompt?: string
   body?: string
@@ -103,14 +88,25 @@ export interface OverlayScreenCtx {
   send(msg: ClientMsg): void
   // Swap the screen from map/HUD/log to overlay layout: clear + show the
   // overlay, hide everything else. touch:false also hides the touch controls.
-  enterLayout(opts?: { touch?: boolean }): void
+  // screen:'newgame' marks a character-creation screen: there is no game
+  // behind it yet, so landscape gives it the whole screen instead of the
+  // map column beside a sidebar of pre-creation HUD (the `newgame` view
+  // class; style.css landscape block).
+  enterLayout(opts?: { touch?: boolean; screen?: 'newgame' }): void
   // enterLayout + the standard overlay title header; buildBody appends the
   // rest into `overlay` below it.
-  renderOverlay(title: string, buildBody: () => void): void
+  renderOverlay(title: string, buildBody: () => void, opts?: { screen?: 'newgame' }): void
   // Open the virtual keyboard, flagged so overlay teardown auto-closes it.
   autoOpenKbd(): void
   // Return focus to the game view so physical-keyboard input keeps flowing.
   focusView(): void
+  // The live per-version TileLoader (a getter — game-view reassigns its
+  // `loader` on game_client, after this ctx is built). Null before
+  // game_client / on servers without gamedata.
+  getLoader(): TileLoader | null
+  // Spectators render everything but send nothing (taps inert, no
+  // outer_menu_focus); inbound focus sync still applies.
+  isSpectating(): boolean
 }
 
 // ?/ search prompts ("Describe what?", "Find what?", ...) arrive as ui-push
@@ -173,7 +169,6 @@ export function showInputDialog(ctx: OverlayScreenCtx, msg: UiPushMsg): void {
   ctx.autoOpenKbd()
   requestAnimationFrame(() => input.focus())
 }
-
 // Custom-seed entry on newgame. The server pushes title/body/footer text
 // and a show_pregen_toggle flag, then drives the seed input and pregen
 // checkbox via ui-state-sync (widget_id "seed" / "pregenerate"). Buttons
@@ -183,7 +178,7 @@ export function showSeedSelection(ctx: OverlayScreenCtx, msg: UiPushMsg): void {
   const genId = msg.generation_id
   // Touch controls stay visible so the kbd-overlay child stays mounted (see
   // showInputDialog for the same reason).
-  ctx.enterLayout()
+  ctx.enterLayout({ screen: 'newgame' })
 
   const wrap = document.createElement('div')
   wrap.className = 'seed-selection'
@@ -304,171 +299,4 @@ export function showSeedSelection(ctx: OverlayScreenCtx, msg: UiPushMsg): void {
   ctx.overlay.appendChild(wrap)
   ctx.autoOpenKbd()
   requestAnimationFrame(() => input.focus())
-}
-
-// "Do you want to play this combination?" confirm after picking a fully
-// random character (newgame-random-combo).
-export function showRandomCombo(ctx: OverlayScreenCtx, msg: UiPushMsg): void {
-  const title = stripDcss(msg.prompt ?? msg.title ?? '')
-  ctx.renderOverlay(title, () => {
-    const bodyEl = document.createElement('div')
-    bodyEl.className = 'overlay-body fg7'
-    bodyEl.textContent = 'Do you want to play this combination?'
-    ctx.overlay.appendChild(bodyEl)
-
-    const bar = document.createElement('div')
-    bar.className = 'overlay-footer overlay-actions'
-    const choices: Array<{ key: string; label: string }> = [
-      { key: 'Y', label: 'Yes (Y)' },
-      { key: 'n', label: 'Reroll (n)' },
-      { key: 'q', label: 'Quit (q)' },
-    ]
-    for (const c of choices) {
-      const btn = document.createElement('button')
-      btn.className = 'action-btn'
-      btn.textContent = c.label
-      btn.addEventListener('click', () => {
-        ctx.send({ msg: 'input', text: c.key })
-        ctx.focusView()
-      })
-      bar.appendChild(btn)
-    }
-    ctx.overlay.appendChild(bar)
-  })
-}
-
-// Species/background/weapon selection grid (ui-push newgame-choice; wire
-// shape documented in CLAUDE.md). Rendered as a CSS grid (--ngc-cols) with
-// a two-tap confirm UX: first tap shows the description + highlights, second
-// tap sends the hotkey. The caller decides what happens to the menu-controls
-// bar afterwards (played games get an Esc bar; spectators get nothing) —
-// see game-view's dispatch.
-export function showNewgameChoice(ctx: OverlayScreenCtx, msg: UiPushMsg): void {
-  ctx.enterLayout({ touch: false })
-
-  const wrap = document.createElement('div')
-  wrap.className = 'ngc-wrap'
-  ctx.overlay.appendChild(wrap)
-
-  const titleHtml = msg.title ?? msg.prompt ?? ''
-  if (titleHtml) {
-    const titleEl = document.createElement('div')
-    titleEl.className = 'overlay-title'
-    titleEl.innerHTML = dcssToHtml(titleHtml)
-    wrap.appendChild(titleEl)
-  }
-
-  // Description panel updated on first tap; second tap on same item confirms
-  const descEl = document.createElement('div')
-  descEl.className = 'ngc-desc'
-  descEl.innerHTML = '<em>Tap to preview, tap again to confirm.</em>'
-  let pendingKey: string | null = null
-  let pendingBtn: HTMLButtonElement | null = null
-
-  function sendHotkey(hotkey: string | number | undefined): void {
-    if (typeof hotkey === 'number') {
-      // Non-printable (Bksp=8, Tab=9, Esc=27) must go via {key, keycode};
-      // {input, text} is for printable chars only.
-      if (hotkey < 32 || hotkey === 127) ctx.send({ msg: 'key', keycode: hotkey })
-      else ctx.send({ msg: 'input', text: String.fromCharCode(hotkey) })
-    } else if (hotkey) {
-      ctx.send({ msg: 'input', text: String(hotkey) })
-    }
-  }
-
-  function makeBtnHandler(btn: NewgameButton, btnEl: HTMLButtonElement): () => void {
-    const keyChar = typeof btn.hotkey === 'number' ? String.fromCharCode(btn.hotkey) : String(btn.hotkey ?? '')
-    return () => {
-      if (pendingKey === keyChar && pendingBtn === btnEl) {
-        sendHotkey(btn.hotkey)
-        ctx.focusView()
-      } else {
-        pendingBtn?.classList.remove('ngc-selected')
-        pendingKey = keyChar
-        pendingBtn = btnEl
-        btnEl.classList.add('ngc-selected')
-        const plain = stripDcss(String(btn.labels?.[0] ?? btn.label ?? '')).trim()
-        const dashIdx = plain.indexOf(' - ')
-        const name = dashIdx >= 0 ? plain.slice(dashIdx + 3) : plain
-        const desc = btn.description ?? ''
-        descEl.innerHTML =
-          `<strong>${escHtml(name)}</strong>${desc ? `<br><span class="ngc-desc-text">${escHtml(desc)}</span>` : ''}<br><em class="ngc-confirm-hint">Tap again to confirm.</em>`
-      }
-      ctx.focusView()
-    }
-  }
-
-  function buildGrid(items: NewgameItems, extraClass?: string): HTMLElement {
-    const cols = items.width ?? 1
-    const buttons = items.buttons ?? []
-    const colLabels = items.labels ?? []
-
-    const gridEl = document.createElement('div')
-    gridEl.className = extraClass ? `ngc-grid ${extraClass}` : 'ngc-grid'
-    gridEl.style.setProperty('--ngc-cols', String(cols))
-
-    // Column header row (y:0 labels)
-    if (colLabels.length > 0) {
-      for (let c = 0; c < cols; c++) {
-        const lbl = colLabels.find(l => l.x === c && l.y === 0)
-        const hdr = document.createElement('div')
-        hdr.className = 'ngc-col-header'
-        if (lbl) hdr.innerHTML = dcssToHtml(lbl.label)
-        gridEl.appendChild(hdr)
-      }
-    }
-
-    // Sort buttons by row then column; fill gaps with empty divs
-    const sorted = [...buttons].sort((a, b) => ((a.y ?? 0) - (b.y ?? 0)) || ((a.x ?? 0) - (b.x ?? 0)))
-    let curRow = -1
-    let curCol = 0
-
-    for (const btn of sorted) {
-      const bx = btn.x ?? 0
-      const by = btn.y ?? 0
-      if (by !== curRow) {
-        // Pad rest of previous row
-        while (curRow >= 0 && curCol < cols) { gridEl.appendChild(document.createElement('div')); curCol++ }
-        curRow = by; curCol = 0
-      }
-      // Pad columns before this button
-      while (curCol < bx) { gridEl.appendChild(document.createElement('div')); curCol++ }
-
-      const labels = btn.labels ?? (btn.label !== undefined ? [btn.label] : [])
-      const main = String(labels[0] ?? '').trim()
-      const suffix = labels.length >= 2 ? String(labels[1]).trim() : ''
-      const btnEl = document.createElement('button')
-      btnEl.className = 'ngc-btn'
-      if (suffix) {
-        // Weapon menu: main label + apt suffix as right-aligned column
-        const mainSpan = document.createElement('span')
-        mainSpan.className = 'ngc-btn-main'
-        mainSpan.innerHTML = dcssToHtml(main)
-        const suffixSpan = document.createElement('span')
-        suffixSpan.className = 'ngc-btn-suffix'
-        suffixSpan.innerHTML = dcssToHtml(suffix)
-        btnEl.append(mainSpan, suffixSpan)
-      } else {
-        btnEl.innerHTML = dcssToHtml(main)
-      }
-      btnEl.addEventListener('click', makeBtnHandler(btn, btnEl))
-      gridEl.appendChild(btnEl)
-      curCol++
-    }
-    return gridEl
-  }
-
-  const mainItems = msg['main-items']
-  if (mainItems?.buttons?.length) {
-    wrap.appendChild(buildGrid(mainItems))
-  }
-
-  wrap.appendChild(descEl)
-
-  const subItems = msg['sub-items']
-  if (subItems?.buttons?.length) {
-    wrap.appendChild(buildGrid(subItems, 'ngc-sub-grid'))
-  }
-
-  ctx.focusView()
 }

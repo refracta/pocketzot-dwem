@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeCaches, type FakeCache } from '../test/fake-caches'
 import {
   ARTIFACT_CACHE, GAMEDATA_CACHE, cachedGamedataBuild, downloadOfflineData,
-  fetchArtifact, fetchVersion, formatBytes, markEngineSetComplete,
+  fetchArtifact, fetchArtifactResponse, fetchVersion, formatBytes,
+  gunzipStreamIfNeeded, markEngineSetComplete,
   measureOfflineData, newStats, openOfflineStores, openVersionedCache,
   probeReadiness, removeOfflineData,
 } from './artifact-store'
 
 // Route-map fetch stub: exact-path lookup, 404 otherwise. A `null` value
 // simulates a network failure (fetch rejects).
-type Routes = Record<string, { body?: string; type?: string; status?: number } | null>
+type Routes = Record<string, { body?: string; type?: string; status?: number; length?: string } | null>
 
 function stubFetch(routes: Routes): void {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -19,7 +20,10 @@ function stubFetch(routes: Routes): void {
     if (!r) return new Response('nope', { status: 404, headers: { 'Content-Type': 'text/plain' } })
     return new Response(r.body ?? 'data', {
       status: r.status ?? 200,
-      headers: { 'Content-Type': r.type ?? 'application/octet-stream' },
+      headers: {
+        'Content-Type': r.type ?? 'application/octet-stream',
+        ...(r.length !== undefined ? { 'Content-Length': r.length } : {}),
+      },
     })
   }))
 }
@@ -147,6 +151,72 @@ describe('fetchArtifact', () => {
     await expect(fetchArtifact(c as unknown as Cache, newStats(), '/offline/missing'))
       .rejects.toThrow('HTTP 404')
     expect(await c.match('/offline/missing')).toBeUndefined()
+  })
+})
+
+describe('fetchArtifactResponse', () => {
+  it('returns an unconsumed body from cache and counts the hit', async () => {
+    const c = await seedEngineSet()
+    stubFetch({})
+    const stats = newStats()
+    const res = await fetchArtifactResponse(c as unknown as Cache, stats, '/offline/crawl.js')
+    expect(await res.text()).toBe('glue')
+    expect(stats).toEqual({ cacheHits: 1, netFetches: 0, netBytes: 0 })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('counts network bytes from Content-Length, never the body', async () => {
+    const c = await artifactCache()
+    // Header deliberately disagrees with the 10-byte body: body-counting
+    // would report 10, header-counting the declared wire size.
+    stubFetch({ '/offline/crawl.wasm': { body: 'wasm-plain', length: '7340032' } })
+    const stats = newStats()
+    const res = await fetchArtifactResponse(
+      c as unknown as Cache, stats, '/offline/crawl.wasm.gz', '/offline/crawl.wasm')
+    expect(await res.text()).toBe('wasm-plain')
+    expect(stats).toEqual({ cacheHits: 0, netFetches: 1, netBytes: 7340032 })
+    expect(await c.match('/offline/crawl.wasm')).toBeTruthy()
+  })
+})
+
+describe('gunzipStreamIfNeeded', () => {
+  const gzip = async (text: string): Promise<Uint8Array> => new Uint8Array(
+    await new Response(
+      new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer())
+  const drain = async (s: ReadableStream<Uint8Array>): Promise<string> =>
+    new Response(s).text()
+
+  it('decompresses a gzipped body and passes a plain one through', async () => {
+    expect(await drain(await gunzipStreamIfNeeded(new Response(await gzip('wasm bytes')))))
+      .toBe('wasm bytes')
+    expect(await drain(await gunzipStreamIfNeeded(new Response('plain bytes'))))
+      .toBe('plain bytes')
+  })
+
+  it('cancels the abandoned body when DecompressionStream is missing', async () => {
+    const gz = await gzip('doomed')
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(gz) },
+      cancel() { cancelled = true },
+    })
+    vi.stubGlobal('DecompressionStream', undefined)
+    await expect(gunzipStreamIfNeeded(new Response(body))).rejects.toThrow(/DecompressionStream/)
+    await Promise.resolve() // let the fire-and-forget cancel propagate
+    expect(cancelled).toBe(true)
+  })
+
+  it('sniffs the magic pair across a chunk boundary', async () => {
+    const gz = await gzip('split magic')
+    // 1-byte first chunk: the 0x1f/0x8b pair straddles two reads.
+    const chunked = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(gz.subarray(0, 1))
+        controller.enqueue(gz.subarray(1))
+        controller.close()
+      },
+    })
+    expect(await drain(await gunzipStreamIfNeeded(new Response(chunked)))).toBe('split magic')
   })
 })
 

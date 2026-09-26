@@ -144,5 +144,37 @@ async function cacheFirst(request) {
   // the install-time precache fetch didn't — without it, every offline
   // chunk load Vary-misses the cache and dies on the network fallback.
   const cached = await caches.match(request, { ignoreVary: true })
-  return cached || fetch(request)
+  if (cached) return cached
+  // Stale-shell rescue (see classify.js for the full story; the
+  // no-skipWaiting lifecycle covers every LIVE client, and this covers the
+  // one client it can't: a start-doc snapshot iOS revived after that
+  // generation was reaped). Scoped to script chunks; every other miss —
+  // /gamedata/local/, precache extras — falls through to a plain fetch
+  // exactly as before. The origin is the authority: the miss is fetched
+  // with cache:'reload' so the immutable+1y HTTP cache can't answer 200
+  // for a rotated-away hash, and a definitive 404/410 means the requester
+  // is a stale shell. Only when the network itself is unreachable does
+  // manifest membership decide instead (offline stale shell: no layer can
+  // ever serve a foreign hash → rescue; an in-manifest chunk missing
+  // offline is a plain outage → propagate the failure).
+  const url = new URL(request.url)
+  if (isChunkPath(url, PRECACHE.basePath)) {
+    let response
+    try {
+      response = await fetch(request, { cache: 'reload' })
+    } catch (err) {
+      if (isForeignChunk(url, PRECACHE.assets, PRECACHE.basePath)) return rescueResponse()
+      throw err
+    }
+    if (shouldRescueStaleChunk(url, response.status, PRECACHE.basePath)) return rescueResponse()
+    return response
+  }
+  return fetch(request)
+}
+
+// no-store so no layer retains the synthetic body.
+function rescueResponse() {
+  return new Response(STALE_CHUNK_RESCUE_JS, {
+    headers: { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' },
+  })
 }

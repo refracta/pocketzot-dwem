@@ -157,6 +157,35 @@ export function downloadPackFile(file: File): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
+// Hand a file to the platform. On touch devices the share sheet is the
+// native save path (Save to Files / AirDrop) — an <a download> there
+// navigates the document to a Quick Look preview whose Close (X) reloads
+// the whole app back to the login screen (user report, 2026-07-13).
+// Desktop keeps the plain download anchor. Returns false when the user
+// cancelled the share sheet (nothing left the device — no success notice).
+export async function sharePack(file: File, notify?: (text: string) => void): Promise<boolean> {
+  // Both fall-throughs to the anchor are announced in DEV: on device the
+  // console is invisible, and a silent fallback is indistinguishable from
+  // the share path "not working".
+  if (navigator.maxTouchPoints > 0) {
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] })
+        return true
+      } catch (e) {
+        if ((e as DOMException).name === 'AbortError') return false
+        // NotAllowedError (gesture window expired) etc. — fall through to
+        // the anchor; a preview detour beats a failed export.
+        if (import.meta.env.DEV) notify?.(`DEV: share() threw ${(e as DOMException).name} — download fallback`)
+      }
+    } else if (import.meta.env.DEV) {
+      notify?.('DEV: file share unsupported here — download fallback')
+    }
+  }
+  downloadPackFile(file)
+  return true
+}
+
 // --- IndexedDB access --------------------------------------------------------
 
 function request<T>(r: IDBRequest<T>): Promise<T> {

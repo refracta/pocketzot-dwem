@@ -90,7 +90,9 @@ export interface PlayerStatus {
 }
 
 export interface LobbyEntry {
-  id: string
+  // A plain int on the wire (process_handler.py: last_game_id + 1); readers
+  // String() it for map keys and comparisons.
+  id: number
   username: string
   game_id: string
   idle_time?: number
@@ -140,16 +142,40 @@ export type ServerMsg =
   // The client must answer with {msg:'force_terminate', answer:boolean};
   // true = SIGABRT the old process (skips saving), false = abort the play.
   | { msg: 'force_terminate?' }
+  // Mid-game '#' character dump. Online servers send `url` (morgue URL sans
+  // extension — process_handler.py builds it from the game's starred dump
+  // line; upstream chat.js shows url+".txt" in chat). Offline the mini-server
+  // synthesizes the same message with `filename` (the dump's stem) instead —
+  // there is no URL, the file lives in the engine's FS.
+  | { msg: 'dump'; url?: string; filename?: string }
+  // Offline only: the mini-server's relay of the engine's starred `ending`
+  // line (end.cc _persist_ending → tileweb.cc send_ending, PocketZot
+  // engine) — the same reason + hiscore blurb game_ended will repeat,
+  // delivered the moment the ending is flushed to IndexedDB, BEFORE the end
+  // screens (more, inventory, goodbye). It exists because game_ended is
+  // synthesized at process exit (upstream parity): an app killed on the end
+  // screens never receives it, while the disk already holds the ending. So
+  // every client record that mirrors the ending (avatars.ts outcome stamp,
+  // offline-state.ts slot record, the outcome counters) closes on THIS
+  // message, and game_ended's copy is a no-op behind a latch — an engine
+  // whose flush fails sends no `ending`, so the client can never be ahead
+  // of the disk. Never an exit: the game view stays up until game_ended.
+  // No `dump`: the offline game_ended carries none either (mini-server
+  // `end()` builds it from reason + message; '#' dumps travel as their own
+  // {msg:'dump', filename}), so the latch drops nothing.
+  | { msg: 'game_ending'; reason: string; message?: string }
   | { msg: 'game_ended'; reason: string; message?: string; dump?: string }
   | { msg: 'go_lobby' }
   | { msg: 'lobby_entry' } & LobbyEntry
-  | { msg: 'lobby_remove'; id: string; reason?: string }
+  | { msg: 'lobby_remove'; id: number; reason?: string }
   | { msg: 'lobby_complete' }
   | { msg: 'lobby_clear' }
   // invis_mon_desc: names of sensed invisible monsters whose position is
   // unknown (trunk invisibility rework) — sticky until the next value arrives;
   // '' clears. Shown as the monster list's first row.
-  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string }
+  // player_on_level: tileweb.cc _send_map writes `you.on_current_level` on
+  // full sends and on change; false while a level is being left/built.
+  | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string; player_on_level?: boolean }
   | { msg: 'player' } & PlayerMsg
   // Game-option snapshot from the binary (TilesFramework::send_options),
   // sent at process start and again whenever options change (rc reload).
@@ -246,7 +272,15 @@ export interface PlayerMsg {
   doom?: number
   contam?: number
   unarmed_attack?: string
+  // Weapon-line colours by era. ≤0.34: unarmed_attack_colour (form uc_colour)
+  // and the wielded item's inventory col. Trunk (0bed8fcdc9, committed
+  // 2026-07-17): weapon_colour/offhand_weapon_colour computed C++-side
+  // (output.cc wielded_weapon_colour — honours `menu_colour += stats:…`,
+  // refreshed on equip), unarmed_attack_colour dropped. Their PRESENCE is the
+  // era signal stats-view.ts gates on (value 0 is a legitimate colour).
   unarmed_attack_colour?: number
+  weapon_colour?: number
+  offhand_weapon_colour?: number
   weapon_index?: number   // 0.33+
   offhand_index?: number  // 0.33+
   // Pre-0.33: equipment as a slot→inventory-index map (keys are
@@ -290,4 +324,10 @@ export type ClientMsg =
   | { msg: 'menu_hover'; hover: number; mouse: boolean }
   | { msg: 'menu_scroll'; first: number; last: number; hover: number }
   | { msg: 'click_cell'; x: number; y: number; button: 1 | 2 | 3; force?: boolean }
+  | { msg: 'target_cursor'; x: number; y: number }
   | { msg: 'formatted_scroller_scroll'; scroll: number }
+  // Newgame-choice focus: moves the server-side OuterMenu cursor so
+  // spectators see our selection. BOTH fields required and type-checked
+  // server-side (tileweb.cc:567 — hotkey must be a number, menu_id a
+  // string; unknown menu_id is a silent no-op).
+  | { msg: 'outer_menu_focus'; hotkey: number; menu_id: string }

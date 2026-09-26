@@ -18,14 +18,13 @@ vi.mock('./avatar-tiles', () => ({
     avatars: readonly unknown[],
     _scale: number,
     cls: string,
-    _signal?: AbortSignal,
-    decorate?: (el: HTMLElement, i: number) => void,
+    opts?: { decorate?: (el: HTMLElement, i: number) => void },
   ) => {
     avatars.forEach((_a, i) => {
       const el = document.createElement('div')
       el.classList.add(cls)
       container.append(el)
-      decorate?.(el, i)
+      opts?.decorate?.(el, i)
     })
   }),
 }))

@@ -5,6 +5,7 @@ import { avatarToCard, cardHeadline, renderCharCard } from './char-card'
 import { pickCryptLine } from './crypt-flavor'
 import { mountBackdrop, mountOverlay } from './overlay'
 import { attachScrollCue } from '../util/scroll-cue'
+import { count } from '../counter'
 
 // Full-screen "crypt": the complete retained character history (../avatars),
 // painted as a vertical-scrolling 4-wide grid of doll sprites. An opaque full
@@ -14,23 +15,24 @@ import { attachScrollCue } from '../util/scroll-cue'
 // strip. The grid mirrors the strip's newest-first order (newest top-left), so the
 // strip reads as the crypt's top row.
 //
-// Heading: a random thematic line (./crypt-flavor) shown on each open, in the
-// smaller flavor style (it's prose, not a wordmark).
+// Heading: a thematic line chosen from the history's state (./crypt-flavor),
+// in the smaller flavor style (it's prose, not a wordmark).
 export function openCrypt(): void {
   if (document.querySelector('.crypt-view')) return // already open — ignore re-taps
+  count('crypt')
   const { view } = mountCryptShell('', '', `
       <p class="crypt-flavor"></p>
       <div class="crypt-grid"></div>
   `)
+  const avatars = listAllAvatars()
   // Set via textContent (the flavor lines are author-written plain text).
-  view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine()
+  view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine(avatars)
   // Scale 2.5 (80px): bigger than the login strip's 64px teaser, but small enough
   // that four fit per row on a phone (the .crypt-grid wraps at 4-ish, centered).
   // Each doll is a tap target: dolls are otherwise unlabeled, so the card modal
   // (openAvatarCard) is what answers "who was this?".
-  const avatars = listAllAvatars()
-  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, avatars, 2.5, 'crypt-doll',
-    undefined, (el, i) => {
+  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, avatars, 2.5, 'crypt-doll', {
+    decorate: (el, i) => {
       const a = avatars[i]
       el.setAttribute('role', 'button')
       el.tabIndex = 0
@@ -44,7 +46,8 @@ export function openCrypt(): void {
           openAvatarCard(a)
         }
       })
-    })
+    },
+  })
 }
 
 // Tap-a-doll drill-down: the character's full card (shared renderer, online
@@ -62,8 +65,8 @@ export function openAvatarCard(a: Avatar): void {
   backdrop.setAttribute('aria-label', cardHeadline(model))
   const dump = model.dump
   const card = renderCharCard(model, dump?.kind === 'url'
-    ? { onOpen: () => window.open(dump.href, '_blank', 'noopener') }
-    : {})
+    ? { hero: true, onOpen: () => window.open(dump.href, '_blank', 'noopener') }
+    : { hero: true })
   backdrop.append(card)
   // Move focus off the tapped doll into the dialog (same reasoning as the
   // shell's back-button focus): an Esc dismiss must not leave a focus ring
@@ -82,6 +85,7 @@ export function mountCryptShell(
   extraClass: string,
   headerHtml: string,
   bodyHtml: string,
+  onClose?: () => void,
 ): { view: HTMLElement; close: () => void } {
   const view = document.createElement('div')
   view.className = extraClass ? `crypt-view ${extraClass}` : 'crypt-view'
@@ -96,7 +100,7 @@ export function mountCryptShell(
     view.querySelector<HTMLElement>('.crypt-header')!,
     view.querySelector<HTMLElement>('.crypt-scroll')!,
   )
-  const close = mountOverlay(view) // body-mount + Escape-to-close
+  const close = mountOverlay(view, onClose) // body-mount + Escape-to-close
   const backBtn = view.querySelector<HTMLElement>('.crypt-back')!
   backBtn.addEventListener('click', close)
   // Move focus off the trigger into the dialog, so an Esc dismiss doesn't

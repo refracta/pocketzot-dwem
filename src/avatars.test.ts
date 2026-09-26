@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { listAllAvatars, listAvatars, recordAvatarOutcome, saveAvatar, type Avatar } from './avatars'
+import { STORE_CAP, listAllAvatars, listAvatars, recordAvatarOutcome, saveAvatar, type Avatar } from './avatars'
 
 // avatars.ts reads the global `localStorage`. This env's built-in one (Node's
 // experimental impl, enabled without a valid file) is unusable — and avatars.ts
@@ -152,13 +152,13 @@ describe('avatars store', () => {
     expect(listAvatars().map((a) => a.doll)).toEqual([[[5, 32]], [[4, 32]], [[3, 32]], [[2, 32]]])
   })
 
-  it('caps the history at 20, evicting the oldest', () => {
-    for (let i = 0; i < 21; i++) {
+  it('caps the history at STORE_CAP, evicting the oldest', () => {
+    for (let i = 0; i <= STORE_CAP; i++) {
       saveAvatar(rec({ gameId: `dcss-g${i}`, doll: [[i, 32]] }))
     }
     const dolls = listAllAvatars().map((a) => a.doll)
-    expect(dolls).toHaveLength(20)
-    expect(dolls[0]).toEqual([[20, 32]])  // newest kept
+    expect(dolls).toHaveLength(STORE_CAP)
+    expect(dolls[0]).toEqual([[STORE_CAP, 32]])  // newest kept
     expect(dolls).not.toContainEqual([[0, 32]]) // oldest rolled off
   })
 
@@ -252,5 +252,52 @@ describe('avatar metadata and outcomes', () => {
     expect(list[0].doll).toEqual([[2, 32]])          // the new character
     expect(list[0].outcome).toBeUndefined()
     expect(list[1].outcome?.reason).toBe('dead')     // the fallen one, retained
+  })
+})
+
+describe('rune collection', () => {
+  it('accumulates runes across captures instead of overwriting (resume sees no pickups)', () => {
+    saveAvatar(rec({ runes: ['serpentine'] }), { turn: 5000 })
+    saveAvatar(rec({}), { turn: 5200 })                       // next session: nothing picked up yet
+    expect(listAllAvatars()[0].runes).toEqual(['serpentine'])
+    saveAvatar(rec({ runes: ['golden'] }), { turn: 9000 })   // this session's pickups only
+    expect(listAllAvatars()[0].runes).toEqual(['serpentine', 'golden'])
+  })
+
+  it('keeps pickup order and ignores a re-observed rune', () => {
+    saveAvatar(rec({ runes: ['slimy', 'silver'] }), { turn: 5000 })
+    saveAvatar(rec({ runes: ['silver', 'iron'] }), { turn: 6000 })
+    expect(listAllAvatars()[0].runes).toEqual(['slimy', 'silver', 'iron'])
+  })
+
+  it('leaves the field absent when no rune was ever seen', () => {
+    saveAvatar(rec({}), { turn: 100 })
+    saveAvatar(rec({}), { turn: 200 })
+    expect(listAllAvatars()[0]).not.toHaveProperty('runes')
+  })
+
+  it('a reroll starts a fresh collection, the fallen character keeps its own', () => {
+    saveAvatar(rec({ runes: ['golden'] }), { turn: 5000 })
+    saveAvatar(rec({}), { turn: 1 })
+    const list = listAllAvatars()
+    expect(list).toHaveLength(2)
+    expect(list[0].runes).toBeUndefined()
+    expect(list[1].runes).toEqual(['golden'])
+  })
+
+  it('the Orb, once picked up, survives later captures and the outcome stamp', () => {
+    saveAvatar(rec({ orb: true }), { turn: 5000 })
+    saveAvatar(rec({}), { turn: 5200 })
+    expect(listAllAvatars()[0].orb).toBe(true)
+    saveAvatar(rec({}), { turn: 1 }) // reroll: fresh character, no Orb
+    expect(listAllAvatars()[0].orb).toBeUndefined()
+    recordAvatarOutcome(SLOT, { reason: 'dead' }, { orb: true })
+    expect(listAllAvatars()[0].orb).toBe(true)
+  })
+
+  it('the outcome stamp merges runes seen after the last capture', () => {
+    saveAvatar(rec({ runes: ['golden'] }), { turn: 5000 })
+    recordAvatarOutcome(SLOT, { reason: 'won' }, { runes: ['golden', 'abyssal'] })
+    expect(listAllAvatars()[0].runes).toEqual(['golden', 'abyssal'])
   })
 })

@@ -11,7 +11,8 @@
 import { describe, it, expect } from 'vitest'
 import { MapStore } from '../game/map/map-store'
 import type { ClientMsg, ServerMsg } from '../ws/types'
-import { showInputDialog, showNewgameChoice, type OverlayScreenCtx, type UiPushMsg } from '../views/game-overlays'
+import { showInputDialog, type OverlayScreenCtx, type UiPushMsg } from '../views/game-overlays'
+import { showNewgameChoice } from '../views/newgame-view'
 
 interface CellSample {
   x: number
@@ -70,6 +71,8 @@ function overlayHarness(): { ctx: OverlayScreenCtx; overlay: HTMLElement; sent: 
     renderOverlay: (_title, buildBody) => { overlay.innerHTML = ''; buildBody() },
     autoOpenKbd: () => {},
     focusView: () => {},
+    getLoader: () => null,
+    isSpectating: () => false,
   }
   return { ctx, overlay, sent }
 }
@@ -80,11 +83,14 @@ function overlayHarness(): { ctx: OverlayScreenCtx; overlay: HTMLElement; sent: 
 function probeNewgameChoice(push: UiPushMsg): { mainButtons: number; subButtons: number; firstConfirm?: ClientMsg } {
   const { ctx, overlay, sent } = overlayHarness()
   showNewgameChoice(ctx, push)
-  const main = overlay.querySelectorAll('.ngc-grid:not(.ngc-sub-grid) .ngc-btn')
-  const sub = overlay.querySelectorAll('.ngc-sub-grid .ngc-btn')
+  const main = overlay.querySelectorAll('.ngv-groups [data-hotkey]')
+  const sub = overlay.querySelectorAll('.ngv-action')
   const first = main[0] as HTMLButtonElement | undefined
   if (first) { first.click(); first.click() }
-  return { mainButtons: main.length, subButtons: sub.length, firstConfirm: sent[0] }
+  // Arming also mirrors focus (outer_menu_focus) when the push carries a
+  // menu_id — the confirm is the first game-input send, not sent[0].
+  const firstConfirm = sent.find(m => m.msg === 'input' || m.msg === 'key')
+  return { mainButtons: main.length, subButtons: sub.length, firstConfirm }
 }
 
 // Vite/Vitest evaluates this glob at build time; each matched JSON file

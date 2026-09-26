@@ -417,22 +417,14 @@ export function buildLobbyView(
 
   function renderGameButtons(html: string): void {
     if (!gamesEl) return
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    const links = doc.querySelectorAll<HTMLAnchorElement>('a[href^="#play-"]')
-    if (links.length === 0) return
 
     // Trust the server: every #play-<id> link the server advertises becomes a
     // button. We only decide *visibility* — main DCSS (latest stable + trunk)
     // is shown up front; everything else (older versions, sprint, seeded,
     // descent, ...) goes behind a "Show all versions" toggle so the lobby
     // stays compact on a phone.
-    type Game = { gameId: string; label: string }
-    const all: Game[] = []
-    links.forEach(link => {
-      const gameId = link.getAttribute('href')!.slice(6) // strip "#play-"
-      const label = link.textContent?.trim() || gameId
-      all.push({ gameId, label })
-    })
+    const all = parseGameLinks(html)
+    if (all.length === 0) return
 
     // The two headline games, already in display order (newest stable on top,
     // trunk second); everything else goes behind the "Show all versions" toggle.
@@ -482,23 +474,39 @@ export function buildLobbyView(
     }
   }
 
-  function makeGameBtn(g: { gameId: string; label: string }, cls: string): HTMLButtonElement {
+  function play(gameId: string): void {
+    // Recorded so an unexpected mid-game socket drop (or a full iOS page
+    // eviction) can auto-resume by replaying this exact play — the server
+    // never echoes the game_id back.
+    rememberGameStart(
+      { kind: 'play', gameId },
+      { wsUrl: conn.wsUrl, username, guest },
+    )
+    // Also stashed for the avatar shelf: forwarded to the game view at the
+    // transition so a played char's doll can be saved under its game_id.
+    playedGameId = gameId
+    conn.send({ msg: 'play', game_id: gameId })
+  }
+
+  // A game button says what the SERVER says about the slot and nothing more:
+  // the game's name, plus the server's save description verbatim under it on
+  // a headline button (GameLink.save). The device-local avatar store never
+  // feeds these buttons — a character-in-progress row off that store was
+  // built and withdrawn 2026-09-17: the store can't see a death, reroll or
+  // conversion on another client, and a doll in the offline slot-row idiom
+  // promises a save the way the offline row does (dev-material/lobby-design.md).
+  // Device memory stays on the login shelf, worded "seen here".
+  function makeGameBtn(g: GameLink, cls: string): HTMLButtonElement {
     const btn = document.createElement('button')
-    btn.className = cls
+    btn.className = cls + (g.save !== undefined ? ' has-save' : '')
     btn.textContent = g.label
-    btn.addEventListener('click', () => {
-      // Recorded so an unexpected mid-game socket drop (or a full iOS page
-      // eviction) can auto-resume by replaying this exact play — the server
-      // never echoes the game_id back.
-      rememberGameStart(
-        { kind: 'play', gameId: g.gameId },
-        { wsUrl: conn.wsUrl, username, guest },
-      )
-      // Also stashed for the avatar shelf: forwarded to the game view at the
-      // transition so a played char's doll can be saved under its game_id.
-      playedGameId = g.gameId
-      conn.send({ msg: 'play', game_id: g.gameId })
-    })
+    if (g.save !== undefined && cls.includes('lobby-btn-primary')) {
+      const line = document.createElement('span')
+      line.className = 'lobby-btn-save'
+      line.textContent = g.save
+      btn.appendChild(line)
+    }
+    btn.addEventListener('click', () => play(g.gameId))
     return btn
   }
 
@@ -607,6 +615,39 @@ export function buildLobbyView(
   if (exit) maybeShowExitDialog(view, exit)
 
   return view
+}
+
+// One playable game out of set_game_links. `save` is the server's own word on
+// the slot, present only on servers configured with `show_save_info`
+// (games.d/base.yaml — only CAO and CBR2 send it as of 2026-09-17).
+// templates/game_links.html then renders the game NAME as bare text and makes
+// the play link's text the bracketed save_info instead (ws_handler.py
+// update_save_info): "[<short_desc>]" (player.cc player_save_info::short_desc
+// — "Name, a level 12 Minotaur Berserker of Trog"), or "[playing]" for a save
+// in use by another session. "[slot full]" gets no link at all, so that game
+// is simply not offered. `save` holds the text without its brackets.
+// The server sends set_game_links twice on lobby entry — once at once with no
+// save info, again after its save probe (send_lobby_html) — so the first
+// render shows plain buttons and the second adds the descriptions. Rendered
+// as written: the sentence is what `play` resumes, and the client has
+// nothing to check it against (the probe emits no turn count, seed or date —
+// files.cc _append_save_info), so a rewording could only add a claim.
+export interface GameLink { gameId: string; label: string; save?: string }
+
+export function parseGameLinks(html: string): GameLink[] {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const out: GameLink[] = []
+  doc.querySelectorAll<HTMLAnchorElement>('a[href^="#play-"]').forEach(link => {
+    const gameId = link.getAttribute('href')!.slice(6) // strip "#play-"
+    const text = link.textContent?.trim() ?? ''
+    const save = /^\[(.*)\]$/.exec(text)?.[1]
+    if (save === undefined) { out.push({ gameId, label: text || gameId }); return }
+    // The name is the text node before the link's wrapper <span>, behind the
+    // template's " | " separator when the game shares an rc row.
+    const name = link.parentElement?.previousSibling?.textContent?.replace(/^[\s|]+/, '').trim()
+    out.push({ gameId, label: name || gameId, save })
+  })
+  return out
 }
 
 // Expected end-of-game reasons; anything outside this set is "abnormal"

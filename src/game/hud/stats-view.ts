@@ -385,19 +385,28 @@ export class StatsView {
       ?? (s.unarmed_attack !== undefined ? -1 : undefined)
     if (idx === undefined) return ''
 
-    const corroded = (s.status ?? []).some(st => st.text === 'corroded')
+    // Era latch: state accumulates for the view's lifetime, so once a trunk
+    // server has sent weapon_colour it stays present (see PlayerMsg). Trunk
+    // also stopped painting corroded weapons (b51359a412 — corrosion is a
+    // plain slaying malus now, player.js has no corroded_weapon class), so
+    // the red is ≤0.34-only.
+    const trunkColours = 'weapon_colour' in s
+    const trunkCol = offhand ? s.offhand_weapon_colour : s.weapon_colour
+    const corroded = !trunkColours && (s.status ?? []).some(st => st.text === 'corroded')
     const classes: string[] = []
 
     let name: string
     let col: number | undefined
     if (idx === -1) {
       name = s.unarmed_attack ?? ''
-      col = s.unarmed_attack_colour ?? 7
+      col = trunkColours ? trunkCol : (s.unarmed_attack_colour ?? 7)
     } else {
       const item = this.inv.get(idx)
       if (!item) return ''
       name = item.name ?? ''
-      col = item.col
+      // ≤0.34 fallback is the inventory menu_colour, which isn't refreshed on
+      // equip — the bug the trunk fields fix; don't "improve" it client-side.
+      col = trunkColours ? trunkCol : item.col
     }
     // Reference omits the .fgN class when col is -1 or null (defaults to lightgrey).
     if (col != null && col >= 0) classes.push(`fg${col & 0xf}`)

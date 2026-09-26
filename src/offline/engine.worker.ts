@@ -35,7 +35,8 @@ interface CrawlModule {
 }
 
 interface CrawlFS {
-  readFile(path: string): Uint8Array
+  // FS.readFile allocates a fresh exact-size array — never a heap view.
+  readFile(path: string): Uint8Array<ArrayBuffer>
   writeFile(path: string, data: Uint8Array | string): void
   mkdir(path: string): void
   syncfs(populate: boolean, cb: (err: unknown) => void): void
@@ -51,8 +52,18 @@ interface CrawlOverrides {
   pocketzotSeedCaches?: (fs: CrawlFS) => Promise<void>
   // Pre-fetched engine bytes: with these provided the Emscripten glue does
   // no artifact fetches of its own, which is what routes everything through
-  // the worker's cache+gunzip path below.
-  wasmBinary?: Uint8Array
+  // the worker's cache+gunzip path below. instantiateWasm (stock Emscripten
+  // hook, checked by the glue before any of its own binary handling) rather
+  // than Module.wasmBinary: the glue copies wasmBinary into a module-scope
+  // var it never clears — ~24 MB retained for the whole session — and its
+  // getBinarySync makes a second transient ~24 MB copy on top
+  // (`new Uint8Array(wasmBinary)` on a Uint8Array copies). The hook instead
+  // streams the bytes through the compiler (instantiateWasmFrom) — nothing
+  // outlives instantiation.
+  instantiateWasm?: (
+    info: WebAssembly.Imports,
+    receiveInstance: (inst: WebAssembly.Instance, mod: WebAssembly.Module) => void,
+  ) => object
   getPreloadedPackage?: (name: string, size: number) => ArrayBuffer
 }
 
@@ -72,6 +83,19 @@ function postExit(code: number): void {
   post({ type: 'exit', code })
 }
 
+// The one synthesis site for a starred exit_reason + failure exit — the
+// worker's half of the mini-server's handleStarred contract. Latched on
+// exitPosted like postExit, so a second failure can't emit a contradictory
+// exit_reason after the first.
+function postErrorExit(type: 'error' | 'crash', message: string): void {
+  if (exitPosted) return
+  post({
+    type: 'lines',
+    chunk: `*${JSON.stringify({ msg: 'exit_reason', type, message })}\n`,
+  })
+  postExit(1)
+}
+
 // A wasm trap (or any uncaught error) after startup kills the engine but not
 // the worker — without an exit the client would sit on a frozen map forever:
 // the boot watchdog is disarmed once game content flows, LocalConnection
@@ -83,12 +107,7 @@ function postExit(code: number): void {
 // stack overflow, OOM, unreachable).
 function crashed(text: string): void {
   post({ type: 'log', text })
-  if (exitPosted) return
-  post({
-    type: 'lines',
-    chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'crash', message: 'The offline engine crashed. Your last save checkpoint is intact — resume to pick up from it.' })}\n`,
-  })
-  postExit(1)
+  postErrorExit('crash', 'The offline engine crashed. Your last save checkpoint is intact — resume to pick up from it.')
 }
 self.addEventListener('error', (e: ErrorEvent) => {
   crashed(`worker error: ${e.message} @ ${e.filename}:${e.lineno}`)
@@ -99,6 +118,11 @@ self.addEventListener('unhandledrejection', (e) => {
 })
 
 let module_: CrawlModule | null = null
+// The engine's FS, captured off the pocketzotSeedCaches hook (pre.js calls it
+// with FS after IDBFS hydration, before main) — the only place the glue hands
+// it out. Serves readFile requests against the LIVE mount, where mid-game
+// writes ('#' dumps) sit until the next checkpoint's syncfs.
+let fs_: CrawlFS | null = null
 // Inputs arriving while the wasm module is still instantiating.
 const pending: WorkerInMsg[] = []
 
@@ -144,6 +168,21 @@ function feed(m: WorkerInMsg): void {
   }
   if (!module_) {
     pending.push(m)
+    return
+  }
+  if (m.type === 'readFile') {
+    // Morgue-dir only: this seam exists for dump downloads, nothing wider.
+    // Literal mirrors game-records.ts MORGUE_DIR — not imported: pulling a
+    // main-bundle module in here just for the string would drag its IDB
+    // helpers into the worker bundle.
+    // No buffer transfer — FS.readFile's result could alias engine memory,
+    // and transferring would detach it; the structured-clone copy is cheap
+    // at dump sizes.
+    let data: Uint8Array<ArrayBuffer> | null = null
+    if (m.path.startsWith('/crawl/morgue/')) {
+      try { data = fs_?.readFile(m.path) ?? null } catch { /* missing */ }
+    }
+    post({ type: 'file', id: m.id, data })
     return
   }
   if (m.type === 'control') module_.pocketzot.pushControl(m.json)
@@ -198,8 +237,9 @@ function nudge(): void {
 // version handling.
 
 import {
-  bootArtifactsCached, cachedEngineBuild, fetchArtifact, fetchVersion, gunzipIfNeeded,
-  markEngineSetComplete, newStats, openOfflineStores,
+  bootArtifactsCached, cachedEngineBuild, ENGINE_DATA, ENGINE_GLUE, ENGINE_WASM,
+  fetchArtifact, fetchArtifactResponse, fetchVersion, gunzipIfNeeded, gunzipStreamIfNeeded,
+  markEngineSetComplete, newStats, openOfflineStores, PREWARM_BIN, PREWARM_MANIFEST,
 } from './artifact-store'
 
 const workerLog = (text: string): void => post({ type: 'log', text })
@@ -252,7 +292,7 @@ const PREWARM_STAMP_PATH = '/crawl/.pocketzot-prewarm'
 async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   let manifest: { stamp: string | number, files: { path: string, offset: number, size: number }[] }
   try {
-    const raw = await fetchArtifact(cache, stats, appPath('/offline/prewarm/manifest.json'))
+    const raw = await fetchArtifact(cache, stats, ...PREWARM_MANIFEST)
     manifest = JSON.parse(new TextDecoder().decode(raw)) as typeof manifest
   } catch {
     return // no prewarm shipped — the engine builds its caches itself
@@ -267,8 +307,7 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   post({ type: 'progress', text: 'Preparing first-run data...' })
   // One pack fetch for all ~575 cache files; nothing is written until the
   // whole pack is here, so a failed fetch can't leave a half-seeded set.
-  const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(
-    cache, stats, appPath('/offline/prewarm/prewarm.bin.gz'), appPath('/offline/prewarm/prewarm.bin'))))
+  const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(cache, stats, ...PREWARM_BIN)))
 
   for (const f of manifest.files) {
     const path = `/crawl/${f.path}`
@@ -284,6 +323,41 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   post({ type: 'log', text: `seeded ${manifest.files.length} prewarmed cache files (stamp ${stamp})` })
 }
 
+// Streaming compile: gunzip pipes straight into the compiler, so the ~24 MB
+// binary never exists as a buffer and compilation overlaps decompression.
+// The synthetic Response is required — instantiateStreaming demands an
+// application/wasm content-type, and the stored response's is gzip's. On a
+// streaming failure (an engine that refuses a synthetic Response; a corrupt
+// artifact costs one wasted attempt), fall back to the buffered path via a
+// re-read of the artifact — a cache hit wherever a store exists, the bytes
+// were just stored; a no-store or quota-squeezed device refetches, safely:
+// reaching the catch off the network path means we are online. An engine
+// without instantiateStreaming skips straight to consuming the Response it
+// already has.
+async function instantiateWasmFrom(
+  res: Response,
+  cache: Cache | null,
+  info: WebAssembly.Imports,
+): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
+  if (typeof WebAssembly.instantiateStreaming === 'function') {
+    let stream: ReadableStream<Uint8Array> | null = null
+    try {
+      stream = await gunzipStreamIfNeeded(res)
+      return await WebAssembly.instantiateStreaming(
+        new Response(stream, { headers: { 'content-type': 'application/wasm' } }), info)
+    } catch (e) {
+      // Release the abandoned body before the fallback allocates its buffers
+      // (cancel throws if instantiateStreaming already locked the stream —
+      // then it owns the teardown).
+      void stream?.cancel().catch(() => { /* locked or errored */ })
+      workerLog(`streaming wasm compile failed (${String(e)}) — retrying buffered`)
+      const buf = await gunzipIfNeeded(await fetchArtifact(cache, newStats(), ...ENGINE_WASM))
+      return WebAssembly.instantiate(buf, info)
+    }
+  }
+  return WebAssembly.instantiate(await gunzipIfNeeded(await res.arrayBuffer()), info)
+}
+
 async function start(name: string): Promise<void> {
   // Boot-phase progress: the mini-server turns these into message-log lines,
   // covering the pre-first-output window (download, wasm instantiation, cache
@@ -295,24 +369,27 @@ async function start(name: string): Promise<void> {
   // same exit path as a missing artifact.
   let cache: Cache | null = null
   let factory: CrawlFactory
-  let wasmBinary: Uint8Array
+  // Nulled once handed to instantiation (instantiateWasm below) so nothing
+  // outlives the compile — the wasm streams through it, never buffered.
+  let wasmRes: Response | null = null
   let dataBuffer: ArrayBuffer
   let glueSetsCrawlDir = false
   try {
     cache = await openArtifactCache()
-    // All three artifacts go through the cache+gunzip path; wasm and data
-    // are handed to the glue as bytes (wasmBinary / getPreloadedPackage), so
-    // the glue performs no fetches of its own. The glue itself is fetched +
-    // blob-URL imported rather than imported by path: the Vite dev server
-    // refuses to module-serve files under public/ ("can only be referenced
-    // via HTML tags"), and a blob module bypasses its middleware entirely
-    // while behaving identically in production.
-    const [glueBuf, wasmBuf, dataBuf] = await Promise.all([
-      fetchArtifact(cache, stats, appPath('/offline/crawl.js')),
-      fetchArtifact(cache, stats, appPath('/offline/crawl.wasm.gz'), appPath('/offline/crawl.wasm')).then(gunzipIfNeeded),
-      fetchArtifact(cache, stats, appPath('/offline/crawl.data.gz'), appPath('/offline/crawl.data')).then(gunzipIfNeeded),
+    // All three artifacts go through the cache path; data is handed to the
+    // glue as bytes (getPreloadedPackage) and the wasm as an unconsumed
+    // Response streamed into instantiation, so the glue performs no fetches
+    // of its own. The glue itself is fetched + blob-URL imported rather than
+    // imported by path: the Vite dev server refuses to module-serve files
+    // under public/ ("can only be referenced via HTML tags"), and a blob
+    // module bypasses its middleware entirely while behaving identically in
+    // production.
+    const [glueBuf, wasmResponse, dataBuf] = await Promise.all([
+      fetchArtifact(cache, stats, ...ENGINE_GLUE),
+      fetchArtifactResponse(cache, stats, ...ENGINE_WASM),
+      fetchArtifact(cache, stats, ...ENGINE_DATA).then(gunzipIfNeeded),
     ])
-    wasmBinary = new Uint8Array(wasmBuf)
+    wasmRes = wasmResponse
     dataBuffer = dataBuf
     post({ type: 'log', text: `artifacts loaded: ${stats.cacheHits} from cache, ${stats.netFetches} from network` })
     // Only worth a user-facing line when bytes actually crossed the network
@@ -344,11 +421,7 @@ async function start(name: string): Promise<void> {
     // No artifact deployed (expected on a checkout without an engine
     // install). Surface through the normal exit path: mini-server turns the
     // starred exit_reason + nonzero exit into game_ended{reason:'error'}.
-    post({
-      type: 'lines',
-      chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine not installed or unreachable (${e instanceof Error ? e.message : String(e)}).` })}\n`,
-    })
-    postExit(1)
+    postErrorExit('error', `Offline engine not installed or unreachable (${e instanceof Error ? e.message : String(e)}).`)
     return
   }
 
@@ -411,8 +484,28 @@ async function start(name: string): Promise<void> {
       onExit: (code) => { flushOut(); postExit(code) },
       print: (text) => post({ type: 'log', text }),
       printErr: (text) => post({ type: 'log', text }),
-      pocketzotSeedCaches: (fs) => seedCaches(fs, cache),
-      wasmBinary,
+      pocketzotSeedCaches: (fs) => { fs_ = fs; return seedCaches(fs, cache) },
+      instantiateWasm: (info, receiveInstance) => {
+        const res = wasmRes
+        wasmRes = null
+        // A rejection here never settles the factory promise (the glue only
+        // listens for receiveInstance), so the catch around factory() can't
+        // report it — surface the same error exit from here. .catch, not a
+        // two-arg .then: a throw from receiveInstance itself (the glue's
+        // export wiring, e.g. a skewed cached glue/wasm pair) must land here
+        // as a boot error, not in the unhandledrejection crash net whose
+        // "resume to pick up" advice is wrong for a boot that never started.
+        void instantiateWasmFrom(res!, cache, info)
+          .then((result) => receiveInstance(result.instance, result.module))
+          .catch((e: unknown) => {
+            postErrorExit('error', `Offline engine failed to start: ${String(e)}`)
+          })
+        return {}
+      },
+      // dataBuffer staying referenced by this closure for the session is
+      // free, not a leak: the glue mounts the package as canOwn subarrays of
+      // this same ArrayBuffer (processPackageData), so the buffer IS the
+      // MEMFS backing for the data files — dropping it would free nothing.
       getPreloadedPackage: (_name, size) => {
         if (size !== dataBuffer.byteLength)
           post({ type: 'log', text: `crawl.data size mismatch: glue expects ${size}, have ${dataBuffer.byteLength}` })
@@ -420,11 +513,7 @@ async function start(name: string): Promise<void> {
       },
     })
   } catch (e) {
-    post({
-      type: 'lines',
-      chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine failed to start: ${String(e)}` })}\n`,
-    })
-    postExit(1)
+    postErrorExit('error', `Offline engine failed to start: ${String(e)}`)
     return
   }
   sampleHeap()
@@ -435,6 +524,12 @@ async function start(name: string): Promise<void> {
   // quota failures on cache.put, so fetch-success alone proves nothing.
   void markEngineSetComplete(cache).then((complete) => {
     if (!complete) workerLog('artifact set incomplete after boot (storage quota?) — not marked offline-ready')
+  }).catch((e: unknown) => {
+    // Must not escape: an unhandled rejection here reaches the crash net
+    // AFTER a successful boot — a phantom crash exit that terminates a live
+    // engine over a housekeeping probe (cache ops can reject under storage
+    // pressure, the very case this verification exists for).
+    workerLog(`readiness marker check failed: ${String(e)}`)
   })
   for (const m of pending.splice(0)) feed(m)
 }

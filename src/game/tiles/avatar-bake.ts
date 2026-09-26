@@ -17,16 +17,20 @@
 // appearance change or a layout shift just misses and re-bakes when a
 // same-origin atlas next resolves.
 
-import type { TileLoader } from './tile-loader'
+import { STORE_CAP } from '../../avatars'
+import type { TileinfoModule, TileLoader } from './tile-loader'
 import { CELL, spritePlacement, type TileRef } from './tile-view'
 
 const BAKE_KEY = 'pocketzot:avatar-bakes'
 // NUL can't appear in a fingerprint (base36) or the numeric spec hash.
 const SEP = '\x00'
-// Sized for the widest consumer: the offline score list shows up to ~100
-// games, plus the crypt's 20-entry history — at ~1 KB per bake this is still
-// only ~128 KB of localStorage. Insertion-order LRU, oldest-stored evicted.
-const BAKE_CAP = 128
+// Sized for the widest consumers: the offline score list (uncapped; ~100
+// games is a generous bound for one device, budgeted at 128), the crypt's
+// history (STORE_CAP), and the fixed sprites rune-sprites.ts bakes under
+// `runes#<build>:<name>` (~20 runes/Orb, plus the offline lobby's icons) —
+// at ~1 KB per bake still under 200 KB of localStorage. Insertion-order
+// LRU, oldest-stored evicted.
+export const BAKE_CAP = 128 + STORE_CAP + 32
 
 // Parsed-map memo keyed on the raw stored string (same idiom as
 // offline-state.ts): a paint looks up one bake per doll, and re-parsing a
@@ -60,7 +64,7 @@ function persist(cache: Record<string, string>): void {
   } catch {}
 }
 
-function bakeKey(fp: string, spec: TileRef[]): string {
+export function bakeKey(fp: string, spec: TileRef[]): string {
   // djb2 over the spec JSON — same-shaped specs always stringify identically
   // (TileRef literals from dollTileSpec, stable key order).
   const s = JSON.stringify(spec)
@@ -116,6 +120,37 @@ export async function ensureDollBaked(loader: TileLoader, fp: string, spec: Tile
     const url = await bakeDoll(loader, spec)
     if (url) storeBakedDoll(fp, spec, url)
   } catch { /* no bake this time — live rendering is unaffected */ }
+}
+
+// Re-address a spec from one era's player table to another's by tile NAME.
+// Ids are per-era (tile_list_processor.cc numbers each `exports.<NAME> =
+// val++` in dc-player.txt order, so any added or dropped tile shifts every id
+// after it), but the generated module exports a name for every id, and a
+// name is what stays put across eras: 0.34.1 → trunk moves ~170 lines of
+// dc-player.txt yet keeps every surviving name. Aliases (`val = exports.X =
+// exports.BASE; val++`) share the base's id; the reverse map keeps the FIRST
+// name per id, i.e. the base every era exports. Null when any layer has no
+// name or the name is missing from `dst` (a dropped tile, e.g. ARMATAUR
+// after trunk's Gale Centaur rename) — one unmappable layer is a wrong doll,
+// not a doll with a hole.
+const nameById = new WeakMap<TileinfoModule, Map<number, string>>()
+export function remapSpecByName(src: TileinfoModule, dst: TileinfoModule, spec: TileRef[]): TileRef[] | null {
+  let rev = nameById.get(src)
+  if (!rev) {
+    rev = new Map()
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof v === 'number' && !rev.has(v)) rev.set(v, k)
+    }
+    nameById.set(src, rev)
+  }
+  const out: TileRef[] = []
+  for (const r of spec) {
+    const name = rev.get(r.t)
+    const t = name != null ? dst[name] : undefined
+    if (typeof t !== 'number') return null
+    out.push({ ...r, t })
+  }
+  return out
 }
 
 // Composite a doll spec at native atlas resolution (32×32; display scaling is

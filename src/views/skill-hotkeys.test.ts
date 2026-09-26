@@ -43,8 +43,29 @@ describe('extractSkillHotkeys', () => {
     expect(extractSkillHotkeys([line])).toEqual(['b', 'p'])
   })
 
+  // In `?` description mode a mastered skill is selectable but its training
+  // sign renders blank (skill-menu.cc get_prefix), so the row reads
+  // "a   Fighting" with no dash.
+  it('captures a mastered skill hotkey in description mode (blank sign)', () => {
+    const line = '  a   Fighting         27         +2    p + Conjurations     4.3  0      +1'
+    expect(extractSkillHotkeys([line])).toEqual(['a', 'p'])
+  })
+
+  it('still ignores a mastered skill in training mode (no letter at all)', () => {
+    const line = '      Fighting         27         +2    p + Conjurations     4.3  0      +1'
+    expect(extractSkillHotkeys([line])).toEqual(['p'])
+  })
+
   it('ignores the column-header row', () => {
     const line = '      Skill           Level Train  Apt       Skill           Level Train  Apt'
+    expect(extractSkillHotkeys([line])).toEqual([])
+  })
+
+  // Regression: "Cost" is padded to the 6-wide progress slot, so the header
+  // carries "t   A" — a blank-sign match unless the hotkey is boundary-anchored.
+  // This was the lone phantom `t` button in a gnoll's menu (opens in cost view).
+  it('ignores the cost-view column-header row', () => {
+    const line = '      Skill           Level Cost   Apt       Skill           Level Cost   Apt'
     expect(extractSkillHotkeys([line])).toEqual([])
   })
 

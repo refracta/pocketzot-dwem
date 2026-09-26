@@ -1,0 +1,1512 @@
+{
+ "description": "Trunk (0.35-a0) sprint newgame flow: map choice, species, background (mid-grid Zealot/Warrior-mage labels), weapon (doll + apt suffixes), with server button_focus ui-states incl. from_client echoes",
+ "captured_from": "crawl.dcss.io (dcss-git trunk 0.35-a0-855) on 2026-08-19",
+ "messages": [
+  {
+   "title": "<brown>Welcome, crawler.\n<cyan>\nYou have a choice of maps:",
+   "main-items": {
+    "menu_id": "map-main",
+    "width": 1,
+    "height": 9,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "",
+      "hotkey": 97,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 7205,
+        "tex": 3
+       }
+      ],
+      "labels": [
+       "<lightgrey> a - Sprint I: \"Red Sonja\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "",
+      "hotkey": 98,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 7222,
+        "tex": 3
+       }
+      ],
+      "labels": [
+       "<lightgrey> b - Sprint II: \"The Violet Keep of Menkaure\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "",
+      "hotkey": 99,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 4620,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<lightgrey> c - Sprint III: \"The Ten Rune Challenge\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "",
+      "hotkey": 100,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 3286,
+        "tex": 2
+       }
+      ],
+      "labels": [
+       "<lightgrey> d - Sprint IV: \"Fedhas' Mad Dash\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 4,
+      "description": "",
+      "hotkey": 101,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 3223,
+        "tex": 2
+       }
+      ],
+      "labels": [
+       "<lightgrey> e - Sprint V: \"Ziggurat Sprint\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 5,
+      "description": "",
+      "hotkey": 102,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 4726,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<lightgrey> f - Sprint VI: \"Thunderdome\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 6,
+      "description": "",
+      "hotkey": 103,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 1716,
+        "tex": 1
+       }
+      ],
+      "labels": [
+       "<lightgrey> g - Sprint VII: \"The Pits\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 7,
+      "description": "",
+      "hotkey": 104,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 3657,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<lightgrey> h - Sprint VIII: \"Arena of Blood\""
+      ]
+     },
+     {
+      "x": 0,
+      "y": 8,
+      "description": "",
+      "hotkey": 105,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 2282,
+        "tex": 1
+       }
+      ],
+      "labels": [
+       "<lightgrey> i - Sprint IX: \"|||||||||||||||||||||||||||||\""
+      ]
+     }
+    ],
+    "labels": []
+   },
+   "sub-items": {
+    "menu_id": "map-sub",
+    "width": 2,
+    "height": 2,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "Lists the numerical skill train aptitudes for all races",
+      "hotkey": 37,
+      "highlight_colour": 1,
+      "label": "<brown>% - List aptitudes"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "description": "Picks a random sprint map",
+      "hotkey": 42,
+      "highlight_colour": 1,
+      "label": "<brown>* - Random map"
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Opens the help screen",
+      "hotkey": 63,
+      "highlight_colour": 1,
+      "label": "<brown>? - Help"
+     }
+    ],
+    "labels": []
+   },
+   "msg": "ui-push",
+   "type": "newgame-choice",
+   "ui-centred": true,
+   "generation_id": 1
+  },
+  {
+   "from_client": false,
+   "menu_id": "map-main",
+   "button_focus": 97,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "from_client": true,
+   "menu_id": "map-main",
+   "button_focus": 97,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "msg": "ui-pop"
+  },
+  {
+   "title": "<brown>Welcome, crawler.<yellow> Please select your species.",
+   "main-items": {
+    "menu_id": "species-main",
+    "width": 3,
+    "height": 20,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Gnolls are canine-like humanoids. They are unable to specialise in any single skill, but instead gradually become proficient in all skills at once.",
+      "hotkey": 97,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10421,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>a - Gnoll"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "description": "Humans are natural explorers. Discovering new places refreshes and invigorates them. They are otherwise completely average.",
+      "hotkey": 106,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10422,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>j - Human"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 1,
+      "description": "Powerful equine hybrids who trace their ancestry to the four winds themselves, Gale Centaurs are at their strongest while galloping swiftly towards foes.",
+      "hotkey": 115,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10413,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>s - Gale Centaur"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "Minotaurs are large muscular humans with bovine heads. They excel at all forms of close and ranged combat.",
+      "hotkey": 98,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10426,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>b - Minotaur"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 2,
+      "description": "Revenants are skeletal undead who are strong at melee combat and can empower damage-dealing spells by consuming memories they harvest from their victims.",
+      "hotkey": 107,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10431,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>k - Revenant"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 2,
+      "description": "Frail symbionts, Vine Stalkers cannot regain health from potions. Their magical reserves absorb damage, and they pack a magic-restoring bite.",
+      "hotkey": 116,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10435,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>t - Vine Stalker"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "Half fish, half human, Merfolk are citizens of both water and land. They are strong combatants, and adept at using magic to assist in battle.",
+      "hotkey": 99,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10425,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>c - Merfolk"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 3,
+      "description": "Kobolds are attuned to the shadows and can only see or be seen at a close range. They are small and a little fragile, and are talented in most skills.",
+      "hotkey": 108,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10423,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>l - Kobold"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 3,
+      "description": "Formless ghosts who delight in hexing their enemies. They can equip many different hats, gloves, boots, or cloaks at once, but cannot wear body armour.",
+      "hotkey": 117,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10412,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>u - Poltergeist"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 4,
+      "description": "Made of living stone, Gargoyles have a preternatural affinity for earth magic. They have low health, but their stone bodies are incredibly tough.",
+      "hotkey": 100,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10420,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>d - Gargoyle"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 4,
+      "description": "Demonspawn are half human, half demon. They acquire strong demonic mutations as they grow.",
+      "hotkey": 109,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10416,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>m - Demonspawn"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 4,
+      "description": "Demigods refuse to worship any god, but make up for this with divine attributes and high reserves of health and magic.",
+      "hotkey": 118,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10415,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>v - Demigod"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 5,
+      "description": "Mountain Dwarves are strong melee fighters and capable heavy-armoured casters. They can use scrolls to enchant even some artefacts.",
+      "hotkey": 101,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10424,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>e - Mountain Dwarf"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 5,
+      "description": "Djinn are ever-burning spirits. They learn spells automatically as they grow, and cast by drawing down their own fires.",
+      "hotkey": 110,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10436,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>n - Djinni"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 5,
+      "description": "Formicids are humanoid ants adept at digging. Their limbs are exceptionally strong and they live in a state of permanent stasis.",
+      "hotkey": 119,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10418,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>w - Formicid"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 6,
+      "description": "Draconians are versatile hybrids. They mature when reaching level 7 and develop a colour.",
+      "hotkey": 102,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10417,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>f - Draconian"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 6,
+      "description": "Large, robust, and extremely fond of drinking, Oni make capable brawlers and spellcasters and gain extra benefits from healing potions.",
+      "hotkey": 111,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10430,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>o - Oni"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 6,
+      "description": "Nagas are hybrids: human from the waist up, with a snake-like tail instead of legs. They move very slowly but are naturally resilient.",
+      "hotkey": 120,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10428,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>x - Naga"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 7,
+      "description": "Trolls are monstrous creatures with powerful claws. They regenerate health rapidly.",
+      "hotkey": 103,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10434,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>g - Troll"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 7,
+      "description": "Very small, very frail and very fast, Spriggans are highly competent stabbers and spellcasters.",
+      "hotkey": 112,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10432,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>p - Spriggan"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 7,
+      "description": "Octopodes are a species of amphibious cephalopods. They can wear eight rings, but almost no armour fits them.",
+      "hotkey": 121,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10429,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>y - Octopode"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 8,
+      "description": "Deep Elves have a strong affinity for all kinds of magic, but are very fragile. They regenerate magical power rapidly.",
+      "hotkey": 104,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10414,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>h - Deep Elf"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 8,
+      "description": "Tengu are bird-people who love to fight, both with weapons and spells. They are fragile but agile, and eventually learn to fly.",
+      "hotkey": 113,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10433,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>q - Tengu"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 8,
+      "description": "Felids are many-lived sentient cats. They cannot use armour or weapons.",
+      "hotkey": 122,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10411,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>z - Felid"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 9,
+      "description": "Barachim are slow-moving, amphibious humanoids who can hop long distances. Their extended range of vision also allows them to be seen from further away.",
+      "hotkey": 105,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10419,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>i - Barachi"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 9,
+      "description": "Coglins ride enchanted exoskeletons able to wield weapons in both hands, wrapping slow-revving metal around their puny goblinoid frames.",
+      "hotkey": 114,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10438,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>r - Coglin"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 9,
+      "description": "Compelled to walk by an ancient curse, Mummies have innate faith and are adept at Necromancy, but learn other skills very slowly. They cannot drink potions.",
+      "hotkey": 65,
+      "highlight_colour": 1,
+      "tile": [
+       {
+        "t": 10427,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<lightgrey>A - Mummy"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "x": 0,
+      "y": 0,
+      "label": "<lightblue>Simple"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "label": "<lightblue>Intermediate"
+     },
+     {
+      "x": 2,
+      "y": 0,
+      "label": "<lightblue>Advanced"
+     }
+    ]
+   },
+   "sub-items": {
+    "menu_id": "species-sub",
+    "width": 2,
+    "height": 4,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "Picks a random recommended background based on your current species choice.",
+      "hotkey": 43,
+      "highlight_colour": 1,
+      "label": "<brown>+ - Recommended species"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "description": "Picks a random species.",
+      "hotkey": 42,
+      "highlight_colour": 1,
+      "label": "<brown>    * - Random species"
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Shuffles through random recommended character combinations until you accept one.",
+      "hotkey": 35,
+      "highlight_colour": 1,
+      "label": "<brown># - Recommended character"
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "description": "Shuffles through random character combinations until you accept one.",
+      "hotkey": 33,
+      "highlight_colour": 1,
+      "label": "<brown>    ! - Random character"
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "Lists the numerical skill train aptitudes for all races.",
+      "hotkey": 37,
+      "highlight_colour": 1,
+      "label": "<brown>% - List aptitudes"
+     },
+     {
+      "x": 1,
+      "y": 2,
+      "description": "Lets you pick your background first.",
+      "hotkey": 32,
+      "highlight_colour": 1,
+      "label": "<brown>Space - Pick background first"
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "Opens the help screen.",
+      "hotkey": 63,
+      "highlight_colour": 1,
+      "label": "<brown>? - Help"
+     }
+    ],
+    "labels": []
+   },
+   "msg": "ui-push",
+   "type": "newgame-choice",
+   "ui-centred": true,
+   "generation_id": 2
+  },
+  {
+   "from_client": false,
+   "menu_id": "species-main",
+   "button_focus": 97,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "from_client": true,
+   "menu_id": "species-main",
+   "button_focus": 98,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "msg": "ui-pop"
+  },
+  {
+   "title": "<brown>Welcome, crawler the Minotaur.<yellow> Please select your background.",
+   "main-items": {
+    "menu_id": "background-main",
+    "width": 3,
+    "height": 20,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Fighters are equipped with armour and shield, as well as a weapon of their choice and potions of might.",
+      "hotkey": 97,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 10359,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<white>a - Fighter"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "description": "Artificers start with a few magic wands and a club. They'll need to find better weapons and armour before their wands run out.",
+      "hotkey": 105,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10390,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>i - Artificer"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 1,
+      "description": "Hedge Wizards are magic generalists, good at using a wide variety of tools to frustrate their foes and gain an edge in the battlefield.",
+      "hotkey": 112,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10401,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>p - Hedge Wizard"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "Gladiators are ready for the arena with light armour, a weapon of their choice, and a few throwing weapons and nets.",
+      "hotkey": 98,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 10360,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<white>b - Gladiator"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 2,
+      "description": "Shapeshifters use talismans to shift their form, making them powerful melee fighters (especially when unarmed) at the cost of armour.",
+      "hotkey": 106,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10396,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>j - Shapeshifter"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 2,
+      "description": "Conjurers begin with the Magic Dart spell, and can learn other non-elemental spells to reliably blast their foes.",
+      "hotkey": 113,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10402,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>q - Conjurer"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "Monks start with a simple weapon of their choice, an orb of light, and a potion of divine ambrosia, and gain additional piety with the first god they worship.",
+      "hotkey": 99,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 10361,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<white>c - Monk"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 3,
+      "description": "Wanderers start with random equipment and skills.",
+      "hotkey": 107,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10391,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>k - Wanderer"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 3,
+      "description": "Summoners are able to cast Summon Small Mammal from the start, and begin with spells to summon stronger and more exotic allies in their library.",
+      "hotkey": 114,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10403,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>r - Summoner"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 4,
+      "description": "Hunters carry a shortbow, light armour and a scroll of butterflies.",
+      "hotkey": 100,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 10362,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<white>d - Hunter"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 4,
+      "description": "Necromancers start out with the Soul Splinter spell. Eventually, they can turn the dead into allies and use the life force of the living to restore themselves.",
+      "hotkey": 115,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10404,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>s - Necromancer"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 5,
+      "description": "Brigands carry poisoned darts and a small number of nasty curare darts.",
+      "hotkey": 101,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10389,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>e - Brigand"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 5,
+      "description": "Forgewrights are mages who specialise in the creation of turrets and mechanical companions to fight alongside.",
+      "hotkey": 116,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10410,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>t - Forgewright"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 6,
+      "description": "Warpers start with a weapon of their choice, a scroll of blinking, darts of disjunction, and some Translocation spells in their library.",
+      "hotkey": 108,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10399,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>l - Warper"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 6,
+      "description": "Fire Elementalists have learned the Foxfire spell. Their other starting spells are likewise focused on fiery and explosive destruction.",
+      "hotkey": 117,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10405,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>u - Fire Elementalist"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 7,
+      "description": "Berserkers believe in Trog, the magic-hating god of frenzy. Not much can stop a raging berserker early on, apart from hubris.",
+      "hotkey": 102,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 10367,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<white>f - Berserker"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 7,
+      "description": "Hexslingers carry a sling, and use hex magic to make their foes more vulnerable to attacks from afar.",
+      "hotkey": 109,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10397,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>m - Hexslinger"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 7,
+      "description": "Ice Elementalists begin with the Freeze spell. Their later spells provide strong offence and defence, but may restrict their movement.",
+      "hotkey": 118,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10406,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>v - Ice Elementalist"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 8,
+      "description": "Cinder Acolytes worship Ignis, drawing upon the flame of a dying god until there is nothing left. They have both melee and fire magic capabilities.",
+      "hotkey": 103,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10395,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>g - Cinder Acolyte"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 8,
+      "description": "Enchanters know a variety of Hexes that can incapacitate their foes, and are equipped with an enchanted dagger and potions of invisibility.",
+      "hotkey": 110,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10400,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>n - Enchanter"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 8,
+      "description": "Air Elementalists have learned the Shock spell. Their electrical magic can harm groups of foes, while their air spells assist in fighting or fleeing enemies.",
+      "hotkey": 119,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10407,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>w - Air Elementalist"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 9,
+      "description": "Chaos Knights are playthings of the unpredictable Xom, and are subject to the god's constantly changing moods.",
+      "hotkey": 104,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10394,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>h - Chaos Knight"
+      ]
+     },
+     {
+      "x": 1,
+      "y": 9,
+      "description": "Reavers start with a weapon of their choice and deadly magic to supplement it when in need. They start with the Kiss of Death spell.",
+      "hotkey": 111,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10398,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>o - Reaver"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 9,
+      "description": "Earth Elementalists know the Sandblast spell, and can later learn more earthen spells suitable for subtle stabbing or brute-force blasting.",
+      "hotkey": 120,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10408,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>x - Earth Elementalist"
+      ]
+     },
+     {
+      "x": 2,
+      "y": 10,
+      "description": "Alchemists start with the Poisonous Vapours spell, and their magic is very effective against foes susceptible to poison.",
+      "hotkey": 121,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 10409,
+        "tex": 5
+       }
+      ],
+      "labels": [
+       "<darkgrey>y - Alchemist"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "x": 0,
+      "y": 0,
+      "label": "<lightblue>Warrior"
+     },
+     {
+      "x": 0,
+      "y": 6,
+      "label": "<lightblue>Zealot"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "label": "<lightblue>Adventurer"
+     },
+     {
+      "x": 1,
+      "y": 5,
+      "label": "<lightblue>Warrior-mage"
+     },
+     {
+      "x": 2,
+      "y": 0,
+      "label": "<lightblue>Mage"
+     }
+    ]
+   },
+   "sub-items": {
+    "menu_id": "background-sub",
+    "width": 2,
+    "height": 4,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "Picks a random recommended species based on your current background choice.",
+      "hotkey": 43,
+      "highlight_colour": 1,
+      "label": "<brown>+ - Recommended background"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "description": "Picks a random background.",
+      "hotkey": 42,
+      "highlight_colour": 1,
+      "label": "<brown>    * - Random background"
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Shuffles through random recommended character combinations until you accept one.",
+      "hotkey": 35,
+      "highlight_colour": 1,
+      "label": "<brown># - Recommended character"
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "description": "Shuffles through random character combinations until you accept one.",
+      "hotkey": 33,
+      "highlight_colour": 1,
+      "label": "<brown>    ! - Random character"
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "Lists the numerical skill train aptitudes for all races.",
+      "hotkey": 37,
+      "highlight_colour": 1,
+      "label": "<brown>% - List aptitudes"
+     },
+     {
+      "x": 1,
+      "y": 2,
+      "description": "Lets you change your species choice.",
+      "hotkey": 32,
+      "highlight_colour": 1,
+      "label": "<brown>Space - Change species"
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "Opens the help screen.",
+      "hotkey": 63,
+      "highlight_colour": 1,
+      "label": "<brown>? - Help"
+     }
+    ],
+    "labels": []
+   },
+   "msg": "ui-push",
+   "type": "newgame-choice",
+   "ui-centred": true,
+   "generation_id": 3
+  },
+  {
+   "from_client": false,
+   "menu_id": "background-main",
+   "button_focus": 97,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "from_client": true,
+   "menu_id": "background-main",
+   "button_focus": 102,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  },
+  {
+   "msg": "ui-pop"
+  },
+  {
+   "title": "<brown>Welcome, crawler the Minotaur Berserker.",
+   "prompt": "<cyan>You have a choice of weapons.",
+   "main-items": {
+    "menu_id": "weapon-main",
+    "width": 1,
+    "height": 6,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "",
+      "hotkey": 97,
+      "highlight_colour": 7,
+      "tile": [
+       {
+        "t": 3723,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<lightgrey> a - short sword",
+       "<lightgrey>(+1 apt)"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "",
+      "hotkey": 98,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 3686,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<white> b - mace       ",
+       "<white>(+2 apt)"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "",
+      "hotkey": 99,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 3757,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<white> c - hand axe   ",
+       "<white>(+2 apt)"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 3,
+      "description": "",
+      "hotkey": 100,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 3772,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<white> d - spear      ",
+       "<white>(+2 apt)"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 4,
+      "description": "",
+      "hotkey": 101,
+      "highlight_colour": 2,
+      "tile": [
+       {
+        "t": 3735,
+        "tex": 4
+       }
+      ],
+      "labels": [
+       "<white> e - falchion   ",
+       "<white>(+2 apt)"
+      ]
+     },
+     {
+      "x": 0,
+      "y": 5,
+      "description": "",
+      "hotkey": 102,
+      "highlight_colour": 7,
+      "tile": [],
+      "labels": [
+       "<lightgrey> f - unarmed    ",
+       "<lightgrey>(+1 apt)"
+      ]
+     }
+    ],
+    "labels": []
+   },
+   "sub-items": {
+    "menu_id": "weapon-sub",
+    "width": 2,
+    "height": 3,
+    "buttons": [
+     {
+      "x": 0,
+      "y": 0,
+      "description": "Picks a random recommended weapon",
+      "hotkey": 43,
+      "highlight_colour": 1,
+      "label": "<brown>+ - Recommended random choice"
+     },
+     {
+      "x": 1,
+      "y": 0,
+      "description": "Picks a random weapon",
+      "hotkey": 42,
+      "highlight_colour": 1,
+      "label": "<brown>* - Random weapon"
+     },
+     {
+      "x": 0,
+      "y": 1,
+      "description": "Lists the numerical skill train aptitudes for all races",
+      "hotkey": 37,
+      "highlight_colour": 1,
+      "label": "<brown>% - List aptitudes"
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "description": "Lets you return back to Character choice menu",
+      "hotkey": 8,
+      "highlight_colour": 1,
+      "label": "<brown>Bksp - Return to character menu"
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "description": "Opens the help screen",
+      "hotkey": 63,
+      "highlight_colour": 1,
+      "label": "<brown>? - Help"
+     }
+    ],
+    "labels": []
+   },
+   "doll": [
+    [
+     7968,
+     32
+    ],
+    [
+     7930,
+     32
+    ],
+    [
+     8035,
+     32
+    ],
+    [
+     8100,
+     32
+    ],
+    [
+     9065,
+     32
+    ]
+   ],
+   "msg": "ui-push",
+   "type": "newgame-choice",
+   "ui-centred": true,
+   "generation_id": 4
+  },
+  {
+   "from_client": false,
+   "menu_id": "weapon-main",
+   "button_focus": 97,
+   "msg": "ui-state",
+   "type": "newgame-choice"
+  }
+ ],
+ "expected": {
+  "uiPushTypes": [
+   "newgame-choice",
+   "newgame-choice",
+   "newgame-choice",
+   "newgame-choice"
+  ],
+  "newgameChoices": [
+   {
+    "mainButtons": 9,
+    "subButtons": 3,
+    "firstConfirm": {
+     "msg": "input",
+     "text": "a"
+    }
+   },
+   {
+    "mainButtons": 27,
+    "subButtons": 7,
+    "firstConfirm": {
+     "msg": "input",
+     "text": "a"
+    }
+   },
+   {
+    "mainButtons": 25,
+    "subButtons": 7,
+    "firstConfirm": {
+     "msg": "input",
+     "text": "a"
+    }
+   },
+   {
+    "mainButtons": 6,
+    "subButtons": 5,
+    "firstConfirm": {
+     "msg": "input",
+     "text": "a"
+    }
+   }
+  ]
+ }
+}

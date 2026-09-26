@@ -87,6 +87,9 @@ export function parseCellKey(key: string): { x: number; y: number } {
 // and x/y coordinates carry forward (if x omitted, use prev x+1; if y omitted use prev y).
 export class MapStore {
   private cells = new Map<string, Cell>()
+  // mfBounds memo: undefined = stale (an mf write or clear happened since),
+  // null = computed, no minimap-worthy cells yet.
+  private mfBox: { left: number; top: number; right: number; bottom: number } | null | undefined
   private monsterMap = new Map<string, MonsterCell>()
   // Keyed by monster id; accumulates partial updates across turns (mirrors reference monster_table)
   private monsterTable = new Map<number, MonsterInfo>()
@@ -104,6 +107,13 @@ export class MapStore {
   // display.js `inv_mons_msg` — updated only when the key is present, cleared
   // by an explicit '' or a map clear. Rendered by MonsterListView.
   invisMonDesc = ''
+  // Wire `player_on_level` (tileweb.cc:1933): false during level transitions,
+  // when the store may still hold the previous level's cells at the new
+  // player.pos. Gates the tile-mode minibars like the reference's
+  // map_knowledge.player_on_level() (cell_renderer.js draw_minibars call).
+  // Sticky: only a present key changes it; NOT reset by clear() — the
+  // reference's clear_map leaves it alone too.
+  playerOnLevel = true
 
   // Ballistomycetes and tentacles have no_exp=true but are threatening and should display.
   private isDisplayMonster(mon: MonsterInfo): boolean {
@@ -138,6 +148,7 @@ export class MapStore {
       // 0/false/null → overwrite" — same pattern the reference shallow
       // merge_objects uses in game_data/static/map_knowledge.js.
       const t = u.t
+      if (u.mf !== undefined) this.mfBox = undefined
       const cell: Cell = {
         g: u.g ?? existing?.g ?? ' ',
         col: u.col ?? existing?.col ?? 7,
@@ -316,11 +327,15 @@ export class MapStore {
   }
 
   // Bounding box of minimap-worthy cells (mf > 0, so MF_UNSEEN and mf-less
-  // cells are excluded), or null before any are known. Computed on demand in
-  // one pass: only the minimap reads it, and it already re-scans the whole
-  // store to draw — so keeping merge (the hot path) free of per-cell bbox
-  // bookkeeping is the better trade.
+  // cells are excluded), or null before any are known. Matches the engine's
+  // known_map_bounds() (map-knowledge.cc), which the level map clamps its
+  // cursor to — map-jump.ts relies on that equality (verified live: the
+  // store's edge and the engine's clamp agreed). One pass over the store,
+  // memoized until the next mf write or clear: merge (the hot path) stays
+  // free of per-cell bbox bookkeeping, while the X-map drag-pan clamp
+  // (game-view onPan) can read it per cell crossing without a rescan.
   mfBounds(): { left: number; top: number; right: number; bottom: number } | null {
+    if (this.mfBox !== undefined) return this.mfBox
     let box: { left: number; top: number; right: number; bottom: number } | null = null
     this.forEachCell((x, y, cell) => {
       if (!cell.mf) return
@@ -333,6 +348,7 @@ export class MapStore {
         if (y > box.bottom) box.bottom = y
       }
     })
+    this.mfBox = box
     return box
   }
 
@@ -342,6 +358,7 @@ export class MapStore {
 
   clear(): void {
     this.cells.clear()
+    this.mfBox = undefined
     this.monsterMap.clear()
     this.monsterTable.clear()
     this.monsterGlyphs.clear()

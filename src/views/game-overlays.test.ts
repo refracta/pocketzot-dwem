@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ClientMsg } from '../ws/types'
 import {
-  showInputDialog, showNewgameChoice, showRandomCombo, showSeedSelection,
+  showInputDialog, showSeedSelection,
   type OverlayScreenCtx, type UiPushMsg,
 } from './game-overlays'
 
@@ -41,6 +41,8 @@ function makeCtx() {
     },
     autoOpenKbd: () => { calls.autoOpenKbd++ },
     focusView: () => { calls.focusView++ },
+    getLoader: () => null,
+    isSpectating: () => false,
   }
   return { ctx, overlay, sent, calls }
 }
@@ -160,117 +162,5 @@ describe('showSeedSelection', () => {
       { msg: 'key', keycode: 45 },
       { msg: 'key', keycode: 100 },
     ])
-  })
-})
-
-describe('showRandomCombo', () => {
-  it('renders through renderOverlay with the DCSS markup stripped from the title', () => {
-    const { ctx, calls } = makeCtx()
-    showRandomCombo(ctx, { type: 'newgame-random-combo', prompt: '<yellow>You are a Vine Stalker Hedge Wizard.</yellow>' })
-    expect(calls.renderOverlay).toEqual(['You are a Vine Stalker Hedge Wizard.'])
-  })
-
-  it('offers Yes/Reroll/Quit and sends the picked key as pty input', () => {
-    const { ctx, overlay, sent, calls } = makeCtx()
-    showRandomCombo(ctx, { type: 'newgame-random-combo', prompt: 'combo' })
-    const btns = [...overlay.querySelectorAll<HTMLButtonElement>('.action-btn')]
-    expect(btns.map(b => b.textContent)).toEqual(['Yes (Y)', 'Reroll (n)', 'Quit (q)'])
-    btns[2].click()
-    expect(sent).toEqual([{ msg: 'input', text: 'q' }])
-    expect(calls.focusView).toBe(1)
-  })
-})
-
-describe('showNewgameChoice', () => {
-  // Trimmed-down species screen: 3 columns with headers, a gap in the grid
-  // (no button at x:1), and a brown sub-item row with a non-printable hotkey
-  // (Tab=9). Field shapes per the live captures documented in CLAUDE.md.
-  const MSG: UiPushMsg = {
-    type: 'newgame-choice',
-    title: 'Please select your species.',
-    'main-items': {
-      width: 3,
-      labels: [
-        { x: 0, y: 0, label: '<lightblue>Simple</lightblue>' },
-        { x: 2, y: 0, label: '<lightblue>Advanced</lightblue>' },
-      ],
-      buttons: [
-        { x: 0, y: 1, hotkey: 97, labels: ['<w>a</w> - Gnoll'], description: 'Gnolls have a nose for treasure.' },
-        { x: 2, y: 1, hotkey: 115, labels: ['<w>s</w> - Coglin'], description: 'Coglins wield two weapons.' },
-      ],
-    },
-    'sub-items': {
-      width: 2,
-      buttons: [
-        { x: 0, y: 0, hotkey: 9, label: '<brown>Tab - Recommended character</brown>' },
-      ],
-    },
-  }
-
-  it('hides the touch controls and builds headers, grid cells, and gap padding', () => {
-    const { ctx, overlay, calls } = makeCtx()
-    showNewgameChoice(ctx, MSG)
-    expect(calls.enterLayout).toEqual([{ touch: false }])
-    const grid = overlay.querySelector<HTMLElement>('.ngc-grid:not(.ngc-sub-grid)')!
-    expect(grid.style.getPropertyValue('--ngc-cols')).toBe('3')
-    const headers = [...grid.querySelectorAll('.ngc-col-header')].map(h => h.textContent)
-    expect(headers).toEqual(['Simple', '', 'Advanced'])
-    // Row 1 renders [button, filler, button]: the x:1 gap must be padded so
-    // the CSS grid keeps later buttons in their server-assigned columns.
-    const cells = [...grid.children].slice(3)
-    expect(cells.map(c => c.tagName)).toEqual(['BUTTON', 'DIV', 'BUTTON'])
-  })
-
-  it('two-tap confirm: first tap previews without sending, second tap sends the hotkey', () => {
-    const { ctx, overlay, sent } = makeCtx()
-    showNewgameChoice(ctx, MSG)
-    const gnoll = [...overlay.querySelectorAll<HTMLButtonElement>('.ngc-btn')]
-      .find(b => b.textContent?.includes('Gnoll'))!
-    gnoll.click()
-    expect(sent).toEqual([])  // preview only
-    expect(gnoll.classList.contains('ngc-selected')).toBe(true)
-    const desc = overlay.querySelector('.ngc-desc')!
-    expect(desc.textContent).toContain('Gnolls have a nose for treasure.')
-    expect(desc.textContent).toContain('Tap again to confirm.')
-    gnoll.click()
-    expect(sent).toEqual([{ msg: 'input', text: 'a' }])
-  })
-
-  it('tapping a different button re-arms the preview instead of confirming', () => {
-    const { ctx, overlay, sent } = makeCtx()
-    showNewgameChoice(ctx, MSG)
-    const btns = [...overlay.querySelectorAll<HTMLButtonElement>('.ngc-btn')]
-    const gnoll = btns.find(b => b.textContent?.includes('Gnoll'))!
-    const coglin = btns.find(b => b.textContent?.includes('Coglin'))!
-    gnoll.click()
-    coglin.click()  // switches the pending selection, still no send
-    expect(sent).toEqual([])
-    expect(gnoll.classList.contains('ngc-selected')).toBe(false)
-    expect(coglin.classList.contains('ngc-selected')).toBe(true)
-    coglin.click()
-    expect(sent).toEqual([{ msg: 'input', text: 's' }])
-  })
-
-  it('sends non-printable hotkeys (Tab=9) via {key,keycode}, not {input,text}', () => {
-    const { ctx, overlay, sent } = makeCtx()
-    showNewgameChoice(ctx, MSG)
-    const tab = overlay.querySelector<HTMLButtonElement>('.ngc-sub-grid .ngc-btn')!
-    tab.click()
-    tab.click()
-    expect(sent).toEqual([{ msg: 'key', keycode: 9 }])
-  })
-
-  it('renders weapon-menu two-part labels as main + right-aligned suffix spans', () => {
-    const { ctx, overlay } = makeCtx()
-    showNewgameChoice(ctx, {
-      type: 'newgame-choice',
-      'main-items': {
-        width: 1,
-        buttons: [{ x: 0, y: 1, hotkey: 97, labels: ['<w>a</w> - war axe', '(+2 apt)'] }],
-      },
-    })
-    const btn = overlay.querySelector('.ngc-btn')!
-    expect(btn.querySelector('.ngc-btn-main')?.textContent).toBe('a - war axe')
-    expect(btn.querySelector('.ngc-btn-suffix')?.textContent).toBe('(+2 apt)')
   })
 })

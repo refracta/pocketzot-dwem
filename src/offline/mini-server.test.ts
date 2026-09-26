@@ -137,6 +137,7 @@ describe('mini-server client→engine routing', () => {
     { msg: 'menu_scroll', first: 0, last: 10, hover: 2 },
     { msg: 'formatted_scroller_scroll', scroll: 5 },
     { msg: 'click_cell', x: 1, y: 2, button: 1 },
+    { msg: 'target_cursor', x: 3, y: 4 },
     { msg: 'ui_state_sync', widget_id: 'input', text: 'x', generation_id: 7 },
   ]
   for (const m of controlMsgs) {
@@ -180,6 +181,75 @@ describe('mini-server client→engine routing', () => {
     expect(port.controls).toEqual([])
     expect(warn).toHaveBeenCalledOnce()
     warn.mockRestore()
+  })
+})
+
+describe('mini-server dump routing', () => {
+  // Upstream parity: the Python server turns a type-"command" starred dump
+  // into a client {msg:"dump"} broadcast (process_handler.py:1180) — ours
+  // carries the filename stem instead of a URL.
+  it("synthesizes a client dump message for '#' command dumps", () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"dump","type":"command","filename":"Tester"}\n')
+    expect(delivered).toEqual([{ msg: 'dump', filename: 'Tester' }])
+  })
+
+  it('ignores the end-of-game dump types', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"dump","type":"morgue","filename":"morgue-Tester-20260817-120000"}\n')
+    port.onOutput('*{"msg":"dump","type":"save","filename":"Tester"}\n')
+    expect(delivered).toEqual([])
+  })
+})
+
+describe('mini-server ending relay', () => {
+  // The engine announces a flushed ending (end.cc _persist_ending) before
+  // the end screens; the client's records close on it while the game view
+  // stays up through the screens.
+  it('relays the starred ending as game_ending without touching the exit path', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"ending","type":"dead","message":"Slain by a kobold"}\n')
+    expect(delivered).toEqual([{ msg: 'game_ending', reason: 'dead', message: 'Slain by a kobold' }])
+    expect(port.terminated).toBe(false)
+    // The end screens still tear down normally: exitDeclared is not latched.
+    delivered.length = 0
+    port.onOutput('{"msg":"ui-pop"}\n')
+    expect(delivered).toEqual([{ msg: 'ui-pop' }])
+  })
+
+  // screen_end_game's real order: exit_reason first, then the persist and
+  // its ending. Starred lines bypass the exitDeclared drop-list.
+  it('relays an ending that arrives after exit_reason, without a message', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"exit_reason","type":"quit"}\n')
+    port.onOutput('*{"msg":"ending","type":"quit"}\n')
+    expect(delivered).toEqual([{ msg: 'game_ending', reason: 'quit', message: undefined }])
+  })
+
+  it('game_ended still follows from exit_reason at process exit', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onOutput('*{"msg":"ending","type":"dead","message":"Slain by a kobold"}\n')
+    port.onOutput('*{"msg":"exit_reason","type":"dead","message":"Slain by a kobold"}\n')
+    port.onExit(0)
+    expect(delivered.at(-1)).toEqual({ msg: 'game_ended', reason: 'dead', message: 'Slain by a kobold' })
+  })
+
+  it('drops an ending once the game has ended', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onExit(0)
+    delivered.length = 0
+    port.onOutput('*{"msg":"ending","type":"dead"}\n')
+    expect(delivered).toEqual([])
   })
 })
 

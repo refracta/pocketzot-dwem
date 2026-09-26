@@ -17,7 +17,7 @@ import type { EnginePort } from './engine-port'
 // either absorbed (chat) or can't occur (lobby/login flows).
 const CONTROL_FORWARD_TYPES = new Set([
   'key', 'menu_hover', 'menu_scroll', 'formatted_scroller_scroll',
-  'click_cell', 'ui_state_sync',
+  'click_cell', 'target_cursor', 'ui_state_sync', 'outer_menu_focus',
 ])
 
 export interface MiniServer {
@@ -99,12 +99,25 @@ export function createMiniServer(
     }, WATCHDOG_MS)
   }
 
+  // Engine teardown, shared by every exit path; false = a prior path already
+  // ran it. Terminating at end-time (not just dispose) frees the dead engine
+  // (~100 MB of wasm memory + module) the moment it exits rather than when
+  // the player leaves the end screen. Safe: the exit persist already landed —
+  // pocketzot_persist() Asyncify-blocks on syncfs inside crawl's end() BEFORE
+  // process exit (pocketzot-ipc.h) — and every post-end port use is gated on
+  // `ended`, so inputs were going nowhere anyway.
+  const shutdown = (): boolean => {
+    if (ended) return false
+    ended = true
+    disarmWatchdog()
+    port.terminate()
+    return true
+  }
+
   // Emits at most one terminal message: game-view routes BOTH game_ended and
   // go_lobby to exitToLobby, so a pair would double-invoke the exit callback.
   const end = (code: number): void => {
-    if (ended) return
-    ended = true
-    disarmWatchdog()
+    if (!shutdown()) return
     deliver({
       msg: 'game_ended',
       reason: exitReason ?? (code === 0 ? 'saved' : 'crash'),
@@ -128,15 +141,40 @@ export function createMiniServer(
         exitDeclared = true
         break
       }
+      case 'ending': {
+        // Relayed as game_ending (types.ts has the why). Not an exit: the
+        // end screens are still coming, so exitDeclared stays down and
+        // nothing is stashed for game_ended. No "unknown" filter, unlike
+        // exit_reason above: end_game's reason comes from
+        // _kill_method_to_exit (never unknown) and screen_end_game
+        // hardcodes "quit"; the boot preamble resets exit_reason only.
+        if (ended) break
+        deliver({
+          msg: 'game_ending',
+          reason: String(msg['type'] ?? 'error'),
+          message: typeof msg['message'] === 'string' ? msg['message'] : undefined,
+        })
+        break
+      }
       case 'milestone':
         hooks.milestone?.(msg)
         break
       case 'checkpoint':
         hooks.checkpoint?.()
         break
+      case 'dump':
+        // Upstream parity: the Python server turns a type-"command" ('#')
+        // starred dump into a client {msg:"dump", url} broadcast
+        // (process_handler.py:1180). Offline there's no URL — forward the
+        // filename (pre-munged by strip_filename_unsafe_chars, tileweb.cc;
+        // the file is /crawl/morgue/<filename>.txt, already written when
+        // this line arrives). "morgue"/"save" types mark end-of-game files
+        // (end.cc / files.cc) the records view already owns — not routed.
+        if (msg['type'] === 'command' && typeof msg['filename'] === 'string' && !ended)
+          deliver({ msg: 'dump', filename: msg['filename'] })
+        break
       case 'client_path':   // engine version handshake — nothing to route offline
       case 'flush_messages': // we don't queue, so every message is already flushed
-      case 'dump':           // morgue file lives in the engine FS; no URL to build
         break
       default:
         console.warn('offline: unknown starred engine message', msg['msg'])
@@ -222,9 +260,7 @@ export function createMiniServer(
       } else if (msg.msg === 'go_lobby') {
         // Unreachable from an offline played game (spectator-only send sites)
         // but absorb defensively: kill the engine rather than leak it.
-        ended = true
-        disarmWatchdog()
-        port.terminate()
+        shutdown()
       } else {
         console.warn('offline: unroutable client message absorbed:', msg.msg)
       }
@@ -236,9 +272,7 @@ export function createMiniServer(
     },
 
     dispose(): void {
-      ended = true
-      disarmWatchdog()
-      port.terminate()
+      shutdown()
     },
   }
 }
